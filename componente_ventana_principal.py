@@ -1,84 +1,313 @@
-# componente_ventana_principal.py
 import flet as ft
-from database_manager import DatabaseManager
 from datetime import datetime
 
-class VentanaPrincipal(ft.Column):
-	def __init__(self, page, caja_actual, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja):
-		self.page = page
-		self.caja = caja_actual
-		self.on_nueva_venta_teclado = on_nueva_venta_teclado
-		self.on_nueva_venta_lector = on_nueva_venta_lector
-		self.on_gestion_articulos = on_gestion_articulos
-		self.on_cerrar_caja = on_cerrar_caja
+def VentanaPrincipal(page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja):
+    """Ventana principal con lista de ventas y acciones"""
+    
+    # Obtener ventas del día
+    ventas = db_manager.obtener_ventas_del_dia(caja_id)
+    total_vendido = sum(v['total'] for v in ventas)
+    
+    print(f"Ventas encontradas: {len(ventas)}")
+    
+    # Estado para controlar qué ventas están expandidas
+    ventas_expandidas = set()
+    
+    def crear_lista_ventas():
+        """Crea la lista de ventas con items expandibles"""
+        lista = ft.Column(spacing=5)
+        
+        for venta in ventas:
+            venta_id = venta['id']
+            expandido = venta_id in ventas_expandidas
+            
+            # Botón para expandir/contraer
+            def toggle_expand(e, vid=venta_id):
+                if vid in ventas_expandidas:
+                    ventas_expandidas.remove(vid)
+                else:
+                    ventas_expandidas.add(vid)
+                actualizar_ventas()
+            
+            icono_expand = ft.Icons.EXPAND_LESS if expandido else ft.Icons.EXPAND_MORE
+            
+            # Fila principal de venta estilo imagen
+            venta_row = ft.Container(
+                content=ft.Row([
+                    ft.IconButton(
+                        icon=icono_expand,
+                        on_click=toggle_expand,
+                        icon_color=ft.Colors.with_opacity(0.6, ft.Colors.WHITE),
+                        icon_size=24
+                    ),
+                    ft.Icon(ft.Icons.RECEIPT, color=ft.Colors.BLUE_400, size=24),
+                    ft.Column([
+                        ft.Text(
+                            f"Venta #{venta['id']:04d} - {venta['fecha'][11:16] if len(venta['fecha']) > 11 else 'N/A'}",
+                            size=15,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.WHITE
+                        ),
+                        ft.Text(
+                            venta['fecha'][11:16] if len(venta['fecha']) > 11 else 'N/A',
+                            size=11,
+                            color=ft.Colors.with_opacity(0.5, ft.Colors.WHITE)
+                        )
+                    ], spacing=2, expand=True),
+                    ft.Column([
+                        ft.Text(
+                            f"${venta['total']:.2f}",
+                            size=18,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.GREEN_400
+                        ),
+                        ft.Text(
+                            f"{venta.get('items_count', 0)} items",
+                            size=11,
+                            color=ft.Colors.with_opacity(0.5, ft.Colors.WHITE),
+                            text_align=ft.TextAlign.RIGHT
+                        )
+                    ], horizontal_alignment=ft.CrossAxisAlignment.END, spacing=2)
+                ], alignment=ft.MainAxisAlignment.START),
+                bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
+                padding=14,
+                border_radius=8,
+                width=660,
+                animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT)
+            )
+            
+            lista.controls.append(venta_row)
+            
+            # Items de la venta (si está expandida)
+            if expandido:
+                items = db_manager.obtener_items_venta(venta_id)
+                
+                items_col = ft.Column(spacing=8)
+                for item in items:
+                    item_row = ft.Row([
+                        ft.Container(width=40),  # Espaciado
+                        ft.Icon(ft.Icons.CIRCLE, size=6, color=ft.Colors.BLUE_400),
+                        ft.Text(item['producto_nombre'], size=13, color=ft.Colors.WHITE, expand=True),
+                        ft.Text(f"x{item['cantidad']}", size=13, color=ft.Colors.with_opacity(0.6, ft.Colors.WHITE), width=50),
+                        ft.Text(f"${item['precio_unitario']:.2f}", size=13, color=ft.Colors.with_opacity(0.6, ft.Colors.WHITE), width=80),
+                        ft.Text(f"${item['subtotal']:.2f}", size=13, 
+                               text_align=ft.TextAlign.RIGHT, weight=ft.FontWeight.W_500,
+                               color=ft.Colors.GREEN_400, width=90)
+                    ], spacing=8)
+                    items_col.controls.append(item_row)
+                
+                items_container = ft.Container(
+                    content=items_col,
+                    bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
+                    padding=12,
+                    margin=ft.margin.only(left=40, right=0, top=0, bottom=5),
+                    border_radius=8,
+                    animate=ft.Animation(200, ft.AnimationCurve.EASE_IN_OUT)
+                )
+                lista.controls.append(items_container)
+        
+        if not ventas:
+            lista.controls.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Icon(ft.Icons.RECEIPT_LONG_OUTLINED, size=80, color=ft.Colors.with_opacity(0.3, ft.Colors.WHITE)),
+                        ft.Text(
+                            "No hay ventas registradas aún",
+                            text_align=ft.TextAlign.CENTER,
+                            size=16,
+                            color=ft.Colors.with_opacity(0.5, ft.Colors.WHITE)
+                        )
+                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15),
+                    alignment=ft.alignment.center,
+                    padding=60
+                )
+            )
+        
+        return lista
+    
+    # Contenedor de ventas con scroll vertical
+    ventas_column = ft.Column(
+        controls=[crear_lista_ventas()],
+        scroll=ft.ScrollMode.ALWAYS,
+        expand=True,
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER
+    )
 
-		# Listado de ventas del día (ejemplo)
-		ventas = [
-			{"id": 1, "hora": "09:12", "total": 120.0, "items": [("Libro A", 1, 120.0)]},
-			{"id": 2, "hora": "10:35", "total": 45.5, "items": [("Goma", 2, 10.0), ("Lápiz", 1, 25.5)]},
-		]
+    ventas_container = ft.Container(
+        content=ventas_column,
+        height=500,
+        width=660,
+        border_radius=10,
+        padding=1,
+        bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE)
+    )
+    
+    def actualizar_ventas():
+        """Actualiza la lista de ventas"""
+        ventas_column.controls = [crear_lista_ventas()]
+        page.update()
+    
+    # Header mejorado
+    header = ft.Container(
+        content=ft.Column([
 
-		ventas_controls = []
-		for v in ventas:
-			# detalles ocultos inicialmente
-			detalles = ft.Column([ft.Text(f"{it[0]} x{it[1]} ${it[2]}") for it in v["items"]], visible=False)
-
-			# botón que alterna visibilidad de detalles y cambia icono
-			def make_toggle(det_ctrl):
-				def toggle(e):
-					det_ctrl.visible = not det_ctrl.visible
-					# cambiar icono del botón que disparó el evento
-					e.control.icon = ft.Icons.EXPAND_LESS if det_ctrl.visible else ft.Icons.EXPAND_MORE
-					# actualizar este control Column (heredado)
-					self.update()
-				return toggle
-
-			toggle_btn = ft.IconButton(icon=ft.Icons.EXPAND_MORE, on_click=make_toggle(detalles))
-			header = ft.Row([
-				ft.Text(f"ID {v['id']} - {v['hora']} - ${v['total']}", expand=True),
-				toggle_btn
-			], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-
-			# Container envuelve la Column para permitir padding
-			ventas_controls.append(
-				ft.Container(
-					ft.Column([header, detalles], spacing=4),
-					padding=ft.padding.symmetric(vertical=6)
-				)
-			)
-
-		total_hoy = sum(v["total"] for v in ventas)
-
-		# Botones nueva venta: teclado y lector
-		btn_teclado = ft.ElevatedButton("Nueva venta (teclado)", icon=ft.Icons.KEYBOARD, on_click=self.on_nueva_venta_teclado)
-		btn_lector = ft.ElevatedButton("Nueva venta (lector)", icon=ft.Icons.QR_CODE, on_click=self.on_nueva_venta_lector)
-
-		left_panel = ft.Container(
-			ft.Column([
-				ft.Text("Ventas de hoy", size=16),
-				ft.Column(ventas_controls, spacing=6),
-				ft.Container(ft.Text(f"Total vendido hoy: ${total_hoy:.2f}"), alignment=ft.alignment.center_right, padding=ft.padding.only(top=10))
-			]),
-			width=420, height=600, padding=10, border=ft.border.all(1, ft.Colors.GREY)
-		)
-
-		right_panel = ft.Container(
-			ft.Column([
-				ft.Text("Acciones", size=16),
-				ft.Row([btn_teclado, btn_lector], alignment=ft.MainAxisAlignment.START),
-				ft.ElevatedButton("Gestión Artículos", on_click=self.on_gestion_articulos),
-				ft.ElevatedButton("Cerrar caja", on_click=self.on_cerrar_caja),
-			], spacing=12),
-			padding=10, expand=True
-		)
-
-		layout = ft.Row([left_panel, ft.VerticalDivider(), right_panel], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-
-		# responsive: si ancho < 800 usar columna
-		if self.page.width and self.page.width < 800:
-			controls = [ft.Column([layout], scroll=True)]
-		else:
-			controls = [layout]
-
-		# Inicializar la Column padre con los controles construidos
-		super().__init__(controls=controls)
+            ft.Row([
+                ft.Icon(ft.Icons.CALENDAR_TODAY, size=20, color=ft.Colors.with_opacity(0.7, ft.Colors.WHITE)),
+                ft.Text(f"{datetime.now().strftime('%d/%m/%Y')}", size=15, 
+                       color=ft.Colors.with_opacity(0.9, ft.Colors.WHITE)),
+                ft.Container(width=40),
+                ft.Icon(ft.Icons.POINT_OF_SALE, size=20, color=ft.Colors.with_opacity(0.7, ft.Colors.WHITE)),
+                ft.Text(f"Caja #{caja_id:04d}", size=20, weight=ft.FontWeight.BOLD,
+                       color=ft.Colors.with_opacity(0.9, ft.Colors.WHITE))
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=3),
+        bgcolor=ft.Colors.BLUE_900,
+        padding=1
+    )
+    
+    # Sección de ventas de hoy
+    ventas_header = ft.Container(
+        content=ft.Row([
+            ft.Icon(ft.Icons.HISTORY, color=ft.Colors.BLUE_400, size=28),
+            ft.Text("VENTAS DE HOY", size=22, weight=ft.FontWeight.BOLD)
+        ], spacing=1),
+        padding=ft.padding.only(left=1, bottom=1)
+    )
+    
+    # Panel derecho con total y botones
+    panel_derecho = ft.Container(
+        content=ft.Column([
+            # Botones de nueva venta
+            ft.Container(
+                content=ft.Column([
+                    ft.ElevatedButton(
+                        content=ft.Column([
+                            ft.Icon(ft.Icons.KEYBOARD, size=40, color=ft.Colors.WHITE),
+                            ft.Container(height=5),
+                            ft.Text("Nueva venta", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                            ft.Text("(Teclado)", size=11, color=ft.Colors.with_opacity(0.8, ft.Colors.WHITE))
+                        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, tight=True),
+                        width=180,
+                        height=110,
+                        style=ft.ButtonStyle(
+                            bgcolor=ft.Colors.GREEN_700,
+                            shape=ft.RoundedRectangleBorder(radius=15),
+                            elevation=4
+                        ),
+                        on_click=lambda e: on_nueva_venta_teclado()
+                    ),
+                    ft.Container(height=15),
+                    ft.ElevatedButton(
+                        content=ft.Column([
+                            ft.Icon(ft.Icons.QR_CODE_SCANNER, size=40, color=ft.Colors.WHITE),
+                            ft.Container(height=5),
+                            ft.Text("Nueva venta", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
+                            ft.Text("(Lector)", size=11, color=ft.Colors.with_opacity(0.8, ft.Colors.WHITE))
+                        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, tight=True),
+                        width=180,
+                        height=110,
+                        style=ft.ButtonStyle(
+                            bgcolor=ft.Colors.BLUE_700,
+                            shape=ft.RoundedRectangleBorder(radius=15),
+                            elevation=4
+                        ),
+                        on_click=lambda e: on_nueva_venta_lector()
+                    )
+                ]),
+                alignment=ft.alignment.top_center
+            ),
+            ft.Container(expand=True),
+            # Total vendido
+            ft.Container(
+                content=ft.Column([
+                    ft.Text("Total vendido hoy:", 
+                           size=14, 
+                           color=ft.Colors.with_opacity(0.7, ft.Colors.WHITE),
+                           text_align=ft.TextAlign.CENTER),
+                    ft.Text(
+                        f"$ {total_vendido:.2f}",
+                        size=26,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.GREEN_400,
+                        text_align=ft.TextAlign.CENTER
+                    )
+                ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=5),
+                bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.WHITE),
+                padding=2,
+                border_radius=12,
+                border=ft.border.all(2, ft.Colors.GREEN_700)
+            ),
+            ft.Container(height=20),
+            # Botones de acción
+            ft.Column([
+                ft.ElevatedButton(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.INVENTORY_2, size=20),
+                        ft.Text("GESTIÓN ARTÍCULOS", size=13)
+                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+                    width=180,
+                    height=45,
+                    style=ft.ButtonStyle(
+                        shape=ft.RoundedRectangleBorder(radius=8)
+                    ),
+                    on_click=lambda e: on_gestion_articulos()
+                ),
+                ft.ElevatedButton(
+                    content=ft.Row([
+                        ft.Icon(ft.Icons.LOCK, size=20, color=ft.Colors.WHITE),
+                        ft.Text("CERRAR CAJA", size=13, color=ft.Colors.WHITE)
+                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+                    width=180,
+                    height=45,
+                    style=ft.ButtonStyle(
+                        bgcolor=ft.Colors.RED_700,
+                        shape=ft.RoundedRectangleBorder(radius=8),
+                        elevation=3
+                    ),
+                    on_click=lambda e: on_cerrar_caja()
+                )
+            ], spacing=12)
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=10,
+        width=250
+    )
+    
+    # Layout principal
+    contenido_principal = ft.Row([
+        # Panel izquierdo - Ventas
+        ft.Column([
+            ventas_header,
+            ventas_container
+        ], spacing=1),
+        # Panel derecho - Acciones
+        panel_derecho
+    ], alignment=ft.MainAxisAlignment.CENTER, spacing=30)
+    
+    # Función para refrescar ventas
+    def cargar_ventas():
+        """Refresca la lista de ventas desde fuera del componente"""
+        nonlocal ventas, total_vendido
+        ventas = db_manager.obtener_ventas_del_dia(caja_id)
+        total_vendido = sum(v['total'] for v in ventas)
+        print(f"🔄 Refrescando ventas: {len(ventas)} encontradas")
+        
+        # Actualizar el texto del total
+        panel_derecho.content.controls[2].content.controls[1].value = f"$ {total_vendido:.2f}"
+        
+        actualizar_ventas()
+    
+    # Contenedor principal
+    container_principal = ft.Container(
+        content=ft.Column([
+            header,
+            ft.Container(height=25),
+            contenido_principal
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, scroll=ft.ScrollMode.AUTO, expand=True),
+        padding=20,
+        expand=True
+    )
+    
+    # Exponer la función como método del contenedor
+    container_principal.cargar_ventas = cargar_ventas
+    
+    return container_principal
