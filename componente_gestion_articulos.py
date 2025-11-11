@@ -104,40 +104,34 @@ def GestionArticulosView(db_manager, on_volver, page):
         page.update()
     
     def importar_excel(e):
-        """Importa productos desde Excel"""
         def on_file_selected(e: ft.FilePickerResultEvent):
             if e.files:
                 try:
                     file_path = e.files[0].path
                     df = pd.read_excel(file_path)
                     
+                    # Obtener columnas del Excel
+                    columnas = df.columns.tolist()
+                    
                     df = df.fillna({
-                        'codigo': '',
-                        'descripcion': '',
-                        'categoria': '',
-                        'marca': '',
-                        'precio_lista': 0,
-                        'precio_costo': 0,
-                        'stock_inicial': 0,
-                        'stock_minimo': 5
+                        col: 0 if col.lower() in ['precio_lista', 'precio_costo', 'stock_inicial', 'stock_minimo'] else ''
+                        for col in columnas
                     })
                     
                     importados = 0
                     for _, row in df.iterrows():
                         try:
-                            if not str(row['codigo']).strip():
-                                continue
+                            producto = {}
+                            for col in columnas:
+                                if col.lower() in ['precio_lista', 'precio_costo']:
+                                    producto[col] = float(row[col])
+                                elif col.lower() in ['stock_inicial', 'stock_minimo']:
+                                    producto[col] = int(row[col])
+                                else:
+                                    producto[col] = str(row[col]).strip()
                             
-                            producto = {
-                                'codigo': str(row['codigo']).strip(),
-                                'descripcion': str(row['descripcion']).strip(),
-                                'categoria': str(row.get('categoria', '')).strip(),
-                                'marca': str(row.get('marca', '')).strip(),
-                                'precio_lista': float(row['precio_lista']),
-                                'precio_costo': float(row.get('precio_costo', 0)),
-                                'stock_inicial': int(row.get('stock_inicial', 0)),
-                                'stock_minimo': int(row.get('stock_minimo', 5))
-                            }
+                            if not producto.get('codigo'):
+                                continue
                             
                             db_manager.guardar_producto(producto)
                             importados += 1
@@ -157,7 +151,7 @@ def GestionArticulosView(db_manager, on_volver, page):
             allowed_extensions=["xlsx", "xls"],
             dialog_title="Seleccionar archivo Excel"
         )
-    
+        
     def descargar_excel(e):
         """Descarga productos a Excel"""
         try:

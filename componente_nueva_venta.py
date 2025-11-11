@@ -31,7 +31,7 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         value="TOTAL: $0.00",
         size=15,
         weight=ft.FontWeight.BOLD,
-        color=ft.Colors.GREEN_700
+        color=ft.Colors.GREEN_200
     )
     
     def buscar_producto(e=None):
@@ -123,24 +123,26 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                     ft.Row([
                         ft.IconButton(
                             icon=ft.Icons.REMOVE,
-                            icon_size=16,
+                            icon_size=6,
                             on_click=lambda e, idx=i: cambiar_cantidad(idx, -1)
                         ),
                         ft.Text(f"x{item['cantidad']}", width=35, text_align=ft.TextAlign.CENTER, size=13),
                         ft.IconButton(
                             icon=ft.Icons.ADD,
-                            icon_size=16,
+                            icon_size=6,
                             on_click=lambda e, idx=i: cambiar_cantidad(idx, 1)
                         )
                     ], spacing=0),
                     ft.Text(f"${item['subtotal']:.2f}", width=90, text_align=ft.TextAlign.RIGHT, 
                            weight=ft.FontWeight.BOLD, size=13),
-                    ft.IconButton(
-                        icon=ft.Icons.DELETE,
-                        icon_size=18,
-                        icon_color=ft.Colors.RED_700,
-                        on_click=lambda e, idx=i: eliminar_item(idx)
+
+                    ft.GestureDetector(
+                        on_tap=lambda e, idx=i: eliminar_item(idx),
+                        content=ft.Container(
+                            content=ft.Icon(ft.Icons.DELETE, size=14, color=ft.Colors.RED_700),
+                            padding=ft.padding.only(right=8)  # agrega espacio a la derecha
                     )
+)
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 bgcolor=ft.Colors.GREEN_900,
                 padding=8,

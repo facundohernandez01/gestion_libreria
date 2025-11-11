@@ -39,7 +39,11 @@ class DatabaseManager:
                     stock_minimo INTEGER DEFAULT 5,
                     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 );
-                
+                CREATE TABLE IF NOT EXISTS config (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    clave TEXT UNIQUE NOT NULL,
+                    valor TEXT
+                );
                 CREATE TABLE IF NOT EXISTS cajas (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     fecha_apertura TIMESTAMP NOT NULL,
@@ -432,6 +436,48 @@ class DatabaseManager:
         finally:
             conn.close()
     
+    def set_config(self, clave: str, valor: str):
+        """Guarda o actualiza un valor de configuración"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute("""
+                INSERT INTO config (clave, valor)
+                VALUES (?, ?)
+                ON CONFLICT(clave) DO UPDATE SET valor = excluded.valor
+            """, (clave, valor))
+            conn.commit()
+        except Exception as e:
+            print(f"Error guardando configuración: {e}")
+        finally:
+            conn.close()
+
+    def get_config(self, clave: str) -> Optional[str]:
+        """Obtiene un valor de configuración"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT valor FROM config WHERE clave = ?", (clave,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+
+    def get_all_config(self) -> dict:
+        """Devuelve todas las configuraciones en un diccionario"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT clave, valor FROM config")
+        result = dict(cursor.fetchall())
+        conn.close()
+        return result
+    
+    def get_config_value(self, clave):
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT valor FROM config WHERE clave = ?", (clave,))
+        row = cursor.fetchone()
+        conn.close()
+        return row[0] if row else None
+
     # ==================== GASTOS ====================
     
     def agregar_gasto(self, caja_id: int, monto: float, concepto: str) -> int:
@@ -485,3 +531,4 @@ class DatabaseManager:
         
         conn.close()
         return results
+    

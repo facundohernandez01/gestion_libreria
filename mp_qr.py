@@ -3,8 +3,11 @@ import time
 import json
 
 # === CONFIGURACIÓN ===
-ACCESS_TOKEN = "APP_USR-2575300947252064-111011-7baddd566dc2eee1112cb9f85e829a87-2674497459"
-USER_ID = "2674497459"
+from database_manager import DatabaseManager
+db = DatabaseManager()
+
+ACCESS_TOKEN = db.get_config_value("ACCESS_TOKEN") or "SIN_TOKEN"
+USER_ID = db.get_config_value("USER_ID") or "0"
 
 HEADERS = {
     "Authorization": f"Bearer {ACCESS_TOKEN}",
