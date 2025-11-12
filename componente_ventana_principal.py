@@ -89,7 +89,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.WHITE),
                 padding=14,
                 border_radius=8,
-                width=660,
+                
                 animate=ft.Animation(150, ft.AnimationCurve.EASE_OUT)
             )
             
@@ -102,7 +102,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 items_col = ft.Column(spacing=8)
                 for item in items:
                     item_row = ft.Row([
-                        ft.Container(width=40),  # Espaciado
+                        ft.Container(width=5),  # Espaciado
                         ft.Icon(ft.Icons.CIRCLE, size=6, color=ft.Colors.BLUE_400),
                         ft.Text(item['producto_nombre'], size=13, color=ft.Colors.WHITE, expand=True),
                         ft.Text(f"x{item['cantidad']}", size=13, color=ft.Colors.with_opacity(0.6, ft.Colors.WHITE), width=50),
@@ -117,7 +117,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                     content=items_col,
                     bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
                     padding=12,
-                    margin=ft.margin.only(left=40, right=0, top=0, bottom=5),
+                    margin=ft.margin.only(left=10, right=2, top=0, bottom=5),
                     border_radius=8,
                     animate=ft.Animation(200, ft.AnimationCurve.EASE_IN_OUT)
                 )
@@ -152,8 +152,8 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
 
     ventas_container = ft.Container(
         content=ventas_column,
-        height=500,
-        width=660,
+        expand=True,
+        height=400,
         border_radius=10,
         padding=1,
         bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE)
@@ -280,7 +280,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
             
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         padding=10,
-        width=250
+        expand=True,
     )
     
     # Layout principal
@@ -289,9 +289,8 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         ft.Column([
             ventas_header,
             ventas_container,
-            ft.Container(height=20),  # separador visual
+            ft.Container(height=20),
 
-            # Fila de botones debajo del listado
             ft.Row([
                 ft.ElevatedButton(
                     content=ft.Row([
@@ -334,15 +333,20 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                     ),
                     on_click=abrir_config
                 )
-            ],
+            ],        
             alignment=ft.MainAxisAlignment.START,  # izquierda
             spacing=15  # separación entre botones
             )
-        ], spacing=10),
+        ], 
+        spacing=10,
+        expand=3
+        ),
+        
+
 
         # Panel derecho - Acciones
-        panel_derecho
-    ], alignment=ft.MainAxisAlignment.CENTER, spacing=30)
+         ft.Container(content=panel_derecho.content, expand=1)
+    ], alignment=ft.MainAxisAlignment.CENTER, spacing=30, adaptive=True)
     
     # Función para refrescar ventas
     def cargar_ventas():
@@ -362,7 +366,12 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         content=ft.Column([
             header,
             ft.Container(height=25),
-            contenido_principal
+            ft.Container(
+            content=contenido_principal,
+            width=1200,  # ancho máximo
+            alignment=ft.alignment.center
+        )
+
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, scroll=ft.ScrollMode.AUTO, expand=True),
         padding=20,
         expand=True

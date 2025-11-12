@@ -1,9 +1,9 @@
 import flet as ft
-from database_manager import DatabaseManager
 import requests
 import os
+from database_manager import DatabaseManager
 
-def ConfigModal(page: ft.Page):
+def ConfiguracionMercadoPago(page: ft.Page):
     page.title = "Configurar Mercado Pago"
     page.scroll = "adaptive"
 
@@ -32,7 +32,7 @@ def ConfigModal(page: ft.Page):
 
     if pos_actual and store_actual:
         resultado_text.value = f"POS actual: {pos_actual}\nStore actual: {store_actual}"
-    qr_image = ft.Image(src=qr_url_saved if qr_url_saved else None, width=140, height=140)
+    qr_image = ft.Image(src=qr_url_saved if qr_url_saved else None, width=200, height=200)
     pos_dropdown = ft.Dropdown(width=400)
 
     pos_list = []
@@ -107,13 +107,13 @@ def ConfigModal(page: ft.Page):
         on_click=lambda e: guardar_config()
     )
 
-    def guardar_config(e):
+    def guardar_config():
         # Guardar en DB
         db.set_config("NOMBRE_NEGOCIO", nombre_negocio_field.value)
         db.set_config("ACCESS_TOKEN", token_field.value)
         db.set_config("USER_ID", user_field.value)
-        db.set_config("EXTERNAL_POS_ID", pos_actual if pos_actual else "")
-        db.set_config("EXTERNAL_STORE_ID", store_actual if store_actual else "")
+        db.set_config("EXTERNAL_POS_ID", config.get("EXTERNAL_POS_ID", ""))
+        db.set_config("EXTERNAL_STORE_ID", config.get("EXTERNAL_STORE_ID", ""))
         db.set_config("QR_URL", qr_image.src if qr_image.src else "")
 
         # Descargar QR si existe
@@ -126,32 +126,11 @@ def ConfigModal(page: ft.Page):
                 with open(img_path, "wb") as f:
                     f.write(r.content)
 
-        # Mostrar mensaje y cerrar modal
+        # Mostrar mensaje
         page.snack_bar = ft.SnackBar(ft.Text("Configuración guardada con éxito"))
         page.snack_bar.open = True
         page.update()
-        page.close(dialog)  # 👈 Cierra el modal
         
-
-    def imprimir_qr_action(e):
-        img_path = os.path.join(os.getcwd(), "img", "qr.png")
-        if not os.path.exists(img_path):
-            page.snack_bar = ft.SnackBar(ft.Text("⚠️ No se encontró el QR para imprimir"))
-            page.snack_bar.open = True
-            page.update()
-            return
-        try:
-            os.startfile(img_path, "print")  # Solo Windows
-        except Exception as err:
-            page.snack_bar = ft.SnackBar(ft.Text(f"Error al imprimir: {err}"))
-            page.snack_bar.open = True
-            page.update()
-                
-    guardar_btn = ft.ElevatedButton("Guardar", icon=ft.Icons.SAVE, on_click=guardar_config)
-    cancelar_btn = ft.ElevatedButton("Cancelar", icon=ft.Icons.CLOSE, on_click=lambda e: page.close(dialog))
-    imprimirqr = ft.ElevatedButton("Imprimir QR", icon=ft.Icons.PRINT, on_click=imprimir_qr_action)
-       
-
     def descargar_qr(e):
         if not qr_image.src:
             resultado_text.value = "⚠️ Primero selecciona un POS con QR"
@@ -175,28 +154,25 @@ def ConfigModal(page: ft.Page):
 
         page.update()
 
-
-
-            
-
-
-    dialog = ft.AlertDialog(
-        modal=True,
-        title=ft.Text("Configuración de la tienda y Mercado Pago"),
-        content=ft.Column([
+    # Layout
+    page.add(
+        ft.Column([
+            ft.Text("Configuración Mercado Pago", size=20, weight=ft.FontWeight.BOLD),
             nombre_negocio_field,
             token_field,
-            user_field,            
+            user_field,
+            
             ft.Row([
                 ft.ElevatedButton("Obtener POS", on_click=obtener_pos),
                 pos_dropdown,
                 ft.ElevatedButton("Seleccionar POS", on_click=seleccionar_pos)
-            ], spacing=6),
+            ], spacing=10),
             resultado_text,
             qr_image,
-        ], spacing=10, height=400),
-        actions=[cancelar_btn, imprimirqr, guardar_btn],
-        actions_alignment=ft.MainAxisAlignment.END,
+            ft.ElevatedButton("Descargar QR", on_click=descargar_qr),
+            guardar_btn
+        ], spacing=20)
     )
 
-    return dialog
+if __name__ == "__main__":
+    ft.app(target=ConfiguracionMercadoPago)

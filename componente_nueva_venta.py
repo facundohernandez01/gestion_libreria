@@ -1,10 +1,50 @@
 import flet as ft
 import asyncio
-from mp_qr import crear_orden, verificar_estado
+import requests
+from mp_qr import crear_orden, verificar_estado,  USER_ID, ACCESS_TOKEN
+from database_manager import DatabaseManager
+db = DatabaseManager()
+
+external_pos_id = db.get_config_value("EXTERNAL_POS_ID") or ""
+external_store_id = db.get_config_value("EXTERNAL_STORE_ID") or ""
 
 def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, page):
     """Modal de nueva venta"""
-    
+    log_box = ft.Container(
+        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.BLUE_GREY_700),
+        border_radius=6,
+        padding=10,
+        content=ft.Text(
+            "ℹ️ Listo para registrar una venta.",
+            size=13,
+            color=ft.Colors.WHITE,
+            selectable=False
+        ),
+        alignment=ft.alignment.center_left,
+        width=280,
+    )
+    col_izquierda = ft.Container(
+        content=log_box,
+        expand=1,
+        padding=10,
+        bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
+        border_radius=5
+    )
+    def mostrar_mensaje(mensaje, color):
+        log_box.content.value = mensaje
+        log_box.bgcolor = ft.Colors.with_opacity(0.2, color)
+        log_box.content.color = ft.Colors.WHITE
+        page.update()
+
+    def mostrar_exito(mensaje):
+        mostrar_mensaje(f"✅ {mensaje}", ft.Colors.GREEN_700)
+
+    def mostrar_error(mensaje):
+        mostrar_mensaje(f"⚠️ {mensaje}", ft.Colors.RED_700)
+
+    def log_ui(msg):
+        mostrar_mensaje(f"ℹ️ {msg}", ft.Colors.BLUE_GREY_700)
+
     carrito = []
     
     # Campos de búsqueda
@@ -119,22 +159,26 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
             
             carrito_row = ft.Container(
                 content=ft.Row([
-                    ft.Text(item['descripcion'], width=220, size=12),
+                    ft.Text(item['descripcion'], width=200, size=12),
                     ft.Row([
-                        ft.IconButton(
-                            icon=ft.Icons.REMOVE,
-                            icon_size=6,
-                            on_click=lambda e, idx=i: cambiar_cantidad(idx, -1)
-                        ),
-                        ft.Text(f"x{item['cantidad']}", width=35, text_align=ft.TextAlign.CENTER, size=13),
-                        ft.IconButton(
-                            icon=ft.Icons.ADD,
-                            icon_size=6,
-                            on_click=lambda e, idx=i: cambiar_cantidad(idx, 1)
+                        ft.GestureDetector(
+                        on_tap=lambda e, idx=i: cambiar_cantidad(idx, -1),
+                        content=ft.Container(
+                            content=ft.Icon(ft.Icons.REMOVE, size=10, color=ft.Colors.WHITE),
+                            padding=ft.padding.only(right=8)  # agrega espacio a la derecha
                         )
+                        ),
+                        ft.Text(f"x{item['cantidad']}", width=25, text_align=ft.TextAlign.CENTER, size=12),
+                        ft.GestureDetector(
+                        on_tap=lambda e, idx=i: cambiar_cantidad(idx, 1),
+                        content=ft.Container(
+                            content=ft.Icon(ft.Icons.ADD, size=10, color=ft.Colors.WHITE),
+                            padding=ft.padding.only(right=8)  # agrega espacio a la derecha
+                        )
+                        ),
                     ], spacing=0),
                     ft.Text(f"${item['subtotal']:.2f}", width=90, text_align=ft.TextAlign.RIGHT, 
-                           weight=ft.FontWeight.BOLD, size=13),
+                           weight=ft.FontWeight.BOLD, size=12),
 
                     ft.GestureDetector(
                         on_tap=lambda e, idx=i: eliminar_item(idx),
@@ -142,11 +186,12 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                             content=ft.Icon(ft.Icons.DELETE, size=14, color=ft.Colors.RED_700),
                             padding=ft.padding.only(right=8)  # agrega espacio a la derecha
                     )
-)
+                    )
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 bgcolor=ft.Colors.GREEN_900,
-                padding=8,
-                border_radius=5
+                padding=0,
+                border_radius=5,
+                height=20
             )
             carrito_list.controls.append(carrito_row)
         
@@ -219,24 +264,6 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
 
         page.run_thread(delayed_close)
 
-
-    def mostrar_error(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.RED_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
-    
-    def mostrar_exito(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.GREEN_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
     
     # Handler para Enter en búsqueda
     def on_search_submit(e):
@@ -259,7 +286,7 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
     cancelar_pago = False
 
     def pagar_con_qr(e):
-        nonlocal cancelar_pago  # permite modificar variable externa
+        nonlocal cancelar_pago
         cancelar_pago = False
 
         if not carrito:
@@ -267,119 +294,83 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
             return
 
         total = sum(item['subtotal'] for item in carrito)
-        external_pos_id = "POS1762813032"
-        external_store_id = "SUC001"
+        external_pos_id =  db.get_config_value("EXTERNAL_POS_ID") or ""
+        external_store_id = db.get_config_value("EXTERNAL_STORE_ID") or ""
 
-        # --- Overlay modal mientras se espera el pago ---
-        overlay_spinner = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("Esperando pago del cliente...", size=16, weight=ft.FontWeight.BOLD),
-            content=ft.Container(
-                content=ft.Column([
-                    ft.ProgressRing(width=70, height=70, color=ft.Colors.PURPLE_400),
-                    ft.Text("Escaneá el QR con Mercado Pago", size=13, color=ft.Colors.GREY_400)
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                alignment=ft.MainAxisAlignment.CENTER),
-                alignment=ft.alignment.center,
-                width=300,
-                height=180
-            ),
-            actions=[
-                ft.TextButton(
-                    "CANCELAR",
-                    icon=ft.Icons.CANCEL,
-                    style=ft.ButtonStyle(color=ft.Colors.RED_600),
-                    on_click=lambda e: cancelar_espera()
-                )
-            ],
-            actions_alignment=ft.MainAxisAlignment.CENTER,
-            open=True
+        monitor_container = ft.Container(
+            bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.BLUE_GREY_800),
+            border_radius=8,
+            padding=10,
+            content=ft.Column([
+                ft.ProgressRing(width=10, height=10, color=ft.Colors.PURPLE_400),
+                ft.Text("El cliente debe escanear el QR con Mercado Pago...", size=10, color=ft.Colors.GREY_400),
+            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         )
-        page.dialog = overlay_spinner
+
+        # Reemplazar log_box por monitor_container
+        col_izquierda.content = monitor_container
         page.update()
 
-        # --- Función para cancelar ---
+        def log_ui(msg):
+            monitor_container.content.controls.append(
+                ft.Text(msg, color=ft.Colors.BLUE_100, size=12)
+            )
+            page.update()
+
         def cancelar_espera():
             nonlocal cancelar_pago
             cancelar_pago = True
-            overlay_spinner.open = False
+            col_izquierda.content = log_box
+            if cancel_button in dialog.actions:
+                dialog.actions.remove(cancel_button)
             page.update()
             mostrar_error("Pago cancelado por el usuario")
 
-            # 🔹 Llamada para liberar el POS inmediatamente
-            try:
-                import requests
-                url = f"https://api.mercadopago.com/instore/qr/seller/collectors/{USER_ID}/pos/{external_pos_id}/orders"
-                resp = requests.delete(url, headers={
-                    "Authorization": f"Bearer {ACCESS_TOKEN}",
-                    "Content-Type": "application/json"
-                })
-                if resp.status_code in (200, 204):
-                    print("✅ Orden eliminada correctamente, QR liberado.")
-                else:
-                    print(f"⚠️ No se pudo eliminar la orden ({resp.status_code})")
-            except Exception as err:
-                print(f"⚠️ Error al liberar QR: {err}")
+        # Botón de cancelar visible mientras se monitorea
+        cancel_button = ft.TextButton(
+            "CANCELAR PAGO",
+            icon=ft.Icons.CANCEL,
+            style=ft.ButtonStyle(color=ft.Colors.RED_600),
+            on_click=lambda e: cancelar_espera()
+        )
+        dialog.actions.insert(0, cancel_button)
+        page.update()
 
-        def log_ui(msg):
-            snack = ft.SnackBar(content=ft.Text(msg), bgcolor=ft.Colors.BLUE_GREY_900)
-            page.overlay.append(snack)
-            snack.open = True
+        # === Lógica asincrónica del proceso de pago ===
+        def proceso_pago():
+            ok = crear_orden(external_pos_id, external_store_id, total, cb=log_ui)
+            if not ok:
+                dialog.content.content.controls.remove(monitor_container)
+                page.update()
+                mostrar_error("Error al crear la orden en Mercado Pago")
+                return
+
+            ok = verificar_estado(external_pos_id, cb=log_ui, cancelar=lambda: cancelar_pago)
+            dialog.content.content.controls.remove(monitor_container)
+            if cancel_button in dialog.actions:
+                dialog.actions.remove(cancel_button)
             page.update()
 
-        # --- Crear orden ---
-        ok = crear_orden(external_pos_id, external_store_id, total, cb=log_ui)
-        if not ok:
-            overlay_spinner.open = False
-            page.update()
-            mostrar_error("Error al crear la orden en Mercado Pago")
-            return
-
-        # --- Monitorear el pago ---
-        def esperar_pago():
-            try:
-                for intento in range(60):  # 5 minutos aprox
-                    if cancelar_pago:
-                        print("🛑 Pago cancelado por el usuario.")
-                        return
-                    ok = verificar_estado(external_pos_id, cb=log_ui)
-                    if ok:
-                        overlay_spinner.open = False
-                        page.update()
-                        mostrar_exito("✅ Pago recibido. Confirmando venta...")
-                        confirmar_venta(False)
-                        return
-                    time.sleep(5)
-
-                # Timeout
-                overlay_spinner.open = False
+            if ok and not cancelar_pago:
+                col_izquierda.content = log_box
+                page.update()
+                mostrar_exito("✅ Pago recibido. Confirmando venta...")
+                confirmar_venta(False)
+            elif not cancelar_pago:
+                col_izquierda.content = log_box  
                 page.update()
                 mostrar_error("⏰ Tiempo agotado o pago no detectado.")
 
-                # 🔹 Limpiar QR al finalizar el ciclo sin pago
-                try:
-                    import requests
-                    url = f"https://api.mercadopago.com/instore/qr/seller/collectors/{USER_ID}/pos/{external_pos_id}/orders"
-                    requests.delete(url, headers={
-                        "Authorization": f"Bearer {ACCESS_TOKEN}",
-                        "Content-Type": "application/json"
-                    })
-                    print("♻️ QR liberado por timeout.")
-                except:
-                    pass
+        page.run_thread(proceso_pago)
 
-            except Exception as err:
-                overlay_spinner.open = False
-                page.update()
-                mostrar_error(f"⚠️ Error monitoreando pago: {err}")
 
-        page.run_thread(esperar_pago)
 
 
 
     # Contenido del modal
     dialog = ft.AlertDialog(
+
+
         modal=True,
         title=ft.Row([
             ft.Icon(ft.Icons.SHOPPING_CART, color=ft.Colors.GREEN_700),
@@ -389,66 +380,54 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         ]),
         content=ft.Container(
             content=ft.Column([
-                ft.Row([
-                    search_field,
-                    filtro_dropdown
-                ]),
+                ft.Row([search_field, filtro_dropdown]),
                 ft.Text("Resultados (click o Enter para agregar):", size=11, italic=True, color=ft.Colors.GREY_500),
-                ft.Container(
-                    content=resultados_list,
-                    border=ft.border.all(1, ft.Colors.BLUE_GREY_700),
-                    border_radius=5,
-                    padding=5
-                ),
+                ft.Container(content=resultados_list, border=ft.border.all(1, ft.Colors.BLUE_GREY_700), border_radius=5, padding=5),
                 ft.Divider(),
-                ft.Row([
-                    ft.Icon(ft.Icons.SHOPPING_CART, color=ft.Colors.GREEN_700, size=20),
-                    ft.Text("CARRITO", size=15, weight=ft.FontWeight.BOLD)
-                ]),
-                ft.Container(
-                    content=carrito_list,
-                    border=ft.border.all(1, ft.Colors.GREEN_700),
-                    border_radius=5,
-                    padding=5
-                ),
-                ft.Container(
-                    content=total_text,
-                    alignment=ft.alignment.center_right,
-                    padding=10
+                
+      
+                
+                ft.Row(
+                    [
+                        col_izquierda,  # Aquí irá log_box o monitor_container
+                        ft.Column(
+                            [   
+                             ft.Row([
+                                ft.Icon(ft.Icons.SHOPPING_CART, color=ft.Colors.GREEN_700, size=20),
+                                ft.Text("CARRITO", size=15, weight=ft.FontWeight.BOLD),
+                            ]),
+                                ft.Container(content=carrito_list, border=ft.border.all(1, ft.Colors.GREEN_700), border_radius=5, padding=5, expand=True),
+                                ft.Container(content=total_text, alignment=ft.alignment.center_right, padding=10)
+                            
+                            ],
+                            expand=2,
+                            spacing=10
+                        )
+                    ],
+                    spacing=20,
+                    expand=True
                 )
-            ], scroll=ft.ScrollMode.AUTO, spacing=8),
-            width=700,
-            height=480
+
+            ],
+            scroll=ft.ScrollMode.AUTO,
+            spacing=8),
+            height=500,
+            width= 1000
+            
         ),
         actions=[
             ft.TextButton("ABORTAR", on_click=abortar),
+            ft.ElevatedButton("CONFIRMAR E IMPRIMIR", icon=ft.Icons.PRINT, on_click=lambda e: confirmar_venta(True), style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)),
+
             ft.ElevatedButton(
-                "CONFIRMAR E IMPRIMIR",
-                icon=ft.Icons.PRINT,
-                on_click=lambda e: confirmar_venta(True),
-                style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.BLUE_700,
-                    color=ft.Colors.WHITE
-                )
-            ),
-            ft.ElevatedButton(
-                "PAGAR CON MERCADO PAGO",
-                icon=ft.Icons.QR_CODE_2,
+                content=ft.Image(src="img/logomp.png", width=170, height=34),
                 on_click=pagar_con_qr,
                 style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.PURPLE_700,
-                    color=ft.Colors.WHITE
+                    bgcolor=ft.Colors.TRANSPARENT
                 )
             ),
-            ft.ElevatedButton(
-                "CONFIRMAR VENTA",
-                icon=ft.Icons.CHECK_CIRCLE,
-                on_click=lambda e: confirmar_venta(False),
-                style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.GREEN_700,
-                    color=ft.Colors.WHITE
-                )
-            )
+
+            ft.ElevatedButton("CONFIRMAR VENTA", icon=ft.Icons.CHECK_CIRCLE, on_click=lambda e: confirmar_venta(False), style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE))
         ],
         actions_alignment=ft.MainAxisAlignment.END,
         open=True
