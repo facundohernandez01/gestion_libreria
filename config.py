@@ -358,7 +358,7 @@ def ConfigModal(page: ft.Page):
     def crear_pos_adicional(e):
         token = token_field.value.strip()
         uid = user_field.value.strip()
-        store_id = db.get_config("EXTERNAL_STORE_ID")
+        store_id = db.get_config("STORE_ID")  # ✅ usamos el numérico, no el EXTERNAL
 
         if not token or not uid or not store_id:
             resultado_text.value = "❌ Faltan datos para crear el POS adicional"
@@ -374,10 +374,11 @@ def ConfigModal(page: ft.Page):
                 pos_payload = {
                     "name": f"Caja {int(time.time())}",
                     "external_id": f"POS{int(time.time())}",
-                    "store_id": store_id,
+                    "store_id": int(store_id),  # ✅ importante: convertir a número
                     "fixed_amount": True,
                     "category": 621102
                 }
+
                 pos_resp = requests.post("https://api.mercadopago.com/pos", headers=headers, json=pos_payload)
                 if pos_resp.status_code not in [200, 201]:
                     resultado_text.value = f"❌ Error creando POS: {pos_resp.text}"
