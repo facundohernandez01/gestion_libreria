@@ -463,9 +463,6 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
 
     def _nav_teclado(e):
         key = (getattr(e, "key", "") or "").lower()
-        import os as _os
-        if _os.environ.get("KEY_DEBUG"):
-            print("KEYDBG nav", repr(key), "results=", len(resultados_actuales), "idx=", indice_seleccionado, flush=True)
         if key in ("arrow up", "arrowup", "up"):
             _mover_seleccion(-1)
         elif key in ("arrow down", "arrowdown", "down"):

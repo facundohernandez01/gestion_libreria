@@ -55,8 +55,6 @@ class LibreriaApp:
     # ---------- teclado ----------
     def _on_keyboard(self, e):
         key = (getattr(e, "key", "") or "").lower()
-        if os.environ.get("KEY_DEBUG") and "arrow" in key:
-            print("KEYDBG page", repr(getattr(e, "key", "")), "alt=", getattr(e, "alt", None), flush=True)
         if key == "escape":
             try:
                 dialogs = getattr(self.page, "_dialogs", None)
