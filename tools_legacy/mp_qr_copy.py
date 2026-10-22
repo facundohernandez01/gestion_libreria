@@ -2,8 +2,8 @@ import requests
 import time
 import json
 
-ACCESS_TOKEN = "APP_USR-2575300947252064-111011-7baddd566dc2eee1112cb9f85e829a87-2674497459"
-USER_ID = "2674497459"
+ACCESS_TOKEN = "APP_USR-***REVOCAR***"
+USER_ID = "***"
 
 HEADERS = {
     "Authorization": f"Bearer {ACCESS_TOKEN}",

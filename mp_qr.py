@@ -1,144 +1,37 @@
-import requests
-import time
-import json
+"""Compatibilidad hacia atrás: delega en services.mercadopago_service.
 
-# === CONFIGURACIÓN ===
-from database_manager import DatabaseManager
-db = DatabaseManager()
-
-ACCESS_TOKEN = db.get_config_value("ACCESS_TOKEN") or "SIN_APP_USR-2575300947252064-111011-7baddd566dc2eee1112cb9f85e829a87-2674497459TOKEN"
-USER_ID = db.get_config_value("USER_ID") or "2674497459"
-
-
-
-HEADERS = {
-    "Authorization": f"Bearer {ACCESS_TOKEN}",
-    "Content-Type": "application/json"
-}
+NO contiene secretos. Los tokens salen de .env (core.settings) o tabla config.
+Se mantiene para no romper `from mp_qr import crear_orden, verificar_estado`.
+Código nuevo: importar desde services.mercadopago_service.
+"""
+from services.mercadopago_service import mp_service
 
 ultima_referencia = None
 
 
-# --- Utilidad para registrar mensajes (callback desde Flet opcional) ---
-def log(msg, cb=None):
-    """Si se pasa un callback (desde Flet), lo usa; sino imprime."""
-    if cb:
-        try:
-            cb(msg)
-        except Exception:
-            print(msg)
-    else:
-        print(msg)
-
-
-# --- CREAR ORDEN ---
-def crear_orden(external_pos_id, external_store_id, monto, cb=None):
-    """Crea una orden QR dinámica en Mercado Pago"""
+def _sync_ref():
     global ultima_referencia
-    ultima_referencia = f"ORDER_{int(time.time())}"
-    url = (
-        f"https://api.mercadopago.com/instore/qr/seller/collectors/"
-        f"{USER_ID}/stores/{external_store_id}/pos/{external_pos_id}/orders"
-    )
-    payload = {
-        "external_reference": ultima_referencia,
-        "title": "Venta en local",
-        "description": f"Cobro de ${monto}",
-        "total_amount": float(monto),
-        "items": [
-            {
-                "sku_number": "LOCAL001",
-                "category": "marketplace",
-                "title": "Venta en local",
-                "description": "Cobro en mostrador",
-                "unit_price": float(monto),
-                "quantity": 1,
-                "unit_measure": "unit",
-                "total_amount": float(monto),
-            }
-        ],
-    }
+    ultima_referencia = mp_service._ultima_referencia
 
-    log(f"🤳 Creando  QR por ${monto:.2f}...", cb)
-    resp = requests.put(url, headers=HEADERS, json=payload)
 
-    if resp.status_code == 204:
-        log("✅ Orden creada exitosamente. Esperando pago del cliente...", cb)
-        return True
-    else:
-        log(f"❌ Error creando orden ({resp.status_code}) - {resp.text}", cb)
-        return False
+def crear_orden(external_pos_id, external_store_id, monto, cb=None):
+    ok = mp_service.crear_orden(monto, cb=cb, pos_ext=external_pos_id, store_ext=external_store_id)
+    _sync_ref()
+    return ok
+
 
 def verificar_estado(external_pos_id, timeout=300, intervalo=5, cb=None, cancelar=None):
-    """
-    Consulta el estado del POS QR hasta que la orden sea pagada, expire o se cancele.
-    Devuelve True si se detecta un pago exitoso.
-    """
-    url = (
-        f"https://api.mercadopago.com/instore/qr/seller/collectors/"
-        f"{USER_ID}/pos/{external_pos_id}/orders"
-    )
-    inicio = time.time()
-    intentos = 0
-    log(f"💳 Esperando pago del QR {external_pos_id}...", cb)
+    return mp_service.verificar_estado(cb=cb, cancelar=cancelar, pos_ext=external_pos_id,
+                                       timeout=timeout, intervalo=intervalo)
 
-    while (time.time() - inicio) < timeout:
-        if cancelar and cancelar():  # ✅ Chequeo de cancelación
-            log("❌ Pago cancelado por el usuario.", cb)
-            return False
 
-        intentos += 1
-        resp = requests.get(url, headers=HEADERS)
-
-        if resp.status_code == 200:
-            data = resp.json()
-            estado = data.get("order_status", "unknown")
-            pagado = data.get("paid_amount", 0)
-            total = data.get("total_amount", 0)
-
-            if estado == "paid" or pagado >= total:
-                log("✅ ¡Pago recibido correctamente!", cb)
-                pagos = data.get("payments", [])
-                if pagos:
-                    pago = pagos[0]
-                    log(f"💳 Payment ID: {pago.get('id')} \n Estado: {pago.get('status')}", cb)
-                return True
-
-        elif resp.status_code == 404:
-            log("📭 La orden ya no está activa. Verificando último pago...", cb)
-            return consultar_ultimo_pago_por_referencia(cb)
-
-        elif resp.status_code >= 400:
-            log(f"⚠️ Error {resp.status_code}: {resp.text}", cb)
-
-        time.sleep(intervalo)
-
-    log("⏰ Tiempo de espera agotado. La orden sigue abierta.", cb)
-    return False
-
-# --- CONSULTAR ÚLTIMO PAGO POR REFERENCIA ---
 def consultar_ultimo_pago_por_referencia(cb=None):
-    """Busca el último pago asociado a la external_reference de la última orden."""
-    global ultima_referencia
-    if not ultima_referencia:
-        log("⚠️ No hay external_reference guardada para buscar pago.", cb)
-        return False
+    return mp_service.consultar_ultimo_pago(cb=cb)
 
-    url = f"https://api.mercadopago.com/v1/payments/search?external_reference={ultima_referencia}"
-    resp = requests.get(url, headers=HEADERS)
 
-    if resp.status_code == 200:
-        data = resp.json()
-        resultados = data.get("results", [])
-        if resultados:
-            pago = resultados[0]
-            estado = pago.get("status")
-            monto = pago.get("transaction_amount")
-            log(f"💰 Pago detectado: ID={pago.get('id')} | Estado={estado} | Monto=${monto}", cb)
-            return estado == "approved"
-        else:
-            log("⚠️ No se encontraron pagos recientes con esa referencia.", cb)
-    else:
-        log(f"⚠️ Error consultando pagos ({resp.status_code}) - {resp.text}", cb)
-
-    return False
+# Propiedades legacy leídas bajo demanda (no import-time DB con token quemado)
+def __getattr__(name):
+    if name in ("ACCESS_TOKEN", "USER_ID"):
+        token, uid, _, _ = mp_service.credenciales()
+        return token if name == "ACCESS_TOKEN" else uid
+    raise AttributeError(name)

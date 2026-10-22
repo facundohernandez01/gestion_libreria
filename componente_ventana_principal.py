@@ -2,25 +2,45 @@ import flet as ft
 from datetime import datetime
 from mostrar_qr import mostrar_qr
 from config import ConfigModal
+from core.permisos import tiene
+from ui.helpers import abrir_dialogo, cerrar_dialogo
 
-def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja):
+def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja, on_compras=None, on_historial_cajas=None, on_ingreso_stock=None, on_salir=None, permisos=None, es_admin=False, on_roles_usuarios=None, modo_cliente=False):
     """Ventana principal con lista de ventas y acciones"""
+    permisos = permisos or {}
+
+    def puede(clave):
+        return tiene(permisos, clave, es_admin)
+
     def abrir_qr(e):
         dlg = ft.AlertDialog(
             modal=True,
             content=mostrar_qr(page),
             actions=[
-                ft.TextButton("Cerrar", on_click=lambda e: page.close(dlg))
+                ft.TextButton("Cerrar", on_click=lambda e: cerrar_dialogo(page))
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
-        page.open(dlg)
+        abrir_dialogo(page, dlg)
 
     def abrir_config(e):
         dlg = ConfigModal(page)
-        page.open(dlg)
+        abrir_dialogo(page, dlg)
+
+    def abrir_reporte(e):
+        from componente_reporte import mostrar_reporte_ventas
+        mostrar_reporte_ventas(page, db_manager)
 
     
+    try:
+        pendientes_compra = db_manager.contar_ordenes_pendientes()
+    except Exception:
+        try:
+            pendientes_compra = (db_manager.contar_ordenes_compra("en_proceso")
+                                 + db_manager.contar_ordenes_compra("parcial"))
+        except Exception:
+            pendientes_compra = 0
+
     # Obtener ventas del día
     ventas = db_manager.obtener_ventas_del_dia(caja_id)
     total_vendido = sum(v['total'] for v in ventas)
@@ -66,7 +86,8 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                             color=ft.Colors.WHITE
                         ),
                         ft.Text(
-                            venta['fecha'][11:16] if len(venta['fecha']) > 11 else 'N/A',
+                            (venta['fecha'][11:16] if len(venta['fecha']) > 11 else 'N/A')
+                            + (f" · {venta.get('usuario')}" if venta.get('usuario') else ""),
                             size=11,
                             color=ft.Colors.with_opacity(0.5, ft.Colors.WHITE)
                         )
@@ -117,7 +138,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                     content=items_col,
                     bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
                     padding=12,
-                    margin=ft.margin.only(left=10, right=2, top=0, bottom=5),
+                    margin=ft.Margin.only(left=10, right=2, top=0, bottom=5),
                     border_radius=8,
                     animate=ft.Animation(200, ft.AnimationCurve.EASE_IN_OUT)
                 )
@@ -135,7 +156,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                             color=ft.Colors.with_opacity(0.5, ft.Colors.WHITE)
                         )
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=15),
-                    alignment=ft.alignment.center,
+                    alignment=ft.Alignment.CENTER,
                     padding=60
                 )
             )
@@ -172,20 +193,31 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     
     # Header mejorado
     header = ft.Container(
-        content=ft.Column([
-
+        content=ft.Row([
+            ft.Container(expand=True),
             ft.Row([
                 ft.Icon(ft.Icons.CALENDAR_TODAY, size=20, color=ft.Colors.with_opacity(0.7, ft.Colors.WHITE)),
-                ft.Text(f"{datetime.now().strftime('%d/%m/%Y')}", size=15, 
+                ft.Text(f"{datetime.now().strftime('%d/%m/%Y')}", size=15,
                        color=ft.Colors.with_opacity(0.9, ft.Colors.WHITE)),
                 ft.Container(width=40),
                 ft.Icon(ft.Icons.POINT_OF_SALE, size=20, color=ft.Colors.with_opacity(0.7, ft.Colors.WHITE)),
-                ft.Text(f"Caja #{caja_id:04d}", size=20, weight=ft.FontWeight.BOLD,
-                       color=ft.Colors.with_opacity(0.9, ft.Colors.WHITE))
-            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8)
-        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=3),
+                ft.Text(f"Caja #{caja_id:04d}" if caja_id else "Sin caja abierta",
+                       size=20, weight=ft.FontWeight.BOLD,
+                       color=ft.Colors.with_opacity(0.9, ft.Colors.WHITE)),
+                ft.Container(width=20),
+                ft.Icon(ft.Icons.PERSON, size=18,
+                        color=ft.Colors.with_opacity(0.7, ft.Colors.WHITE)),
+                ft.Text(f"{getattr(db_manager, 'usuario_actual', '') or '—'}",
+                       size=13, color=ft.Colors.with_opacity(0.85, ft.Colors.WHITE)),
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            ft.Container(expand=True),
+            ft.TextButton(
+                "SALIR", icon=ft.Icons.LOGOUT,
+                style=ft.ButtonStyle(color=ft.Colors.WHITE),
+                on_click=lambda _e: on_salir() if on_salir else None),
+        ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
         bgcolor=ft.Colors.BLUE_900,
-        padding=1
+        padding=ft.Padding.symmetric(horizontal=8, vertical=1)
     )
     
     # Sección de ventas de hoy
@@ -194,7 +226,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
             ft.Icon(ft.Icons.HISTORY, color=ft.Colors.BLUE_400, size=28),
             ft.Text("VENTAS DE HOY", size=22, weight=ft.FontWeight.BOLD)
         ], spacing=1),
-        padding=ft.padding.only(left=1, bottom=1)
+        padding=ft.Padding.only(left=1, bottom=1)
     )
     
     # Panel derecho con total y botones
@@ -203,7 +235,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
             # Botones de nueva venta
             ft.Container(
                 content=ft.Column([
-                    ft.ElevatedButton(
+                    ft.FilledButton(
                         content=ft.Column([
                             ft.Icon(ft.Icons.KEYBOARD, size=40, color=ft.Colors.WHITE),
                             ft.Container(height=5),
@@ -219,7 +251,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                         ),
                         on_click=lambda e: on_nueva_venta_teclado()
                     ),
-                    ft.ElevatedButton(
+                    ft.FilledButton(
                         content=ft.Column([
                             ft.Icon(ft.Icons.QR_CODE_SCANNER, size=40, color=ft.Colors.WHITE),
                             ft.Container(height=5),
@@ -235,7 +267,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                         ),
                         on_click=lambda e: on_nueva_venta_lector()
                     ),
-                    ft.ElevatedButton(
+                    ft.FilledButton(
                         content=ft.Row([
                             ft.Icon(ft.Icons.QR_CODE_2, size=20, color=ft.Colors.WHITE),
                             ft.Text("MOSTRAR QR", size=13, color=ft.Colors.WHITE)
@@ -250,7 +282,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                         on_click=abrir_qr
                 ),
                 ]),
-                alignment=ft.alignment.top_center
+                alignment=ft.Alignment.TOP_CENTER
             ),
             ft.Container(expand=True),
             # Total vendido
@@ -273,7 +305,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 border_radius=8,
                 width=180,
                 height=110,
-                border=ft.border.all(2, ft.Colors.GREEN_700)
+                border=ft.Border.all(2, ft.Colors.GREEN_700)
             ),
             ft.Container(height=20),
             # Botones de acción
@@ -283,6 +315,96 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         expand=True,
     )
     
+    # Botones de acción según permisos del rol
+    botones_accion = []
+    if puede("ARTICULOS"):
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.INVENTORY_2, size=20),
+                ft.Text("GESTIÓN ARTÍCULOS", size=13)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=8)),
+            on_click=lambda e: on_gestion_articulos()))
+    if puede("COMPRAS"):
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.SHOPPING_CART, size=20, color=ft.Colors.WHITE),
+                ft.Text(f"COMPRAS ({pendientes_compra})" if pendientes_compra
+                        else "COMPRAS", size=13, color=ft.Colors.WHITE)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.ORANGE_800,
+                                 shape=ft.RoundedRectangleBorder(radius=8),
+                                 elevation=3),
+            on_click=lambda e: on_compras() if on_compras else None))
+    if puede("CAJA"):
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.LOCK, size=20, color=ft.Colors.WHITE),
+                ft.Text("CERRAR CAJA", size=13, color=ft.Colors.WHITE)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700,
+                                 shape=ft.RoundedRectangleBorder(radius=8),
+                                 elevation=3),
+            on_click=lambda e: on_cerrar_caja()))
+    if puede("REPORTES"):
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.ASSESSMENT, size=20, color=ft.Colors.WHITE),
+                ft.Text("REPORTES", size=13, color=ft.Colors.WHITE)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.TEAL_700,
+                                 shape=ft.RoundedRectangleBorder(radius=8),
+                                 elevation=3),
+            on_click=abrir_reporte))
+    if puede("HISTORIAL_CAJAS"):
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET, size=20, color=ft.Colors.WHITE),
+                ft.Text("HISTORIAL DE CAJAS", size=13, color=ft.Colors.WHITE)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.INDIGO_800,
+                                 shape=ft.RoundedRectangleBorder(radius=8),
+                                 elevation=3),
+            on_click=lambda e: on_historial_cajas() if on_historial_cajas else None))
+    if puede("STOCK"):
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.ADD_BOX, size=20, color=ft.Colors.WHITE),
+                ft.Text("INGRESO STOCK", size=13, color=ft.Colors.WHITE)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.CYAN_800,
+                                 shape=ft.RoundedRectangleBorder(radius=8),
+                                 elevation=3),
+            on_click=lambda e: on_ingreso_stock() if on_ingreso_stock else None))
+    if es_admin and not modo_cliente and on_roles_usuarios:
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.MANAGE_ACCOUNTS, size=20, color=ft.Colors.WHITE),
+                ft.Text("ROLES Y USUARIOS", size=13, color=ft.Colors.WHITE)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.PURPLE_700,
+                                 shape=ft.RoundedRectangleBorder(radius=8),
+                                 elevation=3),
+            on_click=lambda e: on_roles_usuarios()))
+    if puede("CONFIGURACION") and not modo_cliente:
+        botones_accion.append(ft.FilledButton(
+            content=ft.Row([
+                ft.Icon(ft.Icons.SETTINGS_APPLICATIONS, size=20, color=ft.Colors.WHITE),
+                ft.Text("Ajustes", size=13, color=ft.Colors.WHITE)
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
+            width=200, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.BLACK,
+                                 shape=ft.RoundedRectangleBorder(radius=8),
+                                 elevation=3),
+            on_click=abrir_config))
+
     # Layout principal
     contenido_principal = ft.Row([
         # Panel izquierdo - Ventas
@@ -291,51 +413,10 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
             ventas_container,
             ft.Container(height=20),
 
-            ft.Row([
-                ft.ElevatedButton(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.INVENTORY_2, size=20),
-                        ft.Text("GESTIÓN ARTÍCULOS", size=13)
-                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
-                    width=200,
-                    height=45,
-                    style=ft.ButtonStyle(
-                        shape=ft.RoundedRectangleBorder(radius=8)
-                    ),
-                    on_click=lambda e: on_gestion_articulos()
-                ),
-                ft.ElevatedButton(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.LOCK, size=20, color=ft.Colors.WHITE),
-                        ft.Text("CERRAR CAJA", size=13, color=ft.Colors.WHITE)
-                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
-                    width=200,
-                    height=45,
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.RED_700,
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                        elevation=3
-                    ),
-                    on_click=lambda e: on_cerrar_caja()
-                ),
-                # 🎯 Ejemplo de botón adicional
-                ft.ElevatedButton(
-                    content=ft.Row([
-                        ft.Icon(ft.Icons.SETTINGS_APPLICATIONS, size=20, color=ft.Colors.WHITE),
-                        ft.Text("Ajustes", size=13, color=ft.Colors.WHITE)
-                    ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
-                    width=200,
-                    height=45,
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.BLACK,
-                        shape=ft.RoundedRectangleBorder(radius=8),
-                        elevation=3
-                    ),
-                    on_click=abrir_config
-                )
-            ],        
-            alignment=ft.MainAxisAlignment.START,  # izquierda
-            spacing=15  # separación entre botones
+            ft.Row(botones_accion,
+            alignment=ft.MainAxisAlignment.START,
+            spacing=15,
+            wrap=True,
             )
         ], 
         spacing=10,
@@ -369,7 +450,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
             ft.Container(
             content=contenido_principal,
             width=1200,  # ancho máximo
-            alignment=ft.alignment.center
+            alignment=ft.Alignment.CENTER
         )
 
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, scroll=ft.ScrollMode.AUTO, expand=True),

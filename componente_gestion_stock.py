@@ -12,7 +12,7 @@ class GestionStockView(ft.Container):
             content=ft.Text("GESTIÓN DE STOCK", size=28, weight=ft.FontWeight.BOLD),
             bgcolor=ft.Colors.BLUE_900,
             padding=20,
-            alignment=ft.alignment.center
+            alignment=ft.Alignment.CENTER
         )
         
         # Alertas de stock bajo
@@ -48,7 +48,7 @@ class GestionStockView(ft.Container):
         )
         
         # Botón volver
-        self.btn_volver = ft.ElevatedButton(
+        self.btn_volver = ft.FilledButton(
             text="VOLVER",
             icon=ft.Icons.ARROW_BACK,
             on_click=lambda e: self.on_volver()
@@ -64,7 +64,7 @@ class GestionStockView(ft.Container):
             ft.Container(height=10),
             ft.Container(
                 content=self.btn_volver,
-                alignment=ft.alignment.center
+                alignment=ft.Alignment.CENTER
             )
         ], expand=True)
         
@@ -188,7 +188,7 @@ class GestionStockView(ft.Container):
                         padding=8,
                         border_radius=5
                     ),
-                    ft.ElevatedButton(
+                    ft.FilledButton(
                         "AJUSTAR",
                         icon=ft.Icons.EDIT,
                         on_click=lambda e, p=producto: self.ajustar_stock_producto(p)
@@ -210,7 +210,7 @@ class GestionStockView(ft.Container):
                                size=18, color=ft.Colors.GREEN_700, weight=ft.FontWeight.BOLD)
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
                     padding=40,
-                    alignment=ft.alignment.center
+                    alignment=ft.Alignment.CENTER
                 )
             )
         
@@ -240,7 +240,7 @@ class GestionStockView(ft.Container):
                                size=14, color=stock_color, weight=ft.FontWeight.BOLD),
                         ft.Text(f"Mínimo: {producto['stock_minimo']}", size=11)
                     ], horizontal_alignment=ft.CrossAxisAlignment.END),
-                    ft.ElevatedButton(
+                    ft.FilledButton(
                         "AJUSTAR",
                         icon=ft.Icons.EDIT,
                         on_click=lambda e, p=producto: self.ajustar_stock_producto(p)
@@ -292,7 +292,8 @@ class GestionStockView(ft.Container):
                 
                 if exito:
                     self.mostrar_exito(f"Stock actualizado: {producto['stock_actual']} → {nueva_cantidad}")
-                    dialog.open = False
+                    from ui.helpers import cerrar_dialogo as _cerrar
+                    _cerrar(self.page)
                     self.cargar_stock_bajo()
                     self.buscar_para_ajuste(None)
                 else:
@@ -319,7 +320,7 @@ class GestionStockView(ft.Container):
             ),
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda e: self.cerrar_dialog(dialog)),
-                ft.ElevatedButton(
+                ft.FilledButton(
                     "GUARDAR",
                     icon=ft.Icons.SAVE,
                     on_click=guardar_ajuste,
@@ -328,13 +329,12 @@ class GestionStockView(ft.Container):
             ]
         )
         
-        self.page.overlay.append(dialog)
-        dialog.open = True
-        self.page.update()
-    
+        from ui.helpers import abrir_dialogo as _abrir, cerrar_dialogo as _cerrar2
+        _abrir(self.page, dialog)
+
     def cerrar_dialog(self, dialog):
-        dialog.open = False
-        self.page.update()
+        from ui.helpers import cerrar_dialogo as _cerrar3
+        _cerrar3(self.page)
     
     def cargar_movimientos(self):
         """Carga el historial de movimientos (implementación básica)"""
@@ -347,22 +347,12 @@ class GestionStockView(ft.Container):
         self.page.update()
     
     def mostrar_error(self, mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.RED_700
-        )
-        self.page.overlay.append(snack)
-        snack.open = True
-        self.page.update()
-    
+        from ui.helpers import snack as _snack
+        _snack(self.page, mensaje, ok=False)
+
     def mostrar_exito(self, mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.GREEN_700
-        )
-        self.page.overlay.append(snack)
-        snack.open = True
-        self.page.update()
+        from ui.helpers import snack as _snack
+        _snack(self.page, mensaje, ok=True)
     
     def did_mount(self):
         """Se ejecuta cuando el componente se monta"""

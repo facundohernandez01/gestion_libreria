@@ -1,258 +1,222 @@
-import flet as ft
-import pandas as pd
+"""Gestión de artículos con import/export Excel via ExcelService."""
+import asyncio
 from datetime import datetime
+from pathlib import Path
 
-def GestionArticulosView(db_manager, on_volver, page):
-    """Vista de gestión de artículos"""
-    
-    # DataTable
+import flet as ft
+
+from core.permisos import tiene
+from services.excel_service import excel_service
+from ui.helpers import abrir_dialogo, snack
+from ui.theme import BTN_PRIMARIO
+from utils.file_dialogs import agregar_extension, pick_file, save_file
+
+
+def GestionArticulosView(db_manager, on_volver, page, permisos=None,
+                         es_admin=False):
+    permisos = permisos or {}
+
+    def puede(clave):
+        return tiene(permisos, clave, es_admin)
     productos_table = ft.DataTable(
-        columns=[
-            ft.DataColumn(ft.Text("Código")),
-            ft.DataColumn(ft.Text("Descripción")),
-            ft.DataColumn(ft.Text("Marca")),
-            ft.DataColumn(ft.Text("Precio")),
-            ft.DataColumn(ft.Text("Stock")),
-            ft.DataColumn(ft.Text("Acciones"))
-        ],
-        rows=[],
-        column_spacing=20
+        columns=[ft.DataColumn(ft.Text("Código", size=12)),
+                 ft.DataColumn(ft.Text("Descripción", size=12)),
+                 ft.DataColumn(ft.Text("Marca", size=12)),
+                 ft.DataColumn(ft.Text("Proveedor", size=12)),
+                 ft.DataColumn(ft.Text("Precio", size=12)),
+                 ft.DataColumn(ft.Text("Stock", size=12)),
+                 ft.DataColumn(ft.Text("Acciones", size=12))],
+        rows=[], column_spacing=26, heading_row_height=38,
+        data_row_min_height=44, data_row_max_height=56,
     )
-    
-    # Buscador
-    search_field = ft.TextField(
-        label="BUSCAR",
-        prefix_icon=ft.Icons.SEARCH,
-        width=350,
-        hint_text="Busque por código, descripción o categoría..."
-    )
-    
-    filtro_dropdown = ft.Dropdown(
-        width=150,
-        value="descripcion",
-        options=[
-            ft.dropdown.Option("descripcion", "Descripción"),
-            ft.dropdown.Option("categoria", "Categoría"),
-            ft.dropdown.Option("codigo", "Código")
-        ]
-    )
-    
+    contador_text = ft.Text("", size=12, color=ft.Colors.GREY_400)
+    search_field = ft.TextField(label="BUSCAR", prefix_icon=ft.Icons.SEARCH, width=350,
+                                hint_text="Código, descripción o categoría…")
+    filtro_dropdown = ft.Dropdown(width=150, value="descripcion", options=[
+        ft.dropdown.Option("descripcion", "Descripción"),
+        ft.dropdown.Option("categoria", "Categoría"),
+        ft.dropdown.Option("codigo", "Código")])
+
     def cargar_productos(productos=None):
-        """Carga productos en la tabla"""
         if productos is None:
             productos = db_manager.buscar_productos("", "descripcion")
-        
         productos_table.rows.clear()
-        
         for producto in productos:
-            stock_color = ft.Colors.GREEN_700 if producto['stock_actual'] > producto['stock_minimo'] else ft.Colors.RED_700
-            
-            def crear_handler_editar(p):
-                return lambda e: editar_producto(p)
-            
-            row = ft.DataRow(
-                cells=[
-                    ft.DataCell(ft.Text(producto['codigo'], size=12)),
-                    ft.DataCell(ft.Text(producto['descripcion'], size=12)),
-                    ft.DataCell(ft.Text(producto.get('marca', '') or '', size=12)),
-                    ft.DataCell(ft.Text(f"${producto['precio_lista']:.2f}", size=12)),
-                    ft.DataCell(ft.Text(str(producto['stock_actual']), color=stock_color, size=12)),
-                    ft.DataCell(
-                        ft.IconButton(
-                            icon=ft.Icons.EDIT,
-                            icon_color=ft.Colors.BLUE_400,
-                            tooltip="Editar",
-                            on_click=crear_handler_editar(producto)
-                        )
-                    )
-                ],
-                on_select_changed=crear_handler_editar(producto)
-            )
-            productos_table.rows.append(row)
-        
+            stock_color = ft.Colors.GREEN_700 if producto["stock_actual"] > producto["stock_minimo"] else ft.Colors.RED_700
+
+            def _h(p):
+                return lambda _: editar_producto(p)
+
+            def _hist(p):
+                return lambda _: ver_historial(p)
+
+            productos_table.rows.append(ft.DataRow(cells=[
+                ft.DataCell(ft.Text(producto["codigo"], size=12, width=130)),
+                ft.DataCell(ft.Text(producto["descripcion"], size=12, width=360,
+                                    max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS)),
+                ft.DataCell(ft.Text(producto.get("marca", "") or "", size=12,
+                                    width=120)),
+                ft.DataCell(ft.Text(producto.get("proveedor_nombre") or "—", size=12,
+                                    width=170, max_lines=1,
+                                    overflow=ft.TextOverflow.ELLIPSIS)),
+                ft.DataCell(ft.Text(f"${producto['precio_lista']:,.2f}", size=12,
+                                    width=100)),
+                ft.DataCell(ft.Text(str(producto["stock_actual"]), color=stock_color,
+                                    size=12, width=70)),
+                ft.DataCell(ft.Row([
+                    ft.IconButton(icon=ft.Icons.EDIT, icon_color=ft.Colors.BLUE_400,
+                                  tooltip="Editar", on_click=_h(producto)),
+                    ft.IconButton(icon=ft.Icons.HISTORY, icon_color=ft.Colors.CYAN_400,
+                                  tooltip="Movimientos de stock", on_click=_hist(producto)),
+                ], spacing=0)),
+            ]))
+        contador_text.value = f"{len(productos)} artículo(s)"
         page.update()
-    
+
     def buscar_productos(e):
-        """Busca productos - búsqueda predictiva"""
-        termino = search_field.value
-        campo = filtro_dropdown.value
-        productos = db_manager.buscar_productos(termino, campo)
-        cargar_productos(productos)
-    
-    def nuevo_producto(e):
-        """Abre modal para crear nuevo producto"""
+        cargar_productos(db_manager.buscar_productos(search_field.value or "", filtro_dropdown.value))
+
+    def _abrir_modal(producto):
         from componente_producto import ProductoModal
-        modal = ProductoModal(
-            db_manager=db_manager,
-            producto=None,
-            on_guardado=lambda: cargar_productos(),
-            page=page
-        )
-        page.overlay.append(modal)
-        page.update()
-    
-    def editar_producto(producto):
-        """Abre modal para editar producto"""
-        from componente_producto import ProductoModal
-        modal = ProductoModal(
-            db_manager=db_manager,
-            producto=producto,
-            on_guardado=lambda: cargar_productos(),
-            page=page
-        )
-        page.overlay.append(modal)
-        page.update()
-    
-    def importar_excel(e):
-        def on_file_selected(e: ft.FilePickerResultEvent):
-            if e.files:
-                try:
-                    file_path = e.files[0].path
-                    df = pd.read_excel(file_path)
-                    
-                    # Obtener columnas del Excel
-                    columnas = df.columns.tolist()
-                    
-                    df = df.fillna({
-                        col: 0 if col.lower() in ['precio_lista', 'precio_costo', 'stock_inicial', 'stock_minimo'] else ''
-                        for col in columnas
-                    })
-                    
-                    importados = 0
-                    for _, row in df.iterrows():
-                        try:
-                            producto = {}
-                            for col in columnas:
-                                if col.lower() in ['precio_lista', 'precio_costo']:
-                                    producto[col] = float(row[col])
-                                elif col.lower() in ['stock_inicial', 'stock_minimo']:
-                                    producto[col] = int(row[col])
-                                else:
-                                    producto[col] = str(row[col]).strip()
-                            
-                            if not producto.get('codigo'):
-                                continue
-                            
-                            db_manager.guardar_producto(producto)
-                            importados += 1
-                        except Exception as ex:
-                            print(f"Error en fila: {ex}")
-                            continue
-                    
-                    mostrar_exito(f"Se importaron {importados} productos")
-                    cargar_productos()
-                except Exception as ex:
-                    mostrar_error(f"Error al importar: {str(ex)}")
-        
-        file_picker = ft.FilePicker(on_result=on_file_selected)
-        page.overlay.append(file_picker)
-        page.update()
-        file_picker.pick_files(
-            allowed_extensions=["xlsx", "xls"],
-            dialog_title="Seleccionar archivo Excel"
-        )
-        
-    def descargar_excel(e):
-        """Descarga productos a Excel"""
+        modal = ProductoModal(db_manager=db_manager, producto=producto,
+                              on_guardado=lambda: cargar_productos(), page=page)
+        abrir_dialogo(page, modal)
+
+    def nuevo_producto(e): _abrir_modal(None)
+    def editar_producto(p): _abrir_modal(p)
+
+    def ver_historial(p):
+        from componente_movimientos_stock import MovimientosStockModal
+        abrir_dialogo(page, MovimientosStockModal(db_manager, p, page))
+
+    def abrir_proveedores(e=None):
+        from componente_proveedores import ProveedoresModal
+        modal = ProveedoresModal(db_manager, page, on_cerrar=lambda: cargar_productos())
+        abrir_dialogo(page, modal)
+
+    def abrir_reponer(e=None):
+        from componente_reponer import ReponerModal
+        modal = ReponerModal(db_manager=db_manager, page=page,
+                             on_creada=lambda: cargar_productos())
+        abrir_dialogo(page, modal)
+
+    # ---- Excel ----
+    async def importar_excel(e):
         try:
-            productos = db_manager.buscar_productos("", "descripcion")
-            if not productos:
-                mostrar_error("No hay productos para exportar")
+            ruta = await pick_file(page, title="Seleccionar Excel",
+                                   extensions=["xlsx", "xls"])
+            if not ruta:
                 return
-            
-            df = pd.DataFrame(productos)
-            columnas = ['codigo', 'descripcion', 'categoria', 'marca', 
-                       'precio_lista', 'precio_costo', 'stock_actual', 'stock_minimo']
-            df = df[columnas]
-            
-            filename = f"productos_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
-            df.to_excel(filename, index=False)
-            
-            mostrar_exito(f"Archivo guardado: {filename}")
-        except Exception as ex:
-            mostrar_error(f"Error al exportar: {str(ex)}")
-    
-    def mostrar_error(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.RED_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
-    
-    def mostrar_exito(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.GREEN_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
-    
-    # Configurar eventos
+            imp, omi, errores = await asyncio.to_thread(
+                excel_service.importar, ruta, db_manager)
+            msg = f"Importados {imp} · omitidos {omi}"
+            if errores:
+                msg += " · " + " | ".join(errores[:3])
+            snack(page, msg, ok=imp > 0)
+            cargar_productos()
+        except Exception as ex:  # noqa: BLE001
+            snack(page, f"Error al importar: {ex}", ok=False)
+
+    async def exportar_excel(e):
+        try:
+            destino = await save_file(
+                page, title="Guardar catálogo",
+                file_name=f"productos_{datetime.now():%Y%m%d_%H%M%S}.xlsx",
+                extensions=["xlsx"])
+            if not destino:
+                return
+            ruta = await asyncio.to_thread(
+                excel_service.exportar, agregar_extension(destino, "xlsx"), db_manager)
+            snack(page, f"Exportado: {ruta}", ok=True)
+        except Exception as ex:  # noqa: BLE001
+            snack(page, f"Error al exportar: {ex}", ok=False)
+
+    def descargar_plantilla(e):
+        try:
+            import pandas as pd
+            cols = ["codigo", "descripcion", "categoria", "marca",
+                    "precio_lista", "precio_costo", "stock_inicial", "stock_minimo",
+                    "proveedor"]
+            ejemplo = [["7790001001234", "Cuaderno 84 hojas", "Libreria", "Rivadavia",
+                        1500.0, 900.0, 50, 10, "Proveedor Ejemplo"]]
+            p = Path("plantilla_productos.xlsx")
+            pd.DataFrame(ejemplo, columns=cols).to_excel(p, index=False)
+            snack(page, f"Plantilla: {p.resolve()}", ok=True)
+        except Exception as ex:  # noqa: BLE001
+            snack(page, f"Error: {ex}", ok=False)
+
     search_field.on_change = buscar_productos
-    
-    # Cargar productos iniciales
     cargar_productos()
-    
-    # Layout
+
+    botones_barra = [
+        search_field, filtro_dropdown,
+        ft.FilledButton("NUEVO PRODUCTO", icon=ft.Icons.ADD_CIRCLE,
+                        on_click=nuevo_producto, style=BTN_PRIMARIO,
+                        height=45),
+    ]
+    if puede("PROVEEDORES"):
+        botones_barra.append(ft.OutlinedButton(
+            "PROVEEDORES", icon=ft.Icons.LOCAL_SHIPPING,
+            on_click=abrir_proveedores, height=45))
+    if puede("COMPRAS"):
+        botones_barra.append(ft.FilledButton(
+            "REPONER", icon=ft.Icons.SHOPPING_CART,
+            on_click=abrir_reponer, height=45,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.ORANGE_800,
+                                 color=ft.Colors.WHITE)))
+
+    barra_busqueda = ft.Container(
+        content=ft.Column([
+            ft.Row(botones_barra, spacing=10, wrap=True,
+                   vertical_alignment=ft.CrossAxisAlignment.CENTER),
+        ], spacing=6),
+        padding=12, border_radius=8,
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.35, ft.Colors.BLUE_GREY_700)),
+        bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE),
+    )
+
     return ft.Container(
         content=ft.Column([
-            ft.Container(
-                content=ft.Text("GESTIÓN DE ARTÍCULOS", size=20, weight=ft.FontWeight.BOLD),
-                bgcolor=ft.Colors.BLUE_900,
-                padding=6,
-                alignment=ft.alignment.center
-            ),
-            ft.Container(height=15),
-            ft.Row([
-                search_field,
-                filtro_dropdown,
-                ft.ElevatedButton(
-                    "NUEVO PRODUCTO",
-                    icon=ft.Icons.ADD_CIRCLE,
-                    on_click=nuevo_producto,
-                    style=ft.ButtonStyle(
-                        bgcolor=ft.Colors.GREEN_700,
-                        color=ft.Colors.WHITE
-                    ),
-                    height=45
-                )
-            ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
+            ft.Container(content=ft.Text("GESTIÓN DE ARTÍCULOS", size=20,
+                                         weight=ft.FontWeight.BOLD),
+                         bgcolor=ft.Colors.BLUE_900, padding=8,
+                         alignment=ft.Alignment.CENTER),
             ft.Container(height=10),
+            barra_busqueda,
+            ft.Container(height=8),
             ft.Container(
-                content=ft.Row(
-                    [productos_table],
-                    alignment=ft.MainAxisAlignment.CENTER  # 🔹 Centra la tabla horizontalmente
-                ),
-                height=400,
-                border=ft.border.all(1, ft.Colors.BLUE_GREY_700),
-                border_radius=5,
-                padding=10,
-                alignment=ft.alignment.center,  # 🔹 Centra también verticalmente
+                content=ft.Column([
+                    ft.Row([contador_text, ft.Container(expand=True)]),
+                    ft.Column([productos_table], scroll=ft.ScrollMode.AUTO,
+                              expand=True),
+                ], spacing=4, expand=True),
+                expand=True, border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                border_radius=6, padding=10),
+            ft.Container(height=8),
+            ft.Container(
+                content=ft.Row([
+                    ft.FilledButton("IMPORTAR EXCEL", icon=ft.Icons.UPLOAD_FILE,
+                                    on_click=importar_excel,
+                                    style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700,
+                                                         color=ft.Colors.WHITE)),
+                    ft.FilledButton("EXPORTAR EXCEL", icon=ft.Icons.DOWNLOAD,
+                                    on_click=exportar_excel),
+                    ft.OutlinedButton("PLANTILLA", icon=ft.Icons.TABLE_VIEW,
+                                      on_click=descargar_plantilla),
+                    ft.FilledButton("VOLVER", icon=ft.Icons.ARROW_BACK,
+                                    on_click=lambda _: on_volver()),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=10, wrap=True),
+                padding=10, border_radius=8,
+                border=ft.Border.all(1, ft.Colors.with_opacity(
+                    0.35, ft.Colors.BLUE_GREY_700)),
+                bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE),
             ),
-
-            ft.Container(height=15),
-            ft.Row([
-                ft.ElevatedButton(
-                    "IMPORTAR EXCEL",
-                    icon=ft.Icons.UPLOAD_FILE,
-                    on_click=importar_excel,
-                    style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700, color=ft.Colors.WHITE)
-                ),
-                ft.ElevatedButton(
-                    "EXPORTAR EXCEL",
-                    icon=ft.Icons.DOWNLOAD,
-                    on_click=descargar_excel
-                ),
-                ft.ElevatedButton(
-                    "VOLVER",
-                    icon=ft.Icons.ARROW_BACK,
-                    on_click=lambda e: on_volver()
-                )
-            ], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
-        ], scroll=ft.ScrollMode.AUTO, expand=True),
-        padding=20,
-        expand=True
+            ft.Text("Excel: codigo, descripcion, precio_lista (obligatorias). "
+                    "Opcionales: categoria, marca, precio_costo, stock_inicial, "
+                    "stock_minimo, proveedor.",
+                    size=11, italic=True, color=ft.Colors.GREY_500,
+                    text_align=ft.TextAlign.CENTER),
+        ], expand=True),
+        padding=20, expand=True,
     )

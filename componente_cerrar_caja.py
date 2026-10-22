@@ -1,5 +1,6 @@
 import flet as ft
 from datetime import datetime
+from ui.helpers import cerrar_dialogo, snack as _snack
 
 def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
     """Modal de cierre de caja"""
@@ -85,7 +86,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
         concepto_field = ft.TextField(label="Concepto del gasto", width=300)
         monto_field = ft.TextField(
             label="Monto",
-            prefix_text="$",
+            prefix=ft.Text("$"),
             keyboard_type=ft.KeyboardType.NUMBER,
             width=200
         )
@@ -104,8 +105,12 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                 gasto_id = db_manager.agregar_gasto(caja_id, monto, concepto_field.value)
                 
                 if gasto_id:
+                    try:
+                        dialog_gasto.open = False
+                        page.update()
+                    except Exception:
+                        cerrar_dialogo(page)
                     mostrar_exito("Gasto registrado")
-                    dialog_gasto.open = False
                     actualizar_gastos()
                 else:
                     mostrar_error("Error al registrar el gasto")
@@ -119,51 +124,48 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                 monto_field
             ], tight=True, height=150),
             actions=[
-                ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialog(dialog_gasto)),
-                ft.ElevatedButton("Guardar", on_click=guardar_gasto)
+                ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
+                ft.FilledButton("Guardar", on_click=guardar_gasto)
             ],
             open=True
         )
-        
-        page.overlay.append(dialog_gasto)
-        page.update()
-    
+
+        from ui.helpers import abrir_dialogo as _abrir
+        _abrir(page, dialog_gasto)
+
     def cerrar_dialog(dialog):
-        dialog.open = False
-        page.update()
+        cerrar_dialogo(page)
+
+    def cerrar_modal_caja():
+        # Cerrar el diálogo explícitamente: el SnackBar se apila encima
+        # y un pop_dialog() cerraría el SnackBar, no este modal.
+        try:
+            dialog.open = False
+            page.update()
+        except Exception:
+            cerrar_dialogo(page)
     
     def confirmar_cierre(e):
         """Confirma el cierre de caja"""
         observaciones = observaciones_field.value or ""
         exito = db_manager.cerrar_caja(caja_id, observaciones)
-        
+
         if exito:
+            cerrar_modal_caja()
             mostrar_exito("Caja cerrada exitosamente")
             on_caja_cerrada()
         else:
             mostrar_error("Error al cerrar la caja")
-    
+
     def cancelar(e):
-        """Cancela el cierre"""
-        on_caja_cerrada()
+        """Cancela el cierre (solo cierra el diálogo, NO cierra la caja)"""
+        cerrar_dialogo(page)
     
     def mostrar_error(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.RED_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
-    
+        _snack(page, mensaje, ok=False)
+
     def mostrar_exito(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.GREEN_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
+        _snack(page, mensaje, ok=True)
     
     # Resumen
     resumen = ft.Container(
@@ -216,7 +218,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                 ft.Container(
                     content=gastos_list,
-                    border=ft.border.all(1, ft.Colors.OUTLINE),
+                    border=ft.Border.all(1, ft.Colors.OUTLINE),
                     border_radius=5,
                     padding=5
                 ),
@@ -233,7 +235,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                 on_click=cancelar,
                 style=ft.ButtonStyle(color=ft.Colors.RED_700)
             ),
-            ft.ElevatedButton(
+            ft.FilledButton(
                 "CONFIRMAR CIERRE",
                 icon=ft.Icons.LOCK,
                 on_click=confirmar_cierre,

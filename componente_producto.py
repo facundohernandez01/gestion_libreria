@@ -1,4 +1,5 @@
 import flet as ft
+from ui.helpers import cerrar_dialogo, snack as _snack
 
 def ProductoModal(db_manager, producto, on_guardado, page):
     """Modal para crear o editar producto"""
@@ -29,10 +30,21 @@ def ProductoModal(db_manager, producto, on_guardado, page):
         value=producto.get('marca', '') if producto else "",
         width=250
     )
+
+    try:
+        proveedores = db_manager.listar_proveedores("", 1000)
+    except Exception:
+        proveedores = []
+    proveedor_field = ft.Dropdown(
+        label="PROVEEDOR",
+        width=300,
+        value=str(producto.get("proveedor_id")) if producto and producto.get("proveedor_id") else None,
+        options=[ft.dropdown.Option(str(p["id"]), p["nombre"]) for p in proveedores],
+    )
     
     precio_lista_field = ft.TextField(
         label="PRECIO LISTA *",
-        prefix_text="$",
+        prefix=ft.Text("$"),
         value=str(producto['precio_lista']) if producto else "",
         keyboard_type=ft.KeyboardType.NUMBER,
         width=180
@@ -40,7 +52,7 @@ def ProductoModal(db_manager, producto, on_guardado, page):
     
     precio_costo_field = ft.TextField(
         label="PRECIO COSTO",
-        prefix_text="$",
+        prefix=ft.Text("$"),
         value=str(producto.get('precio_costo', 0)) if producto else "0",
         keyboard_type=ft.KeyboardType.NUMBER,
         width=180
@@ -109,7 +121,8 @@ def ProductoModal(db_manager, producto, on_guardado, page):
                 'marca': marca_field.value.strip() or "",
                 'precio_lista': float(precio_lista_field.value),
                 'precio_costo': float(precio_costo_field.value or 0),
-                'stock_minimo': int(stock_minimo_field.value or 5)
+                'stock_minimo': int(stock_minimo_field.value or 5),
+                'proveedor_id': int(proveedor_field.value) if proveedor_field.value else None,
             }
             
             if es_nuevo:
@@ -122,9 +135,11 @@ def ProductoModal(db_manager, producto, on_guardado, page):
             producto_id = db_manager.guardar_producto(datos_producto)
             
             if producto_id:
-                mostrar_exito("Producto guardado exitosamente")
-                on_guardado()
+                # Cerrar primero: snack() abre un diálogo y si se cierra
+                # después se popea el SnackBar y el modal queda abierto.
                 cerrar_modal()
+                on_guardado()
+                mostrar_exito("Producto guardado exitosamente")
             else:
                 mostrar_error("Error al guardar el producto")
                 
@@ -138,27 +153,18 @@ def ProductoModal(db_manager, producto, on_guardado, page):
         cerrar_modal()
     
     def cerrar_modal():
-        """Cierra el modal"""
-        dialog.open = False
-        page.update()
-    
+        """Cierra el modal (explícito: pop_dialog falla si hay un SnackBar)."""
+        try:
+            dialog.open = False
+            page.update()
+        except Exception:
+            cerrar_dialogo(page)
+
     def mostrar_error(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.RED_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
-    
+        _snack(page, mensaje, ok=False)
+
     def mostrar_exito(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.GREEN_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
+        _snack(page, mensaje, ok=True)
     
     # Contenido del modal
     dialog = ft.AlertDialog(
@@ -176,7 +182,7 @@ def ProductoModal(db_manager, producto, on_guardado, page):
                 ft.Text("Información básica", weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400),
                 ft.Row([codigo_field, categoria_field], spacing=10),
                 descripcion_field,
-                marca_field,
+                ft.Row([marca_field, proveedor_field], spacing=10, wrap=True),
                 ft.Divider(),
                 ft.Text("Precios", weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
                 ft.Row([precio_costo_field, precio_lista_field], spacing=10),
@@ -192,11 +198,11 @@ def ProductoModal(db_manager, producto, on_guardado, page):
                 ft.Text("* Campos obligatorios", size=11, italic=True, color=ft.Colors.GREY_500)
             ], scroll=ft.ScrollMode.AUTO, spacing=10),
             width=500,
-            height=450
+            height=480
         ),
         actions=[
             ft.TextButton("CANCELAR", on_click=cancelar),
-            ft.ElevatedButton(
+            ft.FilledButton(
                 "GUARDAR",
                 icon=ft.Icons.SAVE,
                 on_click=guardar,

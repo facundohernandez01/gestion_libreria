@@ -1,42 +1,32 @@
-import os
+"""Muestra el QR estático + impresión multiplataforma."""
+from pathlib import Path
+
 import flet as ft
 
+from ui.helpers import imprimir_archivo, snack
+
+
 def mostrar_qr(page: ft.Page):
+    qr_local = Path(__file__).parent / "img" / "qr.png"
+
     def imprimir_qr(e):
-        # Construye ruta absoluta al archivo
-        base_dir = os.path.dirname(os.path.abspath(__file__))
-        ruta_imagen = os.path.join(base_dir, "img", "qr.png")
+        ok, msg = imprimir_archivo(qr_local)
+        snack(page, f"QR: {msg}", ok=ok)
 
-        if not os.path.exists(ruta_imagen):
-            print(f"⚠️ No se encontró la imagen: {ruta_imagen}")
-            return
-
-        try:
-            os.startfile(ruta_imagen, "print")  # 🔹 imprime con impresora predeterminada
-        except Exception as err:
-            print(f"Error al imprimir: {err}")
-
+    existe = qr_local.exists()
     return ft.Container(
         content=ft.Column(
             [
-                ft.Image(
-                    src="img/qr.png",
-                    width=200,
-                    height=200,
-                    fit=ft.ImageFit.CONTAIN,
-                ),
-                ft.ElevatedButton(
-                    "Imprimir QR",
-                    icon=ft.Icons.PRINT,
-                    on_click=imprimir_qr,
-                ),
+                ft.Image(src=str(qr_local) if existe else "img/qr.png",
+                         width=220, height=220, fit=ft.BoxFit.CONTAIN,
+                         error_content=ft.Text("QR no descargado aún.\nVaya a Ajustes → Mercado Pago.",
+                                               text_align=ft.TextAlign.CENTER)),
+                ft.Text("Muestre este QR al cliente.\nEl monto se fija por venta (fixed_amount).",
+                        size=12, color=ft.Colors.GREY_400, text_align=ft.TextAlign.CENTER),
+                ft.FilledButton("Imprimir QR", icon=ft.Icons.PRINT, on_click=imprimir_qr),
             ],
-            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=20,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=16,
         ),
-        padding=20,
-        width=300,
-        height=320,
+        padding=20, width=320, border_radius=10,
         bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
-        border_radius=10,
     )

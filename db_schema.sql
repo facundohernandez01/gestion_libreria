@@ -1,21 +1,45 @@
--- Tabla de productos
-CREATE TABLE productos (
+-- Esquema de referencia (la app usa el SCHEMA embebido en database_manager.py).
+-- Se mantiene sincronizado sólo como documentación.
+CREATE TABLE IF NOT EXISTS proveedores (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    codigo TEXT UNIQUE NOT NULL,
-    descripcion TEXT NOT NULL,
-    categoria TEXT,
-    marca TEXT,
-    precio_lista REAL NOT NULL,
-    precio_costo REAL,
-    stock_inicial INTEGER DEFAULT 0,
-    stock_actual INTEGER DEFAULT 0,
-    stock_minimo INTEGER DEFAULT 5,
+    nombre TEXT UNIQUE NOT NULL,
+    cuit TEXT DEFAULT '',
+    telefono TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    direccion TEXT DEFAULT '',
+    notas TEXT DEFAULT '',
     fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-
--- Tabla de cajas
-CREATE TABLE cajas (
+CREATE TABLE IF NOT EXISTS proveedor_contactos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    proveedor_id INTEGER NOT NULL,
+    nombre TEXT NOT NULL,
+    telefono TEXT DEFAULT '',
+    email TEXT DEFAULT '',
+    FOREIGN KEY (proveedor_id) REFERENCES proveedores(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS productos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    codigo TEXT UNIQUE NOT NULL,
+    descripcion TEXT NOT NULL,
+    categoria TEXT DEFAULT '',
+    marca TEXT DEFAULT '',
+    precio_lista REAL NOT NULL CHECK(precio_lista >= 0),
+    precio_costo REAL DEFAULT 0 CHECK(precio_costo >= 0),
+    stock_inicial INTEGER DEFAULT 0,
+    stock_actual INTEGER DEFAULT 0,
+    stock_minimo INTEGER DEFAULT 5,
+    proveedor_id INTEGER REFERENCES proveedores(id),
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS config (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    clave TEXT UNIQUE NOT NULL,
+    valor TEXT
+);
+CREATE TABLE IF NOT EXISTS cajas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     fecha_apertura TIMESTAMP NOT NULL,
     fecha_cierre TIMESTAMP,
@@ -23,65 +47,85 @@ CREATE TABLE cajas (
     importe_cierre REAL,
     total_ventas REAL DEFAULT 0,
     total_gastos REAL DEFAULT 0,
-    observaciones_apertura TEXT,
-    observaciones_cierre TEXT,
+    observaciones_apertura TEXT DEFAULT '',
+    observaciones_cierre TEXT DEFAULT '',
     estado TEXT DEFAULT 'abierta' CHECK(estado IN ('abierta', 'cerrada'))
 );
-
--- Tabla de ventas
-CREATE TABLE ventas (
+CREATE TABLE IF NOT EXISTS ventas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     caja_id INTEGER NOT NULL,
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     total REAL NOT NULL,
     estado TEXT DEFAULT 'completada' CHECK(estado IN ('completada', 'cancelada')),
+    metodo_pago TEXT DEFAULT 'efectivo',
+    comprobante TEXT DEFAULT '',
+    numero_factura TEXT,
+    cae TEXT,
+    vencimiento_cae TEXT,
     FOREIGN KEY (caja_id) REFERENCES cajas(id)
 );
-
--- Tabla de items de venta
-CREATE TABLE venta_items (
+CREATE TABLE IF NOT EXISTS venta_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     venta_id INTEGER NOT NULL,
     producto_id INTEGER NOT NULL,
-    cantidad INTEGER NOT NULL,
+    cantidad INTEGER NOT NULL CHECK(cantidad > 0),
     precio_unitario REAL NOT NULL,
     subtotal REAL NOT NULL,
     FOREIGN KEY (venta_id) REFERENCES ventas(id),
     FOREIGN KEY (producto_id) REFERENCES productos(id)
 );
-
--- Tabla de gastos
-CREATE TABLE gastos (
+CREATE TABLE IF NOT EXISTS gastos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     caja_id INTEGER NOT NULL,
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    monto REAL NOT NULL,
+    monto REAL NOT NULL CHECK(monto > 0),
     concepto TEXT NOT NULL,
     FOREIGN KEY (caja_id) REFERENCES cajas(id)
 );
-
--- Tabla de movimientos de stock
-CREATE TABLE movimientos_stock (
+CREATE TABLE IF NOT EXISTS movimientos_stock (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     producto_id INTEGER NOT NULL,
-    tipo TEXT NOT NULL CHECK(tipo IN ('venta', 'ajuste', 'devolucion')),
+    tipo TEXT NOT NULL CHECK(tipo IN ('venta', 'ajuste', 'devolucion', 'ingreso')),
     cantidad INTEGER NOT NULL,
     stock_anterior INTEGER NOT NULL,
     stock_nuevo INTEGER NOT NULL,
     fecha TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     referencia_id INTEGER,
-    observaciones TEXT,
+    observaciones TEXT DEFAULT '',
     FOREIGN KEY (producto_id) REFERENCES productos(id)
 );
-
--- Índices para mejorar rendimiento
-CREATE INDEX idx_productos_codigo ON productos(codigo);
-CREATE INDEX idx_productos_descripcion ON productos(descripcion);
-CREATE INDEX idx_ventas_caja ON ventas(caja_id);
-CREATE INDEX idx_ventas_fecha ON ventas(fecha);
-CREATE INDEX idx_venta_items_venta ON venta_items(venta_id);
-CREATE INDEX idx_venta_items_producto ON venta_items(producto_id);
-CREATE INDEX idx_movimientos_producto ON movimientos_stock(producto_id);
+CREATE TABLE IF NOT EXISTS ordenes_compra (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fecha_creacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_modificacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    fecha_confirmacion TIMESTAMP,
+    estado TEXT NOT NULL DEFAULT 'en_proceso'
+        CHECK(estado IN ('en_proceso', 'confirmada', 'cancelada')),
+    observaciones TEXT DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS orden_compra_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    orden_id INTEGER NOT NULL,
+    producto_id INTEGER NOT NULL,
+    proveedor_id INTEGER,
+    cantidad INTEGER NOT NULL CHECK(cantidad > 0),
+    precio_costo REAL DEFAULT 0 CHECK(precio_costo >= 0),
+    subtotal REAL DEFAULT 0,
+    FOREIGN KEY (orden_id) REFERENCES ordenes_compra(id) ON DELETE CASCADE,
+    FOREIGN KEY (producto_id) REFERENCES productos(id),
+    FOREIGN KEY (proveedor_id) REFERENCES proveedores(id)
+);
+CREATE INDEX IF NOT EXISTS idx_productos_codigo ON productos(codigo);
+CREATE INDEX IF NOT EXISTS idx_proveedores_nombre ON proveedores(nombre);
+CREATE INDEX IF NOT EXISTS idx_contactos_proveedor ON proveedor_contactos(proveedor_id);
+CREATE INDEX IF NOT EXISTS idx_ordenes_estado ON ordenes_compra(estado);
+CREATE INDEX IF NOT EXISTS idx_orden_items_orden ON orden_compra_items(orden_id);
+CREATE INDEX IF NOT EXISTS idx_orden_items_producto ON orden_compra_items(producto_id);
+CREATE INDEX IF NOT EXISTS idx_productos_descripcion ON productos(descripcion);
+CREATE INDEX IF NOT EXISTS idx_ventas_caja ON ventas(caja_id);
+CREATE INDEX IF NOT EXISTS idx_ventas_fecha ON ventas(fecha);
+CREATE INDEX IF NOT EXISTS idx_venta_items_venta ON venta_items(venta_id);
+CREATE INDEX IF NOT EXISTS idx_movimientos_producto ON movimientos_stock(producto_id);
 
 -- Datos de prueba
 INSERT INTO productos (codigo, descripcion, categoria, marca, precio_lista, precio_costo, stock_inicial, stock_actual, stock_minimo) VALUES

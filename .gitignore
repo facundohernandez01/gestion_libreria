@@ -1,0 +1,13 @@
+.env
+*.db
+*.db-journal
+__pycache__/
+*.pyc
+.venv/
+venv/
+comprobantes/
+tickets/
+certificados/
+img/qr.png
+*.xlsx
+!ejemplo*.xlsx

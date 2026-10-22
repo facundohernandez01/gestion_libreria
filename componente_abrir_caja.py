@@ -1,5 +1,6 @@
 import flet as ft
 from datetime import datetime
+from ui.helpers import snack as _snack
 
 def AbrirCajaView(db_manager, on_caja_abierta, page):
     """Vista de apertura de caja"""
@@ -12,7 +13,7 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
     
     importe_field = ft.TextField(
         label="$ Importe al abrir",
-        prefix_text="$",
+        prefix=ft.Text("$"),
         keyboard_type=ft.KeyboardType.NUMBER,
         width=300,
         autofocus=True,
@@ -48,25 +49,16 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
             mostrar_error("Ingrese un importe válido")
     
     def mostrar_error(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.RED_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
-    
+        _snack(page, mensaje, ok=False)
+
     def mostrar_exito(mensaje):
-        snack = ft.SnackBar(
-            content=ft.Text(mensaje, color=ft.Colors.WHITE),
-            bgcolor=ft.Colors.GREEN_700
-        )
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
+        _snack(page, mensaje, ok=True)
+
+    async def _salir(e):
+        await page.window.close()
     
-    btn_aceptar = ft.ElevatedButton(
-        text="ABRIR CAJA",
+    btn_aceptar = ft.FilledButton(
+        content="ABRIR CAJA",
         icon=ft.Icons.LOCK_OPEN,
         on_click=abrir_caja,
         style=ft.ButtonStyle(
@@ -78,9 +70,9 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
     )
     
     btn_salir = ft.OutlinedButton(
-        text="SALIR",
+        content="SALIR",
         icon=ft.Icons.EXIT_TO_APP,
-        on_click=lambda e: page.window.close(),
+        on_click=_salir,
         width=200,
         height=50
     )
@@ -92,7 +84,7 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
                     content=ft.Text("ABRIR CAJA", size=30, weight=ft.FontWeight.BOLD),
                     bgcolor=ft.Colors.BLUE_900,
                     padding=20,
-                    alignment=ft.alignment.center
+                    alignment=ft.Alignment.CENTER
                 ),
                 ft.Container(height=20),
                 ft.Container(
@@ -109,12 +101,12 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
                 ft.Container(height=20),
                 ft.Container(
                     content=importe_field,
-                    alignment=ft.alignment.center
+                    alignment=ft.Alignment.CENTER
                 ),
                 ft.Container(height=10),
                 ft.Container(
                     content=observaciones_field,
-                    alignment=ft.alignment.center
+                    alignment=ft.Alignment.CENTER
                 ),
                 ft.Container(height=30),
                 ft.Row(

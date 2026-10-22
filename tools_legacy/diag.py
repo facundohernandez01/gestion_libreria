@@ -3,8 +3,8 @@ import json
 import time
 
 # === TUS CREDENCIALES DE PRODUCCIÓN ===
-ACCESS_TOKEN = "APP_USR-8451402943469154-111206-cd551da9da9595bb3f9e81186ff6da59-135098517"  # 👈 Reemplaza con tu token
-USER_ID = "135098517"  # 👈 Reemplaza con tu User ID
+ACCESS_TOKEN = "APP_USR-***REVOCAR***"  # 👈 Reemplaza con tu token
+USER_ID = "***"  # 👈 Reemplaza con tu User ID
 
 HEADERS = {
     "Authorization": f"Bearer {ACCESS_TOKEN}",
