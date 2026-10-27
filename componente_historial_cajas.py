@@ -10,13 +10,14 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import flet as ft
+from ui.paleta import N
 
 from ui.helpers import (abrir_archivo, abrir_dialogo, cerrar_dialogo,
                         imprimir_archivo, snack)
 
 _ESTADOS = {
-    "abierta": ("ABIERTA", ft.Colors.GREEN_400),
-    "cerrada": ("CERRADA", ft.Colors.GREY_400),
+    "abierta": ("ABIERTA", N.GREEN_400),
+    "cerrada": ("CERRADA", N.GREY_400),
 }
 
 _ANCHO_CONTENIDO = 940
@@ -86,12 +87,12 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
                              last_date=hoy + timedelta(days=365))
     hasta_dp = ft.DatePicker(first_date=hoy - timedelta(days=365 * 5),
                              last_date=hoy + timedelta(days=365))
-    resumen_text = ft.Text("", size=12, color=ft.Colors.GREY_400)
+    resumen_text = ft.Text("", size=12, color=N.GREY_400)
     lista = ft.Column(spacing=6, scroll=ft.ScrollMode.AUTO)
     expandidas: set = set()
 
     def _badge(estado: str):
-        texto, color = _ESTADOS.get(estado or "", (estado.upper(), ft.Colors.GREY_400))
+        texto, color = _ESTADOS.get(estado or "", (estado.upper(), N.GREY_400))
         return ft.Container(
             content=ft.Text(texto, size=10, color=ft.Colors.WHITE,
                             weight=ft.FontWeight.BOLD),
@@ -123,29 +124,29 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
         return ft.Container(
             content=ft.Row([
                 ft.Text(f"#{c['id']}", size=14, weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.BLUE_300, width=44),
+                        color=N.BLUE_300, width=44),
                 ft.Column([
                     ft.Text(f"Apertura: {apertura}", size=12),
-                    ft.Text(f"Cierre: {cierre}", size=12, color=ft.Colors.GREY_400),
+                    ft.Text(f"Cierre: {cierre}", size=12, color=N.GREY_400),
                 ], spacing=2, expand=True),
                 ft.Column([
-                    ft.Text("Usuario", size=10, color=ft.Colors.GREY_500),
+                    ft.Text("Usuario", size=10, color=N.GREY_500),
                     ft.Text(c.get("usuario_apertura") or "—", size=11,
-                            color=ft.Colors.CYAN_300),
+                            color=N.CYAN_300),
                 ], spacing=1, width=110),
                 ft.Column([
                     ft.Text(f"Apertura ${float(c.get('importe_apertura') or 0):,.2f}",
-                            size=11, color=ft.Colors.GREY_400, text_align=ft.TextAlign.RIGHT),
+                            size=11, color=N.GREY_400, text_align=ft.TextAlign.RIGHT),
                     ft.Text(f"Ventas ${total_ventas:,.2f}", size=12,
-                            color=ft.Colors.GREEN_300, weight=ft.FontWeight.BOLD,
+                            color=N.GREEN_300, weight=ft.FontWeight.BOLD,
                             text_align=ft.TextAlign.RIGHT),
                 ], horizontal_alignment=ft.CrossAxisAlignment.END, spacing=2),
                 _badge(c.get("estado") or ""),
-                ft.Icon(ft.Icons.CHEVRON_RIGHT, color=ft.Colors.GREY_500),
+                ft.Icon(ft.Icons.CHEVRON_RIGHT, color=N.GREY_500),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, spacing=8),
             padding=10, border_radius=6,
             bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.BLUE_GREY_700)),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.3, N.BLUE_GREY_700)),
             on_click=lambda _e, cid=c["id"]: ver_caja(cid),
             ink=True,
         )
@@ -160,7 +161,7 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
         if not cajas:
             lista.controls.append(ft.Text(
                 "No se encontraron cajas para la búsqueda", italic=True,
-                color=ft.Colors.GREY_500))
+                color=N.GREY_500))
         abiertas = sum(1 for c in cajas if c.get("estado") == "abierta")
         filtros = []
         if termino:
@@ -181,9 +182,9 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
     def _fila_item(item):
         return ft.Row([
             ft.Container(width=8),
-            ft.Text("•", size=12, color=ft.Colors.BLUE_400),
+            ft.Text("•", size=12, color=N.BLUE_400),
             ft.Text(item["producto_nombre"], size=11, expand=True),
-            ft.Text(f"x{item['cantidad']}", size=11, color=ft.Colors.GREY_400,
+            ft.Text(f"x{item['cantidad']}", size=11, color=N.GREY_400,
                     width=34, text_align=ft.TextAlign.CENTER),
             ft.Text(f"${item['subtotal']:.2f}", size=11, width=76,
                     text_align=ft.TextAlign.RIGHT),
@@ -213,10 +214,10 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
 
         return ft.Row([
             ft.IconButton(icon=ft.Icons.SEARCH, icon_size=16,
-                          icon_color=ft.Colors.CYAN_300, tooltip="Ver PDF",
+                          icon_color=N.CYAN_300, tooltip="Ver PDF",
                           on_click=_ver),
             ft.IconButton(icon=ft.Icons.PRINT, icon_size=16,
-                          icon_color=ft.Colors.GREY_300, tooltip="Reimprimir",
+                          icon_color=N.GREY_300, tooltip="Reimprimir",
                           on_click=_imprimir),
         ], spacing=0)
 
@@ -229,20 +230,20 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
             columnas.controls.append(ft.Container(
                 content=ft.Row([
                     ft.IconButton(icon=icono, icon_size=14,
-                                  icon_color=ft.Colors.BLUE_300,
+                                  icon_color=N.BLUE_300,
                                   on_click=lambda _e, vid=v["id"]:
                                       _toggle_venta(vid, caja_id, columnas, estado)),
                     ft.Text(f"Venta #{v['id']}", size=11, weight=ft.FontWeight.BOLD,
                             width=64),
                     ft.Text(str(v.get("fecha") or "")[:16], size=11, width=110),
                     ft.Text(v.get("usuario") or "—", size=11,
-                            color=ft.Colors.CYAN_300, width=80),
-                    ft.Text(v.get("metodo_pago") or "", size=11, color=ft.Colors.ORANGE_300,
+                            color=N.CYAN_300, width=80),
+                    ft.Text(v.get("metodo_pago") or "", size=11, color=N.ORANGE_300,
                             width=110),
                     ft.Text(f"{v.get('items_count', 0)} ítems", size=11,
-                            color=ft.Colors.GREY_500, width=60),
+                            color=N.GREY_500, width=60),
                     ft.Text(f"${float(v.get('total') or 0):,.2f}", size=12,
-                            weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_300,
+                            weight=ft.FontWeight.BOLD, color=N.GREEN_300,
                             width=90, text_align=ft.TextAlign.RIGHT),
                     _acciones_factura(v),
                 ], spacing=4),
@@ -267,7 +268,7 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
             return
         expandidas.clear()
         columnas = ft.Column(spacing=2, scroll=ft.ScrollMode.AUTO)
-        estado = ft.Text("", size=12, color=ft.Colors.GREY_400)
+        estado = ft.Text("", size=12, color=N.GREY_400)
 
         apertura = str(caja.get("fecha_apertura") or "")[:16]
         cierre = str(caja.get("fecha_cierre") or "—")[:16]
@@ -275,7 +276,7 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Row([
-                ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET, color=ft.Colors.BLUE_400),
+                ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET, color=N.BLUE_400),
                 ft.Text(f"CAJA #{caja['id']} — {caja.get('estado', '').upper()}"),
             ]),
             content=ft.Container(
@@ -283,22 +284,22 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
                     ft.Row([
                         ft.Text(f"Apertura: {apertura}", size=12),
                         ft.Text(f"Cierre: {cierre}", size=12,
-                                color=ft.Colors.GREY_400),
+                                color=N.GREY_400),
                         _badge(caja.get("estado") or ""),
                     ], spacing=10),
                     ft.Text(
                         f"Fondo inicial ${float(caja.get('importe_apertura') or 0):,.2f}"
                         + (f" → Cierre ${float(caja.get('importe_cierre') or 0):,.2f}"
                            if caja.get("importe_cierre") else ""),
-                        size=12, color=ft.Colors.GREEN_300),
+                        size=12, color=N.GREEN_300),
                     ft.Text(
                         f"Apertura por: {caja.get('usuario_apertura') or '—'}"
                         + (f" · Cierre por: {caja.get('usuario_cierre') or '—'}"
                            if caja.get("usuario_cierre") else ""),
-                        size=11, color=ft.Colors.GREY_400),
+                        size=11, color=N.GREY_400),
                     ft.Divider(height=6),
                     ft.Text("VENTAS DE ESTA CAJA", size=11, weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.BLUE_300),
+                            color=N.BLUE_300),
                     columnas,
                     estado,
                 ], spacing=6, scroll=ft.ScrollMode.AUTO),
@@ -330,7 +331,7 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
                    spacing=10),
         ], spacing=6),
         padding=12, border_radius=8, width=_ANCHO_CONTENIDO,
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.35, ft.Colors.BLUE_GREY_700)),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.35, N.BLUE_GREY_700)),
         bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE),
     )
 
@@ -341,7 +342,7 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
 
     contenedor_lista = ft.Container(
         content=lista, height=470, width=_ANCHO_CONTENIDO,
-        border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+        border=ft.Border.all(1, N.BLUE_GREY_700),
         border_radius=6, padding=8, alignment=ft.Alignment.TOP_LEFT)
 
     return ft.Container(
@@ -349,10 +350,10 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
             ft.Container(
                 content=ft.Row([
                     ft.Icon(ft.Icons.ACCOUNT_BALANCE_WALLET, size=24,
-                            color=ft.Colors.BLUE_300),
+                            color=N.BLUE_300),
                     ft.Text("HISTORIAL DE CAJAS", size=20, weight=ft.FontWeight.BOLD),
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
-                bgcolor=ft.Colors.BLUE_900, padding=8, width=_ANCHO_CONTENIDO,
+                bgcolor=N.BLUE_900, padding=8, width=_ANCHO_CONTENIDO,
                 alignment=ft.Alignment.CENTER),
             ft.Container(height=10),
             contenedor_filtros,
@@ -361,7 +362,7 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
             ft.Container(height=6),
             ft.Text("Toque una caja para ver su listado de ventas. La lupa abre "
                     "el PDF del comprobante y el ícono de impresora lo reimprime.",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], scroll=ft.ScrollMode.AUTO, expand=True,
            horizontal_alignment=ft.CrossAxisAlignment.CENTER),
         padding=20, expand=True,

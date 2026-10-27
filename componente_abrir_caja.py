@@ -1,4 +1,5 @@
 import flet as ft
+from ui.paleta import N
 from datetime import datetime
 from ui.helpers import snack as _snack
 
@@ -63,7 +64,7 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
         on_click=abrir_caja,
         style=ft.ButtonStyle(
             color=ft.Colors.WHITE,
-            bgcolor=ft.Colors.GREEN_700
+            bgcolor=N.GREEN_700
         ),
         width=200,
         height=50
@@ -82,7 +83,7 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
             controls=[
                 ft.Container(
                     content=ft.Text("ABRIR CAJA", size=30, weight=ft.FontWeight.BOLD),
-                    bgcolor=ft.Colors.BLUE_900,
+                    bgcolor=N.BLUE_900,
                     padding=20,
                     alignment=ft.Alignment.CENTER
                 ),

@@ -6,6 +6,7 @@ cancelan las cantidades restantes. La lógica de stock vive en DatabaseManager.
 from __future__ import annotations
 
 import flet as ft
+from ui.paleta import N
 
 from ui.helpers import abrir_dialogo, snack
 
@@ -36,14 +37,14 @@ def abrir_recepcion_compra(db_manager, page: ft.Page, orden: dict, on_done=None)
                             weight=ft.FontWeight.BOLD),
                     ft.Text(f"{it.get('producto_codigo') or ''} · "
                             f"{it.get('proveedor_nombre') or 'Sin proveedor'}",
-                            size=10, color=ft.Colors.GREY_500),
+                            size=10, color=N.GREY_500),
                 ], spacing=1, expand=True),
                 ft.Text(f"Pedido {it['cantidad']}", size=11,
-                        color=ft.Colors.GREY_400, width=90),
+                        color=N.GREY_400, width=90),
                 ft.Text(f"Recibido {it.get('cantidad_recibida') or 0}",
-                        size=11, color=ft.Colors.GREEN_300, width=100),
+                        size=11, color=N.GREEN_300, width=100),
                 ft.Text(f"Pend. {it['cantidad_pendiente']}", size=11,
-                        color=ft.Colors.AMBER_300, width=80),
+                        color=N.AMBER_300, width=80),
                 campo,
             ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=6),
             padding=6, border_radius=5,
@@ -89,7 +90,7 @@ def abrir_recepcion_compra(db_manager, page: ft.Page, orden: dict, on_done=None)
     dlg = ft.AlertDialog(
         modal=True,
         title=ft.Row([
-            ft.Icon(ft.Icons.INVENTORY, color=ft.Colors.GREEN_400),
+            ft.Icon(ft.Icons.INVENTORY, color=N.GREEN_400),
             ft.Text(f"Recepcionar orden #{detalle['id']}"),
         ]),
         content=ft.Container(
@@ -97,7 +98,7 @@ def abrir_recepcion_compra(db_manager, page: ft.Page, orden: dict, on_done=None)
                 ft.Text("Indicá cuántas unidades llegaron de cada ítem. "
                         "Podés recepcionar solo una parte y dejar el resto "
                         "pendiente para otra entrega.",
-                        size=11, color=ft.Colors.GREY_400),
+                        size=11, color=N.GREY_400),
                 ft.Divider(height=8),
                 ft.Column(filas, spacing=4, scroll=ft.ScrollMode.AUTO),
                 ft.Divider(height=8),
@@ -110,7 +111,7 @@ def abrir_recepcion_compra(db_manager, page: ft.Page, orden: dict, on_done=None)
             ft.TextButton("CANCELAR", on_click=lambda _e: _cerrar()),
             ft.FilledButton("RECEPCIONAR", icon=ft.Icons.CHECK,
                             on_click=_recibir,
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700,
+                            style=ft.ButtonStyle(bgcolor=N.GREEN_700,
                                                  color=ft.Colors.WHITE)),
         ],
         actions_alignment=ft.MainAxisAlignment.END,

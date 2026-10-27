@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import flet as ft
+from ui.paleta import N
 
 from ui.helpers import abrir_dialogo, cerrar_dialogo, snack
 
@@ -49,16 +50,16 @@ def ProveedoresModal(db_manager, page: ft.Page, on_cerrar=None):
                 ft.DataCell(ft.Text(p.get("email") or "", size=12)),
                 ft.DataCell(ft.Text(str(p.get("contactos_count") or 0), size=12)),
                 ft.DataCell(ft.Row([
-                    ft.IconButton(icon=ft.Icons.EDIT, icon_color=ft.Colors.BLUE_400,
+                    ft.IconButton(icon=ft.Icons.EDIT, icon_color=N.BLUE_400,
                                   tooltip="Editar", on_click=_editar),
-                    ft.IconButton(icon=ft.Icons.DELETE, icon_color=ft.Colors.RED_400,
+                    ft.IconButton(icon=ft.Icons.DELETE, icon_color=N.RED_400,
                                   tooltip="Eliminar", on_click=_borrar),
                 ], spacing=0)),
             ]))
         if not datos:
             tabla.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text("Sin proveedores cargados", italic=True,
-                                    color=ft.Colors.GREY_500, size=12)),
+                                    color=N.GREY_500, size=12)),
                 ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                 ft.DataCell(ft.Text("")), ft.DataCell(ft.Text("")),
                 ft.DataCell(ft.Text("")),
@@ -73,7 +74,7 @@ def ProveedoresModal(db_manager, page: ft.Page, on_cerrar=None):
                                 on_click=lambda _e: _abrir_form(None)),
             ], spacing=10),
             ft.Container(content=ft.Column([tabla], scroll=ft.ScrollMode.AUTO),
-                         height=390, border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                         height=390, border=ft.Border.all(1, N.BLUE_GREY_700),
                          border_radius=6, padding=8),
         ], spacing=10)
         acciones.controls = [
@@ -103,7 +104,7 @@ def ProveedoresModal(db_manager, page: ft.Page, on_cerrar=None):
             actions=[
                 ft.TextButton("CANCELAR", on_click=lambda _e: cerrar_dialogo(page)),
                 ft.FilledButton("ELIMINAR", icon=ft.Icons.DELETE,
-                                style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700,
+                                style=ft.ButtonStyle(bgcolor=N.RED_700,
                                                      color=ft.Colors.WHITE),
                                 on_click=_ok),
             ],
@@ -122,7 +123,7 @@ def ProveedoresModal(db_manager, page: ft.Page, on_cerrar=None):
 
             filas.append(ft.Row([
                 f_nombre, f_tel, f_email,
-                ft.IconButton(icon=ft.Icons.REMOVE_CIRCLE, icon_color=ft.Colors.RED_400,
+                ft.IconButton(icon=ft.Icons.REMOVE_CIRCLE, icon_color=N.RED_400,
                               tooltip="Quitar", on_click=_quitar),
             ], spacing=8))
         contenedor_contactos.controls = filas
@@ -186,7 +187,7 @@ def ProveedoresModal(db_manager, page: ft.Page, on_cerrar=None):
             notas,
             ft.Divider(),
             ft.Row([
-                ft.Text("Contactos", weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400),
+                ft.Text("Contactos", weight=ft.FontWeight.BOLD, color=N.BLUE_400),
                 ft.Container(expand=True),
                 ft.TextButton("AGREGAR CONTACTO", icon=ft.Icons.PERSON_ADD,
                               on_click=lambda _e: _agregar_contacto()),
@@ -197,7 +198,7 @@ def ProveedoresModal(db_manager, page: ft.Page, on_cerrar=None):
         acciones.controls = [
             ft.TextButton("CANCELAR", on_click=lambda _e: _cargar_lista()),
             ft.FilledButton("GUARDAR", icon=ft.Icons.SAVE, on_click=_guardar,
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700,
+                            style=ft.ButtonStyle(bgcolor=N.GREEN_700,
                                                  color=ft.Colors.WHITE)),
         ]
         page.update()

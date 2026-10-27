@@ -1,9 +1,16 @@
+import webbrowser
+from pathlib import Path
+
 import flet as ft
+from ui.paleta import N
+from ui.theme import GRADIENTE_NEON, sombra_neon
 from datetime import datetime
 from mostrar_qr import mostrar_qr
 from config import ConfigModal
 from core.permisos import tiene
-from ui.helpers import abrir_dialogo, cerrar_dialogo
+from ui.helpers import abrir_dialogo, cerrar_dialogo, snack
+from utils.paths import base_dir
+from utils.licencia import obtener_device_id
 
 def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja, on_compras=None, on_historial_cajas=None, on_ingreso_stock=None, on_salir=None, permisos=None, es_admin=False, on_roles_usuarios=None, modo_cliente=False):
     """Ventana principal con lista de ventas y acciones"""
@@ -30,6 +37,80 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     def abrir_reporte(e):
         from componente_reporte import mostrar_reporte_ventas
         mostrar_reporte_ventas(page, db_manager)
+
+    def abrir_acerca(e=None):
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Acerca de"),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("Kiosmico", size=18, weight=ft.FontWeight.BOLD,
+                            color=N.BLUE_400),
+                    ft.Text("Versión 1.1 - 10/2026", size=13),
+                    ft.Text("Creado por: Facundo Hernandez", size=13),
+                    ft.Text("facundohernandez.dev/kiosmico", size=12,
+                            color=N.BLUE_300, selectable=True),
+                ], spacing=6, tight=True),
+                width=300,
+            ),
+            actions=[ft.TextButton("Cerrar",
+                                   on_click=lambda _e: cerrar_dialogo(page))],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        abrir_dialogo(page, dlg)
+
+    def abrir_reportar_problema(e=None):
+        desc_field = ft.TextField(
+            label="Descripción del problema", multiline=True, min_lines=4,
+            width=420)
+        incluir = ft.Checkbox(label="Incluir info del sistema", value=True)
+
+        def enviar(_e=None):
+            texto = (desc_field.value or "").strip()
+            if not texto:
+                snack(page, "Describí el problema", ok=False)
+                return
+            info = ""
+            if incluir.value:
+                try:
+                    info = (f"\n\n---\nVersión: 1.1\n"
+                            f"Fecha: {datetime.now().isoformat()}\n"
+                            f"Dispositivo: {obtener_device_id()}\n")
+                except Exception:
+                    info = ""
+            reporte = texto + info
+            try:
+                log = base_dir() / "reportes_problemas.log"
+                with open(log, "a", encoding="utf-8") as fh:
+                    fh.write(f"[{datetime.now().isoformat()}]\n{reporte}\n"
+                             f"{'=' * 40}\n")
+            except Exception as ex:  # noqa: BLE001
+                snack(page, f"No se pudo guardar el reporte: {ex}", ok=False)
+                return
+            try:
+                webbrowser.open("https://facundohernandez.dev/kiosmico")
+            except Exception:
+                pass
+            cerrar_dialogo(page)
+            snack(page, "Reporte guardado correctamente", ok=True)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Reportar un problema"),
+            content=ft.Container(
+                content=ft.Column([desc_field, incluir], spacing=10, tight=True),
+                width=440,
+            ),
+            actions=[
+                ft.TextButton("Cancelar",
+                              on_click=lambda _e: cerrar_dialogo(page)),
+                ft.FilledButton("Enviar", icon=ft.Icons.SEND, on_click=enviar,
+                                style=ft.ButtonStyle(bgcolor=N.BLUE_700,
+                                                     color=ft.Colors.WHITE)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        abrir_dialogo(page, dlg)
 
     
     try:
@@ -77,7 +158,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                         icon_color=ft.Colors.with_opacity(0.6, ft.Colors.WHITE),
                         icon_size=24
                     ),
-                    ft.Icon(ft.Icons.RECEIPT, color=ft.Colors.BLUE_400, size=24),
+                    ft.Icon(ft.Icons.RECEIPT, color=N.BLUE_400, size=24),
                     ft.Column([
                         ft.Text(
                             f"Venta #{venta['id']:04d} - {venta['fecha'][11:16] if len(venta['fecha']) > 11 else 'N/A'}",
@@ -97,7 +178,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                             f"${venta['total']:.2f}",
                             size=18,
                             weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.GREEN_400
+                            color=N.GREEN_400
                         ),
                         ft.Text(
                             f"{venta.get('items_count', 0)} items",
@@ -124,13 +205,13 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 for item in items:
                     item_row = ft.Row([
                         ft.Container(width=5),  # Espaciado
-                        ft.Icon(ft.Icons.CIRCLE, size=6, color=ft.Colors.BLUE_400),
+                        ft.Icon(ft.Icons.CIRCLE, size=6, color=N.BLUE_400),
                         ft.Text(item['producto_nombre'], size=13, color=ft.Colors.WHITE, expand=True),
                         ft.Text(f"x{item['cantidad']}", size=13, color=ft.Colors.with_opacity(0.6, ft.Colors.WHITE), width=50),
                         ft.Text(f"${item['precio_unitario']:.2f}", size=13, color=ft.Colors.with_opacity(0.6, ft.Colors.WHITE), width=80),
                         ft.Text(f"${item['subtotal']:.2f}", size=13, 
                                text_align=ft.TextAlign.RIGHT, weight=ft.FontWeight.W_500,
-                               color=ft.Colors.GREEN_400, width=90)
+                               color=N.GREEN_400, width=90)
                     ], spacing=8)
                     items_col.controls.append(item_row)
                 
@@ -211,19 +292,26 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                        size=13, color=ft.Colors.with_opacity(0.85, ft.Colors.WHITE)),
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             ft.Container(expand=True),
+            ft.TextButton("ACERCA DE", icon=ft.Icons.INFO_OUTLINE,
+                          style=ft.ButtonStyle(color=ft.Colors.WHITE),
+                          on_click=abrir_acerca),
+            ft.TextButton("REPORTAR", icon=ft.Icons.BUG_REPORT,
+                          style=ft.ButtonStyle(color=ft.Colors.WHITE),
+                          on_click=abrir_reportar_problema),
             ft.TextButton(
                 "SALIR", icon=ft.Icons.LOGOUT,
                 style=ft.ButtonStyle(color=ft.Colors.WHITE),
                 on_click=lambda _e: on_salir() if on_salir else None),
         ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
-        bgcolor=ft.Colors.BLUE_900,
+        gradient=GRADIENTE_NEON,
+        shadow=sombra_neon(N.CYAN, 18, 0.3),
         padding=ft.Padding.symmetric(horizontal=8, vertical=1)
     )
     
     # Sección de ventas de hoy
     ventas_header = ft.Container(
         content=ft.Row([
-            ft.Icon(ft.Icons.HISTORY, color=ft.Colors.BLUE_400, size=28),
+            ft.Icon(ft.Icons.HISTORY, color=N.BLUE_400, size=28),
             ft.Text("VENTAS DE HOY", size=22, weight=ft.FontWeight.BOLD)
         ], spacing=1),
         padding=ft.Padding.only(left=1, bottom=1)
@@ -240,12 +328,14 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                             ft.Icon(ft.Icons.KEYBOARD, size=40, color=ft.Colors.WHITE),
                             ft.Container(height=5),
                             ft.Text("Nueva venta", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                            ft.Text("(Teclado)", size=11, color=ft.Colors.with_opacity(0.8, ft.Colors.WHITE))
+                            ft.Text("(Teclado)", size=11, color=ft.Colors.with_opacity(0.8, ft.Colors.WHITE)),
+                            ft.Text("Atajo: Alt+Q", size=10,
+                                    color=ft.Colors.with_opacity(0.65, ft.Colors.WHITE))
                         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, tight=True),
                         width=180,
                         height=110,
                         style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.GREEN_700,
+                            bgcolor=N.GREEN_700,
                             shape=ft.RoundedRectangleBorder(radius=8),
                             elevation=4
                         ),
@@ -256,12 +346,14 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                             ft.Icon(ft.Icons.QR_CODE_SCANNER, size=40, color=ft.Colors.WHITE),
                             ft.Container(height=5),
                             ft.Text("Nueva venta", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE),
-                            ft.Text("(Lector)", size=11, color=ft.Colors.with_opacity(0.8, ft.Colors.WHITE))
+                            ft.Text("(Lector)", size=11, color=ft.Colors.with_opacity(0.8, ft.Colors.WHITE)),
+                            ft.Text("Atajo: Alt+W", size=10,
+                                    color=ft.Colors.with_opacity(0.65, ft.Colors.WHITE))
                         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2, tight=True),
                         width=180,
                         height=110,
                         style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.BLUE_700,
+                            bgcolor=N.BLUE_700,
                             shape=ft.RoundedRectangleBorder(radius=8),
                             elevation=4
                         ),
@@ -275,7 +367,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                         width=180,
                         height=110,
                         style=ft.ButtonStyle(
-                            bgcolor=ft.Colors.GREEN,
+                            bgcolor=N.GREEN,
                             shape=ft.RoundedRectangleBorder(radius=8),
                             elevation=3
                         ),
@@ -296,7 +388,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                         f"$ {total_vendido:.2f}",
                         size=26,
                         weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.GREEN_400,
+                        color=N.GREEN_400,
                         text_align=ft.TextAlign.CENTER
                     )
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=5),
@@ -305,7 +397,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 border_radius=8,
                 width=180,
                 height=110,
-                border=ft.Border.all(2, ft.Colors.GREEN_700)
+                border=ft.Border.all(2, N.GREEN_700)
             ),
             ft.Container(height=20),
             # Botones de acción
@@ -334,7 +426,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                         else "COMPRAS", size=13, color=ft.Colors.WHITE)
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             width=200, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.ORANGE_800,
+            style=ft.ButtonStyle(bgcolor=N.ORANGE_800,
                                  shape=ft.RoundedRectangleBorder(radius=8),
                                  elevation=3),
             on_click=lambda e: on_compras() if on_compras else None))
@@ -345,7 +437,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 ft.Text("CERRAR CAJA", size=13, color=ft.Colors.WHITE)
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             width=200, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700,
+            style=ft.ButtonStyle(bgcolor=N.RED_700,
                                  shape=ft.RoundedRectangleBorder(radius=8),
                                  elevation=3),
             on_click=lambda e: on_cerrar_caja()))
@@ -356,7 +448,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 ft.Text("REPORTES", size=13, color=ft.Colors.WHITE)
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             width=200, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.TEAL_700,
+            style=ft.ButtonStyle(bgcolor=N.TEAL_700,
                                  shape=ft.RoundedRectangleBorder(radius=8),
                                  elevation=3),
             on_click=abrir_reporte))
@@ -367,7 +459,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 ft.Text("HISTORIAL DE CAJAS", size=13, color=ft.Colors.WHITE)
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             width=200, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.INDIGO_800,
+            style=ft.ButtonStyle(bgcolor=N.INDIGO_800,
                                  shape=ft.RoundedRectangleBorder(radius=8),
                                  elevation=3),
             on_click=lambda e: on_historial_cajas() if on_historial_cajas else None))
@@ -378,7 +470,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 ft.Text("INGRESO STOCK", size=13, color=ft.Colors.WHITE)
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             width=200, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.CYAN_800,
+            style=ft.ButtonStyle(bgcolor=N.CYAN_800,
                                  shape=ft.RoundedRectangleBorder(radius=8),
                                  elevation=3),
             on_click=lambda e: on_ingreso_stock() if on_ingreso_stock else None))
@@ -389,7 +481,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 ft.Text("ROLES Y USUARIOS", size=13, color=ft.Colors.WHITE)
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             width=200, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.PURPLE_700,
+            style=ft.ButtonStyle(bgcolor=N.PURPLE_700,
                                  shape=ft.RoundedRectangleBorder(radius=8),
                                  elevation=3),
             on_click=lambda e: on_roles_usuarios()))
@@ -400,7 +492,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
                 ft.Text("Ajustes", size=13, color=ft.Colors.WHITE)
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=8),
             width=200, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.BLACK,
+            style=ft.ButtonStyle(bgcolor=N.BLACK,
                                  shape=ft.RoundedRectangleBorder(radius=8),
                                  elevation=3),
             on_click=abrir_config))

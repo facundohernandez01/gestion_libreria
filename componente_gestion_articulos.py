@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 import flet as ft
+from ui.paleta import N
 
 from core.permisos import tiene
 from services.excel_service import excel_service
@@ -29,7 +30,7 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
         rows=[], column_spacing=26, heading_row_height=38,
         data_row_min_height=44, data_row_max_height=56,
     )
-    contador_text = ft.Text("", size=12, color=ft.Colors.GREY_400)
+    contador_text = ft.Text("", size=12, color=N.GREY_400)
     search_field = ft.TextField(label="BUSCAR", prefix_icon=ft.Icons.SEARCH, width=350,
                                 hint_text="Código, descripción o categoría…")
     filtro_dropdown = ft.Dropdown(width=150, value="descripcion", options=[
@@ -42,7 +43,7 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
             productos = db_manager.buscar_productos("", "descripcion")
         productos_table.rows.clear()
         for producto in productos:
-            stock_color = ft.Colors.GREEN_700 if producto["stock_actual"] > producto["stock_minimo"] else ft.Colors.RED_700
+            stock_color = N.GREEN_700 if producto["stock_actual"] > producto["stock_minimo"] else N.RED_700
 
             def _h(p):
                 return lambda _: editar_producto(p)
@@ -65,9 +66,9 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
                 ft.DataCell(ft.Text(str(producto["stock_actual"]), color=stock_color,
                                     size=12, width=70)),
                 ft.DataCell(ft.Row([
-                    ft.IconButton(icon=ft.Icons.EDIT, icon_color=ft.Colors.BLUE_400,
+                    ft.IconButton(icon=ft.Icons.EDIT, icon_color=N.BLUE_400,
                                   tooltip="Editar", on_click=_h(producto)),
-                    ft.IconButton(icon=ft.Icons.HISTORY, icon_color=ft.Colors.CYAN_400,
+                    ft.IconButton(icon=ft.Icons.HISTORY, icon_color=N.CYAN_400,
                                   tooltip="Movimientos de stock", on_click=_hist(producto)),
                 ], spacing=0)),
             ]))
@@ -163,7 +164,7 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
         botones_barra.append(ft.FilledButton(
             "REPONER", icon=ft.Icons.SHOPPING_CART,
             on_click=abrir_reponer, height=45,
-            style=ft.ButtonStyle(bgcolor=ft.Colors.ORANGE_800,
+            style=ft.ButtonStyle(bgcolor=N.ORANGE_800,
                                  color=ft.Colors.WHITE)))
 
     barra_busqueda = ft.Container(
@@ -172,7 +173,7 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
         ], spacing=6),
         padding=12, border_radius=8,
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.35, ft.Colors.BLUE_GREY_700)),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.35, N.BLUE_GREY_700)),
         bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE),
     )
 
@@ -180,7 +181,7 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
         content=ft.Column([
             ft.Container(content=ft.Text("GESTIÓN DE ARTÍCULOS", size=20,
                                          weight=ft.FontWeight.BOLD),
-                         bgcolor=ft.Colors.BLUE_900, padding=8,
+                         bgcolor=N.BLUE_900, padding=8,
                          alignment=ft.Alignment.CENTER),
             ft.Container(height=10),
             barra_busqueda,
@@ -191,14 +192,14 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
                     ft.Column([productos_table], scroll=ft.ScrollMode.AUTO,
                               expand=True),
                 ], spacing=4, expand=True),
-                expand=True, border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                expand=True, border=ft.Border.all(1, N.BLUE_GREY_700),
                 border_radius=6, padding=10),
             ft.Container(height=8),
             ft.Container(
                 content=ft.Row([
                     ft.FilledButton("IMPORTAR EXCEL", icon=ft.Icons.UPLOAD_FILE,
                                     on_click=importar_excel,
-                                    style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700,
+                                    style=ft.ButtonStyle(bgcolor=N.BLUE_700,
                                                          color=ft.Colors.WHITE)),
                     ft.FilledButton("EXPORTAR EXCEL", icon=ft.Icons.DOWNLOAD,
                                     on_click=exportar_excel),
@@ -209,13 +210,13 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=10, wrap=True),
                 padding=10, border_radius=8,
                 border=ft.Border.all(1, ft.Colors.with_opacity(
-                    0.35, ft.Colors.BLUE_GREY_700)),
+                    0.35, N.BLUE_GREY_700)),
                 bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE),
             ),
             ft.Text("Excel: codigo, descripcion, precio_lista (obligatorias). "
                     "Opcionales: categoria, marca, precio_costo, stock_inicial, "
                     "stock_minimo, proveedor.",
-                    size=11, italic=True, color=ft.Colors.GREY_500,
+                    size=11, italic=True, color=N.GREY_500,
                     text_align=ft.TextAlign.CENTER),
         ], expand=True),
         padding=20, expand=True,

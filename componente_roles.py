@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import flet as ft
+from ui.paleta import N
 
 from core.permisos import ETIQUETAS, PERMISOS, normalizar, permisos_todos
 from ui.helpers import abrir_dialogo, cerrar_dialogo, snack
@@ -21,10 +22,10 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
     def _recargar(seccion: str):
         if seccion == "usuarios":
             tab_roles.style = ft.ButtonStyle(bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.WHITE))
-            tab_usuarios.style = ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700)
+            tab_usuarios.style = ft.ButtonStyle(bgcolor=N.BLUE_700)
             contenedor.content = _vista_usuarios()
         else:
-            tab_roles.style = ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700)
+            tab_roles.style = ft.ButtonStyle(bgcolor=N.BLUE_700)
             tab_usuarios.style = ft.ButtonStyle(bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.WHITE))
             contenedor.content = _vista_roles()
         page.update()
@@ -68,7 +69,7 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
                 label=etiqueta,
                 value=True if es_admin_rol else bool(permisos.get(clave)),
                 disabled=es_admin_rol)
-        error_text = ft.Text("", size=11, color=ft.Colors.RED_400, visible=False)
+        error_text = ft.Text("", size=11, color=N.RED_400, visible=False)
 
         def guardar(_e=None):
             nombre = "ADMIN" if es_admin_rol else (nombre_field.value or "").strip()
@@ -100,10 +101,10 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
                 content=ft.Column([
                     nombre_field, desc_field,
                     ft.Text("Permisos", size=12, weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.BLUE_300),
+                            color=N.BLUE_300),
                     ft.Column([checks[c] for c, _ in PERMISOS], spacing=0),
                     ft.Text("El rol ADMIN siempre tiene todos los permisos.",
-                            size=11, italic=True, color=ft.Colors.GREY_500,
+                            size=11, italic=True, color=N.GREY_500,
                             visible=es_admin_rol),
                     error_text,
                 ], spacing=8, scroll=ft.ScrollMode.AUTO),
@@ -139,7 +140,7 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
         activo_switch = ft.Switch(
             label="Usuario activo",
             value=bool(usuario.get("activo", True)))
-        error_text = ft.Text("", size=11, color=ft.Colors.RED_400, visible=False)
+        error_text = ft.Text("", size=11, color=N.RED_400, visible=False)
 
         def guardar(_e=None):
             uid, err = db_manager.guardar_usuario({
@@ -198,36 +199,36 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
                     lambda r=r: _eliminar_rol(r))
 
             acciones = [ft.IconButton(icon=ft.Icons.EDIT, tooltip="Editar",
-                                      icon_color=ft.Colors.BLUE_300,
+                                      icon_color=N.BLUE_300,
                                       on_click=_edit)]
             if not rol.get("es_admin"):
                 acciones.append(ft.IconButton(
                     icon=ft.Icons.DELETE_OUTLINE, tooltip="Eliminar",
-                    icon_color=ft.Colors.RED_300, on_click=_del))
+                    icon_color=N.RED_300, on_click=_del))
             tarjetas.controls.append(ft.Container(
                 content=ft.Row([
                     ft.Icon(ft.Icons.VERIFIED_USER if rol.get("es_admin")
-                            else ft.Icons.BADGE, color=ft.Colors.BLUE_300),
+                            else ft.Icons.BADGE, color=N.BLUE_300),
                     ft.Column([
                         ft.Text(rol["nombre"], size=14,
                                 weight=ft.FontWeight.BOLD),
                         ft.Text(rol.get("descripcion") or "—", size=11,
-                                color=ft.Colors.GREY_400),
+                                color=N.GREY_400),
                         ft.Text(permisos_texto, size=10,
-                                color=ft.Colors.CYAN_300),
+                                color=N.CYAN_300),
                     ], spacing=2, expand=True),
                     ft.Text(f"{rol.get('usuarios_count', 0)} usuario(s)",
-                            size=10, color=ft.Colors.GREY_500),
+                            size=10, color=N.GREY_500),
                     ft.Row(acciones, spacing=0),
                 ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
                 padding=10, border_radius=8,
                 bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
                 border=ft.Border.all(1, ft.Colors.with_opacity(
-                    0.3, ft.Colors.BLUE_GREY_700)),
+                    0.3, N.BLUE_GREY_700)),
             ))
         return ft.Column([
             ft.Row([
-                ft.Text(f"{len(roles)} rol(es)", size=12, color=ft.Colors.GREY_400),
+                ft.Text(f"{len(roles)} rol(es)", size=12, color=N.GREY_400),
                 ft.Container(expand=True),
                 ft.FilledButton("NUEVO ROL", icon=ft.Icons.ADD,
                                 style=BTN_PRIMARIO,
@@ -261,21 +262,21 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
                 ft.DataCell(ft.Text(u.get("usuario") or "", size=12)),
                 ft.DataCell(ft.Text(u.get("nombre") or "—", size=12)),
                 ft.DataCell(ft.Text(u.get("rol") or "—", size=12,
-                                    color=ft.Colors.CYAN_300)),
+                                    color=N.CYAN_300)),
                 ft.DataCell(ft.Container(
                     content=ft.Text("ACTIVO" if u.get("activo") else "INACTIVO",
                                     size=9, color=ft.Colors.WHITE,
                                     weight=ft.FontWeight.BOLD),
-                    bgcolor=(ft.Colors.with_opacity(0.3, ft.Colors.GREEN_700)
+                    bgcolor=(ft.Colors.with_opacity(0.3, N.GREEN_700)
                              if u.get("activo") else
-                             ft.Colors.with_opacity(0.3, ft.Colors.RED_700)),
+                             ft.Colors.with_opacity(0.3, N.RED_700)),
                     padding=4, border_radius=4)),
                 ft.DataCell(ft.Row([
                     ft.IconButton(icon=ft.Icons.EDIT, tooltip="Editar",
-                                  icon_color=ft.Colors.BLUE_300, on_click=_edit),
+                                  icon_color=N.BLUE_300, on_click=_edit),
                     ft.IconButton(icon=ft.Icons.DELETE_OUTLINE,
                                   tooltip="Eliminar",
-                                  icon_color=ft.Colors.RED_300, on_click=_del),
+                                  icon_color=N.RED_300, on_click=_del),
                 ], spacing=0)),
             ]))
         tabla = ft.DataTable(
@@ -288,13 +289,13 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
         if not filas:
             tabla.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text("Sin usuarios", italic=True,
-                                    color=ft.Colors.GREY_500)),
+                                    color=N.GREY_500)),
                 *[ft.DataCell(ft.Text("")) for _ in range(4)],
             ]))
         return ft.Column([
             ft.Row([
                 ft.Text(f"{len(usuarios)} usuario(s)", size=12,
-                        color=ft.Colors.GREY_400),
+                        color=N.GREY_400),
                 ft.Container(expand=True),
                 ft.FilledButton("NUEVO USUARIO", icon=ft.Icons.PERSON_ADD,
                                 style=BTN_PRIMARIO,
@@ -302,7 +303,7 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
             ]),
             ft.Container(
                 content=ft.Column([tabla], scroll=ft.ScrollMode.AUTO),
-                expand=True, border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                expand=True, border=ft.Border.all(1, N.BLUE_GREY_700),
                 border_radius=6, padding=8),
         ], spacing=10, expand=True)
 
@@ -320,11 +321,11 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
             ft.Container(
                 content=ft.Row([
                     ft.Icon(ft.Icons.MANAGE_ACCOUNTS, size=24,
-                            color=ft.Colors.BLUE_300),
+                            color=N.BLUE_300),
                     ft.Text("ROLES Y USUARIOS", size=20,
                             weight=ft.FontWeight.BOLD),
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
-                bgcolor=ft.Colors.BLUE_900, padding=8,
+                bgcolor=N.BLUE_900, padding=8,
                 alignment=ft.Alignment.CENTER),
             ft.Container(height=8),
             ft.Row([
@@ -337,7 +338,7 @@ def RolesUsuariosView(db_manager, on_volver, page: ft.Page,
             contenedor,
             ft.Text("Solo un usuario con rol ADMIN puede administrar roles y "
                     "usuarios. El rol ADMIN siempre tiene todos los permisos.",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], spacing=8, expand=True),
         padding=20, expand=True,
     )

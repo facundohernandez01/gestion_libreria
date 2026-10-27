@@ -1,214 +1,292 @@
-"""Ingreso de stock por escaneo de código de barras.
+"""Ingreso de stock por escaneo (pensado para el celular, vía web /stock).
 
-Diseñado para recepcionar mercadería desde el local o desde un celular
-(control responsive). Permite:
-- Buscar el producto por código (lector o tipeo) y ver sus órdenes pendientes.
-- Recepcionar contra una o varias órdenes de compra (con remito opcional).
-- Si no se elige orden, registrar un ingreso directo de stock.
-- Ver los últimos ingresos del día.
+Flujo:
+1. ESCANEAR CÓDIGO abre Binary Eye; al leer, vuelve a /stock?codigo=...
+2. Confirmación: código y nombre del producto.
+3. Recepción: órdenes de compra abiertas para elegir (con la cantidad pedida y
+   pendiente de ese ítem) o ingreso directo sin orden. La cantidad viene
+   precargada con lo pendiente, se puede bajar (recepción parcial) pero no
+   superar lo pendiente. Lo que queda sin recibir sigue pendiente en la orden
+   y cada ingreso queda en el historial de movimientos de stock.
 """
 from __future__ import annotations
 
 from datetime import datetime
 
 import flet as ft
+from ui.paleta import N
 
 from ui.helpers import parse_int, snack
-from ui.theme import BTN_PRIMARIO
+from ui.theme import BTN_PRIMARIO, GRADIENTE_NEON, sombra_neon
+from utils import scan_relay
 
 
-def IngresoStockView(db_manager, on_volver, page: ft.Page):
-    estado = {"producto": None, "pendientes": [], "seleccion": {}}
+def IngresoStockView(db_manager, on_volver, page: ft.Page,
+                     codigo_inicial: str | None = None,
+                     mostrar_volver: bool = True):
+    estado = {"producto": None, "pendientes": [], "opcion": None}
+    montado = {"ok": False}  # evita page.update() antes de agregar la vista
 
+    es_web = bool(getattr(page, "web", False))
+    app_ok = es_web and scan_relay.es_android(page) and bool(scan_relay.origen(page))
+
+    body = ft.Column(spacing=12)
+    historial_panel = ft.Column(spacing=4)
     barcode_field = ft.TextField(
         label="Código de barras / código de producto",
-        prefix_icon=ft.Icons.QR_CODE_SCANNER, autofocus=True,
-        hint_text="Escaneá o escribí el código y presioná Enter",
-        expand=True)
+        prefix_icon=ft.Icons.QR_CODE_SCANNER, expand=True,
+        hint_text="Escribí o escaneá el código y presioná Enter")
     cantidad_field = ft.TextField(
-        label="Cantidad recibida", value="1", width=170,
-        keyboard_type=ft.KeyboardType.NUMBER,
-        text_align=ft.TextAlign.RIGHT)
-    remito_field = ft.TextField(
-        label="Nro de remito (opcional)", width=220, expand=True)
-    buscar_btn = ft.FilledButton(
-        "BUSCAR", icon=ft.Icons.SEARCH, height=44,
-        on_click=lambda _e: buscar())
-    recibir_btn = ft.FilledButton(
-        "RECEPCIONAR", icon=ft.Icons.INVENTORY, height=46, disabled=True,
-        style=BTN_PRIMARIO, on_click=lambda _e: recibir())
+        label="Cantidad a recibir", value="1", width=190,
+        keyboard_type=ft.KeyboardType.NUMBER, text_align=ft.TextAlign.RIGHT)
+    remito_field = ft.TextField(label="Nro de remito (opcional)", expand=True)
 
-    producto_panel = ft.Container(visible=False)
-    pendientes_panel = ft.Column(spacing=6)
-    historial_panel = ft.Column(spacing=4)
-    resumen_text = ft.Text("", size=12, color=ft.Colors.GREY_400)
+    def refrescar():
+        if montado["ok"]:
+            page.update()
 
-    # ---------- producto / órdenes ----------
-    def _producto_card(p: dict):
+    # ---------- piezas visuales ----------
+    def _boton_escanear(texto="ESCANEAR CÓDIGO", altura=64, primario=True):
+        url = ft.Url(scan_relay.url_app_escaner(page), target=ft.UrlTarget.SELF)
+        if primario:
+            return ft.FilledButton(texto, icon=ft.Icons.QR_CODE_SCANNER,
+                                   height=altura, style=BTN_PRIMARIO, url=url)
+        return ft.OutlinedButton(texto, icon=ft.Icons.QR_CODE_SCANNER,
+                                 height=altura, url=url)
+
+    def _tarjeta(contenido, brillo=N.CYAN):
+        return ft.Container(
+            content=contenido, padding=16, border_radius=14,
+            bgcolor=ft.Colors.with_opacity(0.55, N.DEEP),
+            border=ft.Border.all(1.5, ft.Colors.with_opacity(0.6, brillo)),
+            shadow=sombra_neon(brillo, 26, 0.25))
+
+    def _producto_card(p: dict, compacta=False):
         stock = int(p.get("stock_actual") or 0)
         minimo = int(p.get("stock_minimo") or 0)
-        color = (ft.Colors.RED_400 if stock <= 0 else
-                 ft.Colors.ORANGE_400 if stock <= minimo else ft.Colors.GREEN_400)
-        return ft.Container(
-            content=ft.Column([
-                ft.Row([
-                    ft.Icon(ft.Icons.BOOK, color=ft.Colors.BLUE_300),
-                    ft.Text(p.get("descripcion") or "", size=16,
-                            weight=ft.FontWeight.BOLD, expand=True),
-                    ft.Container(
-                        content=ft.Text(f"Stock: {stock}", size=14,
-                                        weight=ft.FontWeight.BOLD, color=color),
-                        padding=8, border_radius=6,
-                        bgcolor=ft.Colors.with_opacity(0.15, color)),
-                ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
-                ft.Text(f"Código: {p.get('codigo') or '—'}  ·  "
-                        f"Proveedor: {p.get('proveedor_nombre') or 'Sin proveedor'}  ·  "
-                        f"Mínimo: {minimo}",
-                        size=11, color=ft.Colors.GREY_400),
-            ], spacing=6),
-            padding=12, border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
-            border=ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.BLUE_GREY_700)),
-        )
-
-    def _toggle(item_id: int, valor: bool):
-        estado["seleccion"][item_id] = bool(valor)
-
-    def _fila_pendiente(pend: dict):
-        item_id = int(pend["item_id"])
-        cb = ft.Checkbox(
-            value=bool(estado["seleccion"].get(item_id)),
-            shape=ft.RoundedRectangleBorder(radius=20))
-        cb.on_change = lambda _e, i=item_id, c=cb: _toggle(i, c.value)
-        estado["seleccion"].setdefault(item_id, bool(cb.value))
-        return ft.Container(
-            content=ft.Row([
-                cb,
-                ft.Column([
-                    ft.Text(f"Orden #{pend['orden_id']} · "
-                            f"{pend.get('proveedor_nombre') or 'Sin proveedor'}",
-                            size=12, weight=ft.FontWeight.BOLD),
-                    ft.Text(f"Pedido {pend['cantidad']} · recibido "
-                            f"{pend.get('cantidad_recibida') or 0} · "
-                            f"pendiente {pend['pendiente']} · "
-                            f"{str(pend.get('fecha_creacion') or '')[:10]}",
-                            size=10, color=ft.Colors.GREY_500),
-                ], spacing=1, expand=True),
+        color = (N.RED_400 if stock <= 0 else
+                 N.ORANGE_400 if stock <= minimo else N.GREEN_400)
+        return _tarjeta(ft.Column([
+            ft.Text(f"Código: {p.get('codigo') or '—'}", size=13,
+                    color=N.CYAN, weight=ft.FontWeight.BOLD, selectable=True),
+            ft.Text(p.get("descripcion") or "", size=18 if compacta else 22,
+                    weight=ft.FontWeight.BOLD),
+            ft.Row([
                 ft.Container(
-                    content=ft.Text(f"Pend. {pend['pendiente']}", size=12,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=ft.Colors.AMBER_300),
-                    padding=6, border_radius=5,
-                    bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.AMBER_700)),
-            ], vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
-            padding=8, border_radius=6,
-            bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
-        )
+                    content=ft.Text(f"Stock: {stock}", size=13,
+                                    weight=ft.FontWeight.BOLD, color=color),
+                    padding=8, border_radius=6,
+                    bgcolor=ft.Colors.with_opacity(0.15, color)),
+                ft.Text(f"Mínimo {minimo}", size=12, color=N.GREY_400),
+            ], spacing=10, vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            ft.Text(f"Proveedor: {p.get('proveedor_nombre') or 'Sin proveedor'}",
+                    size=12, color=N.GREY_400),
+        ], spacing=6))
 
-    def _render_pendientes():
-        pendientes_panel.controls.clear()
-        pendientes = estado["pendientes"]
-        if not pendientes:
-            pendientes_panel.controls.append(ft.Text(
-                "Este producto no tiene órdenes de compra pendientes. "
-                "El ingreso se registrará como stock directo.",
-                size=11, italic=True, color=ft.Colors.GREY_500))
-            return
-        pendientes_panel.controls.append(ft.Text(
-            f"ÓRDENES PENDIENTES ({len(pendientes)}) — marcá sobre cuál "
-            "recepcionar (si no marcás ninguna, el ingreso es directo)",
-            size=11, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER_300))
-        for pend in pendientes:
-            pendientes_panel.controls.append(_fila_pendiente(pend))
+    # ---------- pantallas ----------
+    def mostrar_inicio():
+        estado.update(producto=None, pendientes=[], opcion=None)
+        barcode_field.value = ""
+        manual = ft.Column([barcode_field], visible=not app_ok)
 
-    def buscar(_e=None):
-        codigo = (barcode_field.value or "").strip()
-        if not codigo:
-            return
-        producto = db_manager.obtener_producto_por_codigo(codigo)
-        if not producto:
-            producto = db_manager.buscar_productos(codigo, "codigo", limit=1)
-            producto = producto[0] if producto else None
-        if not producto:
-            snack(page, f"No se encontró el producto «{codigo}»", ok=False)
-            barcode_field.select_all()
+        def alternar(_e):
+            manual.visible = not manual.visible
             page.update()
+
+        piezas = []
+        if app_ok:
+            piezas += [
+                _boton_escanear(),
+                ft.Row([
+                    ft.TextButton("Si no se abre, probar enlace directo", url=ft.Url(
+                        scan_relay.url_app_escaner(page, intent=False),
+                        target=ft.UrlTarget.SELF)),
+                    ft.TextButton("Instalar Binary Eye", icon=ft.Icons.DOWNLOAD,
+                                  url=ft.Url(scan_relay.URL_PLAY,
+                                             target=ft.UrlTarget.BLANK)),
+                ], wrap=True, spacing=4),
+                ft.TextButton("Escribir código a mano", icon=ft.Icons.KEYBOARD,
+                              on_click=alternar),
+            ]
+        else:
+            piezas.append(ft.Text(
+                "Escaneá con el lector de códigos o escribí el código y "
+                "presioná Enter. Desde un celular Android, abrí esta pantalla "
+                "en Chrome para escanear con la cámara.",
+                size=12, color=N.GREY_400))
+        piezas.append(manual)
+        body.controls = [
+            _tarjeta(ft.Column(piezas, spacing=10)),
+            _tarjeta(ft.Column([
+                ft.Text("ÚLTIMOS INGRESOS DE HOY", size=11,
+                        weight=ft.FontWeight.BOLD, color=N.GREEN_300),
+                historial_panel,
+            ], spacing=6), brillo=N.VIOLET),
+        ]
+        cargar_historial()
+        refrescar()
+
+    def mostrar_confirmacion(codigo: str, producto: dict | None):
+        if not producto:
+            body.controls = [_tarjeta(ft.Column([
+                ft.Icon(ft.Icons.ERROR_OUTLINE, size=44, color=N.RED_400),
+                ft.Text("No se encontró el producto", size=18,
+                        weight=ft.FontWeight.BOLD),
+                ft.Text(f"Código leído: {codigo}", size=14, color=N.CYAN,
+                        selectable=True),
+                _boton_escanear("ESCANEAR OTRO", 52) if app_ok else
+                ft.FilledButton("VOLVER", height=48, on_click=lambda _e:
+                                mostrar_inicio()),
+            ], spacing=10), brillo=N.RED_400)]
+            refrescar()
             return
         estado["producto"] = producto
         estado["pendientes"] = db_manager.buscar_ordenes_pendientes_producto(
             int(producto["id"]))
-        estado["seleccion"] = {}
-        producto_panel.content = _producto_card(producto)
-        producto_panel.visible = True
-        _render_pendientes()
-        recibir_btn.disabled = False
-        resumen_text.value = ""
-        page.update()
-        try:
-            page.run_task(cantidad_field.focus)
-        except Exception:
-            pass
+        n = len(estado["pendientes"])
+        aviso = (f"Tiene {n} orden{'es' if n != 1 else ''} de compra abierta"
+                 f"{'s' if n != 1 else ''}." if n else
+                 "No tiene órdenes de compra abiertas: se ingresa como stock directo.")
+        body.controls = [
+            ft.Text("¿Es este el producto?", size=14, color=N.GREY_400),
+            _producto_card(producto),
+            ft.Text(aviso, size=12, italic=True, color=N.AMBER_300 if n else N.GREY_400),
+            ft.FilledButton("CONFIRMAR", icon=ft.Icons.CHECK, height=56,
+                            style=BTN_PRIMARIO,
+                            on_click=lambda _e: mostrar_recepcion()),
+            _boton_escanear("ESCANEAR OTRO", 48, primario=False) if app_ok else
+            ft.OutlinedButton("CANCELAR", height=48,
+                              on_click=lambda _e: mostrar_inicio()),
+        ]
+        refrescar()
 
-    # ---------- ingreso ----------
-    def _cerrar_producto():
-        estado.update(producto=None, pendientes=[], seleccion={})
-        producto_panel.visible = False
-        pendientes_panel.controls.clear()
-        recibir_btn.disabled = True
-        barcode_field.value = ""
-        cantidad_field.value = "1"
-        page.update()
+    def _maximo() -> int | None:
+        op = estado["opcion"]
+        return int(op["pendiente"]) if op else None
 
-    def recibir(_e=None):
+    def _validar_cantidad(_e=None) -> bool:
+        maximo = _maximo()
+        cant = parse_int(cantidad_field.value, 0)
+        if cant <= 0:
+            cantidad_field.error = "Ingresá una cantidad mayor a cero"
+        elif maximo is not None and cant > maximo:
+            cantidad_field.error = f"No puede superar lo pendiente ({maximo})"
+        else:
+            cantidad_field.error = None
+        if _e is not None:
+            page.update()
+        return cantidad_field.error is None
+
+    def _elegir(op: dict | None):
+        estado["opcion"] = op
+        cantidad_field.value = str(int(op["pendiente"])) if op else "1"
+        cantidad_field.helper = (f"Máximo {int(op['pendiente'])} (pendiente de la orden)"
+                                 if op else "Sin límite: ingreso directo")
+        cantidad_field.error = None
+        _dibujar_recepcion()
+        refrescar()
+
+    def _opcion_card(titulo, detalle, seleccionada, on_click, extra=None):
+        color = N.CYAN if seleccionada else N.BLUE_GREY_600
+        fila = [
+            ft.Icon(ft.Icons.RADIO_BUTTON_CHECKED if seleccionada
+                    else ft.Icons.RADIO_BUTTON_UNCHECKED, color=color),
+            ft.Column([
+                ft.Text(titulo, size=14, weight=ft.FontWeight.BOLD),
+                ft.Text(detalle, size=11, color=N.GREY_400),
+            ], spacing=1, expand=True),
+        ]
+        if extra:
+            fila.append(extra)
+        return ft.Container(
+            content=ft.Row(fila, spacing=10,
+                           vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=12, border_radius=12, on_click=on_click,
+            bgcolor=ft.Colors.with_opacity(0.18 if seleccionada else 0.05,
+                                           N.CYAN if seleccionada else ft.Colors.WHITE),
+            border=ft.Border.all(1.5 if seleccionada else 1,
+                                 ft.Colors.with_opacity(0.9 if seleccionada else 0.4, color)),
+            shadow=sombra_neon(N.CYAN, 18, 0.3) if seleccionada else None)
+
+    def _dibujar_recepcion():
         producto = estado["producto"]
+        opciones = []
+        for pend in estado["pendientes"]:
+            sel = estado["opcion"] is pend
+            opciones.append(_opcion_card(
+                f"Orden #{pend['orden_id']} · {pend.get('proveedor_nombre') or 'Sin proveedor'}",
+                f"Pedido {pend['cantidad']} · recibido "
+                f"{pend.get('cantidad_recibida') or 0} · "
+                f"{str(pend.get('fecha_creacion') or '')[:10]}",
+                sel, lambda _e, p=pend: _elegir(p),
+                extra=ft.Container(
+                    content=ft.Text(f"Pend. {pend['pendiente']}", size=12,
+                                    weight=ft.FontWeight.BOLD, color=N.AMBER_300),
+                    padding=6, border_radius=6,
+                    bgcolor=ft.Colors.with_opacity(0.15, N.AMBER_700))))
+        opciones.append(_opcion_card(
+            "Ingreso directo (sin orden)",
+            "Suma stock sin descontar de ninguna orden de compra",
+            estado["opcion"] is None, lambda _e: _elegir(None)))
+        body.controls = [
+            _producto_card(producto, compacta=True),
+            ft.Text("ELEGÍ DÓNDE RECEPCIONAR" if estado["pendientes"]
+                    else "INGRESO DIRECTO", size=11, weight=ft.FontWeight.BOLD,
+                    color=N.AMBER_300),
+            *opciones,
+            ft.Row([cantidad_field, remito_field], spacing=8,
+                   vertical_alignment=ft.CrossAxisAlignment.START),
+            ft.FilledButton("RECEPCIONAR", icon=ft.Icons.INVENTORY, height=56,
+                            style=BTN_PRIMARIO, on_click=lambda _e: recibir()),
+            _boton_escanear("CANCELAR Y ESCANEAR OTRO", 46, primario=False)
+            if app_ok else ft.OutlinedButton(
+                "CANCELAR", height=46, on_click=lambda _e: mostrar_inicio()),
+        ]
+
+    def mostrar_recepcion():
+        if not estado["producto"]:
+            return
+        remito_field.value = ""
+        # Preselecciona la orden más antigua: confirmar es un toque.
+        _elegir(estado["pendientes"][0] if estado["pendientes"] else None)
+
+    # ---------- acciones ----------
+    def buscar_codigo(codigo: str):
+        codigo = (codigo or "").strip()
+        if not codigo:
+            return
+        producto = db_manager.obtener_producto_por_codigo(codigo)
         if not producto:
-            snack(page, "Primero buscá un producto", ok=False)
+            hallados = db_manager.buscar_productos(codigo, "codigo", limit=1)
+            producto = hallados[0] if hallados else None
+        mostrar_confirmacion(codigo, producto)
+
+    def recibir():
+        producto, op = estado["producto"], estado["opcion"]
+        if not producto or not _validar_cantidad(None):
+            page.update()
+            if producto:
+                snack(page, cantidad_field.error or "Cantidad inválida", ok=False)
             return
         cantidad = parse_int(cantidad_field.value, 0)
-        if cantidad <= 0:
-            snack(page, "Ingresá una cantidad mayor a cero", ok=False)
-            return
         remito = (remito_field.value or "").strip()
-        seleccionados = [
-            pend for pend in estado["pendientes"]
-            if estado["seleccion"].get(int(pend["item_id"]))
-        ]
-        if seleccionados:
-            total_pend = sum(int(p["pendiente"]) for p in seleccionados)
-            if cantidad > total_pend:
-                snack(page, (f"La cantidad supera lo pendiente en las órdenes "
-                             f"seleccionadas ({total_pend}). Desmarcá órdenes o "
-                             "ajustá la cantidad."), ok=False)
-                return
-            resto = cantidad
-            mensajes = []
-            for pend in seleccionados:
-                if resto <= 0:
-                    break
-                tomar = min(int(pend["pendiente"]), resto)
-                ok, msg = db_manager.recibir_orden_compra(
-                    int(pend["orden_id"]), {int(pend["item_id"]): tomar},
-                    remito=remito,
-                    observaciones="Recepción por escaneo de código")
-                if ok:
-                    mensajes.append(f"Orden #{pend['orden_id']}: +{tomar}")
-                else:
-                    mensajes.append(f"Orden #{pend['orden_id']}: {msg}")
-                resto -= tomar
-            snack(page, " · ".join(mensajes), ok=True)
+        if op:
+            ok, msg = db_manager.recibir_orden_compra(
+                int(op["orden_id"]), {int(op["item_id"]): cantidad},
+                remito=remito, observaciones="Recepción por escaneo de código")
+            if ok:
+                quedan = int(op["pendiente"]) - cantidad
+                msg = (f"Orden #{op['orden_id']}: +{cantidad} recibidas. "
+                       + (f"Quedan {quedan} pendientes en la orden."
+                          if quedan > 0 else "Ítem completo."))
         else:
             ok, msg = db_manager.ingresar_stock_directo(
                 int(producto["id"]), cantidad, remito=remito,
                 observaciones="Ingreso por escaneo (sin orden)")
-            snack(page, msg, ok=ok)
-        _cerrar_producto()
-        cargar_historial()
-        try:
-            page.run_task(barcode_field.focus)
-        except Exception:
-            pass
+        snack(page, msg, ok=ok)
+        if ok:
+            mostrar_inicio()
 
-    # ---------- historial del día ----------
     def cargar_historial():
         historial_panel.controls.clear()
         hoy = datetime.now().strftime("%Y-%m-%d")
@@ -216,93 +294,58 @@ def IngresoStockView(db_manager, on_volver, page: ft.Page):
             movs = db_manager.obtener_movimientos_stock_detallado(limit=80)
         except Exception:
             movs = []
-        ingresos = [m for m in movs
-                    if m.get("tipo") == "ingreso"
+        ingresos = [m for m in movs if m.get("tipo") == "ingreso"
                     and str(m.get("fecha") or "").startswith(hoy)][:10]
         if not ingresos:
             historial_panel.controls.append(ft.Text(
                 "Todavía no hay ingresos registrados hoy.", size=11,
-                italic=True, color=ft.Colors.GREY_500))
+                italic=True, color=N.GREY_500))
             return
         for m in ingresos:
-            referencia = (f"Orden #{m['referencia_id']}"
-                          if m.get("referencia_id") else "Directo")
+            ref = (f"Orden #{m['referencia_id']}" if m.get("referencia_id")
+                   else "Directo")
             historial_panel.controls.append(ft.Row([
-                ft.Icon(ft.Icons.ARROW_UPWARD, size=13,
-                        color=ft.Colors.GREEN_400),
-                ft.Text(str(m.get("fecha") or "")[11:16], size=11, width=42,
-                        color=ft.Colors.GREY_500),
-                ft.Text(m.get("producto_codigo") or "", size=11, width=95,
-                        color=ft.Colors.GREY_400),
+                ft.Text(str(m.get("fecha") or "")[11:16], size=11, width=40,
+                        color=N.GREY_500),
                 ft.Text(m.get("producto_nombre") or "", size=11, expand=True,
                         max_lines=1, overflow=ft.TextOverflow.ELLIPSIS),
-                ft.Text(m.get("usuario") or "—", size=10,
-                        color=ft.Colors.CYAN_300, width=70),
-                ft.Text(referencia, size=10, color=ft.Colors.AMBER_300, width=80),
-                ft.Text(f"+{m.get('cantidad')}", size=12,
-                        weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_300,
-                        width=46, text_align=ft.TextAlign.RIGHT),
+                ft.Text(ref, size=10, color=N.AMBER_300, width=72),
+                ft.Text(f"+{m.get('cantidad')}", size=12, width=40,
+                        weight=ft.FontWeight.BOLD, color=N.GREEN_300,
+                        text_align=ft.TextAlign.RIGHT),
             ], spacing=6))
 
-    barcode_field.on_submit = buscar
+    barcode_field.on_submit = lambda _e: buscar_codigo(barcode_field.value)
+    cantidad_field.on_change = _validar_cantidad
     cantidad_field.on_submit = lambda _e: recibir()
     remito_field.on_submit = lambda _e: recibir()
-    cargar_historial()
 
+    # Estado inicial: con código de retorno va directo a la confirmación.
+    if codigo_inicial:
+        try:
+            buscar_codigo(codigo_inicial)
+        except Exception:
+            mostrar_inicio()
+    else:
+        mostrar_inicio()
+    montado["ok"] = True
+
+    salir = ft.IconButton(
+        ft.Icons.ARROW_BACK if mostrar_volver else ft.Icons.LOGOUT,
+        tooltip="Volver" if mostrar_volver else "Cerrar sesión",
+        icon_color=ft.Colors.WHITE, on_click=lambda _e: on_volver())
     return ft.Container(
         content=ft.Column([
             ft.Container(
                 content=ft.Row([
-                    ft.Icon(ft.Icons.ADD_BOX, size=24, color=ft.Colors.CYAN_300),
-                    ft.Text("INGRESO DE STOCK", size=20, weight=ft.FontWeight.BOLD),
-                ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
-                bgcolor=ft.Colors.BLUE_900, padding=8, alignment=ft.Alignment.CENTER),
-            ft.Container(height=10),
-            ft.Container(
-                content=ft.Column([
-                    ft.ResponsiveRow([
-                        ft.Container(barcode_field, col={"xs": 12, "sm": 8, "md": 6},
-                                     padding=0),
-                        ft.Container(cantidad_field, col={"xs": 6, "sm": 4, "md": 2},
-                                     padding=0),
-                        ft.Container(remito_field, col={"xs": 6, "sm": 12, "md": 4},
-                                     padding=0),
-                    ], spacing=8, run_spacing=8),
-                    ft.ResponsiveRow([
-                        ft.Container(buscar_btn, col={"xs": 12, "sm": 6, "md": 3},
-                                     padding=0),
-                        ft.Container(recibir_btn, col={"xs": 12, "sm": 6, "md": 3},
-                                     padding=0),
-                        ft.Container(
-                            content=ft.OutlinedButton(
-                                "VOLVER", icon=ft.Icons.ARROW_BACK, height=46,
-                                on_click=lambda _e: on_volver()),
-                            col={"xs": 12, "sm": 6, "md": 3}, padding=0),
-                    ], spacing=8, run_spacing=8),
-                    resumen_text,
+                    ft.Icon(ft.Icons.ADD_BOX, size=24, color=ft.Colors.WHITE),
+                    ft.Text("INGRESO DE STOCK", size=20,
+                            weight=ft.FontWeight.BOLD, expand=True),
+                    salir,
                 ], spacing=10),
-                padding=12, border_radius=8,
-                border=ft.Border.all(1, ft.Colors.with_opacity(0.35,
-                                                               ft.Colors.BLUE_GREY_700)),
-                bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE)),
-            ft.Container(height=10),
-            producto_panel,
-            ft.Container(height=8),
-            pendientes_panel,
-            ft.Container(height=10),
-            ft.Container(
-                content=ft.Column([
-                    ft.Text("ÚLTIMOS INGRESOS DE HOY", size=11,
-                            weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_300),
-                    historial_panel,
-                ], spacing=6),
-                padding=10, border_radius=8,
-                bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE)),
-            ft.Container(height=6),
-            ft.Text("Escaneá el código, indicá la cantidad y elegí la orden de "
-                    "compra si corresponde. Pensado para usarse también desde el "
-                    "celular en el depósito.", size=11, italic=True,
-                    color=ft.Colors.GREY_500),
-        ], scroll=ft.ScrollMode.AUTO, expand=True),
-        padding=20, expand=True,
-    )
+                gradient=GRADIENTE_NEON, padding=ft.Padding.symmetric(
+                    horizontal=12, vertical=6), border_radius=12,
+                shadow=sombra_neon(N.CYAN, 22, 0.35)),
+            body,
+        ], spacing=12, scroll=ft.ScrollMode.AUTO, expand=True),
+        padding=12, expand=True)

@@ -8,6 +8,7 @@
 from datetime import datetime, timedelta
 
 import flet as ft
+from ui.paleta import N
 
 from services.report_service import rango_iso, report_service
 from ui.helpers import abrir_dialogo, cerrar_dialogo, snack
@@ -51,11 +52,11 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
     hasta_field.on_click = lambda _: _elegir(False)
 
     # tarjetas resumen
-    card_ventas = ft.Text("0", size=26, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
-    card_total = ft.Text("$0.00", size=26, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
-    card_promedio = ft.Text("$0.00", size=26, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400)
+    card_ventas = ft.Text("0", size=26, weight=ft.FontWeight.BOLD, color=N.GREEN_400)
+    card_total = ft.Text("$0.00", size=26, weight=ft.FontWeight.BOLD, color=N.GREEN_400)
+    card_promedio = ft.Text("$0.00", size=26, weight=ft.FontWeight.BOLD, color=N.GREEN_400)
     estado_text = ft.Text("Seleccione un rango de fechas y presione Filtrar",
-                          size=12, italic=True, color=ft.Colors.GREY_500)
+                          size=12, italic=True, color=N.GREY_500)
 
     ventas_tabla = ft.DataTable(
         columns=[ft.DataColumn(ft.Text("ID")), ft.DataColumn(ft.Text("Fecha")),
@@ -94,7 +95,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
         card_total.value = f"${total:,.2f}"
         card_promedio.value = f"${(total / n if n else 0):,.2f}"
         estado_text.value = f"{n} ventas completadas entre {desde_field.value} y {hasta_field.value}"
-        estado_text.color = ft.Colors.GREEN_400
+        estado_text.color = N.GREEN_400
 
         ventas_tabla.rows.clear()
         for v in ventas:
@@ -152,26 +153,26 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
 
     resumen_tab = _tab_content([
         ft.Row([
-            ft.Container(content=ft.Column([ft.Text("VENTAS", size=11, color=ft.Colors.GREY_500), card_ventas]),
-                         bgcolor=ft.Colors.BLUE_GREY_900, padding=12, border_radius=8),
-            ft.Container(content=ft.Column([ft.Text("TOTAL", size=11, color=ft.Colors.GREY_500), card_total]),
-                         bgcolor=ft.Colors.BLUE_GREY_900, padding=12, border_radius=8),
-            ft.Container(content=ft.Column([ft.Text("PROMEDIO", size=11, color=ft.Colors.GREY_500), card_promedio]),
-                         bgcolor=ft.Colors.BLUE_GREY_900, padding=12, border_radius=8),
+            ft.Container(content=ft.Column([ft.Text("VENTAS", size=11, color=N.GREY_500), card_ventas]),
+                         bgcolor=N.BLUE_GREY_900, padding=12, border_radius=8),
+            ft.Container(content=ft.Column([ft.Text("TOTAL", size=11, color=N.GREY_500), card_total]),
+                         bgcolor=N.BLUE_GREY_900, padding=12, border_radius=8),
+            ft.Container(content=ft.Column([ft.Text("PROMEDIO", size=11, color=N.GREY_500), card_promedio]),
+                         bgcolor=N.BLUE_GREY_900, padding=12, border_radius=8),
         ], spacing=12),
         ft.Text("Ventas por día", size=13, weight=ft.FontWeight.BOLD),
         ft.Container(content=ft.Column([dia_tabla], scroll=ft.ScrollMode.AUTO),
-                     border=ft.Border.all(1, ft.Colors.BLUE_GREY_700), border_radius=5,
+                     border=ft.Border.all(1, N.BLUE_GREY_700), border_radius=5,
                      padding=5, height=160),
         ft.Text("Detalle de ventas", size=13, weight=ft.FontWeight.BOLD),
         ft.Container(content=ft.Column([ventas_tabla], scroll=ft.ScrollMode.AUTO),
-                     border=ft.Border.all(1, ft.Colors.BLUE_GREY_700), border_radius=5,
+                     border=ft.Border.all(1, N.BLUE_GREY_700), border_radius=5,
                      padding=5, height=240),
     ])
     top_tab = _tab_content([
         ft.Text("Productos más vendidos (top 15)", size=13, weight=ft.FontWeight.BOLD),
         ft.Container(content=ft.Column([top_tabla], scroll=ft.ScrollMode.AUTO),
-                     border=ft.Border.all(1, ft.Colors.BLUE_GREY_700), border_radius=5,
+                     border=ft.Border.all(1, N.BLUE_GREY_700), border_radius=5,
                      padding=5, height=420),
     ])
 
@@ -188,7 +189,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
                  ft.dropdown.Option("stock_asc", "Stock (menor primero)"),
                  ft.dropdown.Option("descripcion", "Descripción"),
                  ft.dropdown.Option("proveedor", "Proveedor")])
-    stock_resumen = ft.Text("", size=12, color=ft.Colors.GREY_400)
+    stock_resumen = ft.Text("", size=12, color=N.GREY_400)
     stock_tabla = ft.DataTable(
         columns=[ft.DataColumn(ft.Text("Código")),
                  ft.DataColumn(ft.Text("Descripción")),
@@ -200,14 +201,14 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
     )
     stock_state = {"productos": [], "seleccion": []}
     ESTADOS_STOCK = {
-        "agotado": ("AGOTADO", ft.Colors.RED_400),
-        "bajo": ("BAJO MÍNIMO", ft.Colors.ORANGE_400),
-        "por_agotar": ("POR AGOTAR", ft.Colors.YELLOW_400),
-        "ok": ("OK", ft.Colors.GREEN_400),
+        "agotado": ("AGOTADO", N.RED_400),
+        "bajo": ("BAJO MÍNIMO", N.ORANGE_400),
+        "por_agotar": ("POR AGOTAR", N.YELLOW_400),
+        "ok": ("OK", N.GREEN_400),
     }
 
     def _stock_badge(estado: str):
-        texto, color = ESTADOS_STOCK.get(estado, (estado, ft.Colors.GREY_400))
+        texto, color = ESTADOS_STOCK.get(estado, (estado, N.GREY_400))
         return ft.Container(
             content=ft.Text(texto, size=10, color=ft.Colors.WHITE,
                             weight=ft.FontWeight.BOLD),
@@ -246,7 +247,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
         stock_tabla.rows.clear()
         for p in seleccion:
             estado = p.get("estado_stock") or "ok"
-            color = ESTADOS_STOCK.get(estado, ("", ft.Colors.GREY_400))[1]
+            color = ESTADOS_STOCK.get(estado, ("", N.GREY_400))[1]
             stock_tabla.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text(p.get("codigo") or "", size=11)),
                 ft.DataCell(ft.Text(str(p.get("descripcion") or "")[:48], size=11)),
@@ -259,7 +260,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
         if not seleccion:
             stock_tabla.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text("Sin productos para este filtro", italic=True,
-                                    color=ft.Colors.GREY_500, size=11)),
+                                    color=N.GREY_500, size=11)),
                 *[ft.DataCell(ft.Text("")) for _ in range(5)],
             ]))
         agotados = sum(1 for p in productos if int(p.get("prioridad_stock", 3)) == 0)
@@ -289,7 +290,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
                                   on_click=_exportar_stock)], spacing=10),
         stock_resumen,
         ft.Container(content=ft.Column([stock_tabla], scroll=ft.ScrollMode.AUTO),
-                     border=ft.Border.all(1, ft.Colors.BLUE_GREY_700), border_radius=5,
+                     border=ft.Border.all(1, N.BLUE_GREY_700), border_radius=5,
                      padding=5, height=380),
     ])
 
@@ -297,7 +298,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
         ft.Text("Gráficos y exportación", size=13, weight=ft.FontWeight.BOLD),
         ft.Text("Se genera un HTML autocontenido con gráficos Apache ECharts "
                 "(barras y líneas) que puede abrirse en el navegador.",
-                size=11, italic=True, color=ft.Colors.GREY_500),
+                size=11, italic=True, color=N.GREY_500),
         ft.FilledButton("📊 Ver gráficos en navegador", icon=ft.Icons.BAR_CHART,
                         on_click=lambda _: _exportar_html(abrir=True)),
         ft.FilledButton("💾 Exportar HTML", icon=ft.Icons.DOWNLOAD,
@@ -314,7 +315,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
     def _cambiar_tab(i):
         for j, b in enumerate(botones_tab):
             b.style = ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE_700 if j == i else ft.Colors.GREY_800,
+                bgcolor=N.BLUE_700 if j == i else N.GREY_800,
                 color=ft.Colors.WHITE)
             b.icon = ft.Icons.CHECK if j == i else None
         contenedor_tabs.content.controls = [contenidos[i]]
@@ -325,7 +326,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
     for i, label in enumerate(etiquetas):
         botones_tab.append(ft.FilledTonalButton(
             label, icon=(ft.Icons.CHECK if i == 0 else None),
-            style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700 if i == 0 else ft.Colors.GREY_800,
+            style=ft.ButtonStyle(bgcolor=N.BLUE_700 if i == 0 else N.GREY_800,
                                  color=ft.Colors.WHITE),
             on_click=lambda e, i=i: _cambiar_tab(i)))
     contenedor_tabs = ft.Container(content=ft.Column([contenidos[0]], expand=True),
@@ -343,7 +344,7 @@ def mostrar_reporte_ventas(page: ft.Page, db_manager):
 
     dialog = ft.AlertDialog(
         modal=True,
-        title=ft.Row([ft.Icon(ft.Icons.ASSESSMENT, color=ft.Colors.BLUE_400),
+        title=ft.Row([ft.Icon(ft.Icons.ASSESSMENT, color=N.BLUE_400),
                       ft.Text("Reportes de Ventas", size=20, weight=ft.FontWeight.BOLD)]),
         content=ft.Container(
             content=ft.Column([

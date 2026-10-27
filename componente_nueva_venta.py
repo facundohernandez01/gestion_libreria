@@ -4,6 +4,7 @@ import platform
 import subprocess
 
 import flet as ft
+from ui.paleta import N
 
 from services.billing_service import billing_service
 from services.mercadopago_service import mp_service
@@ -97,28 +98,28 @@ def SeleccionMetodoPagoView(db_manager, page, on_metodo, on_cancelar=None, sm_ma
     opciones = [{
         "clave": "efectivo", "label": "Efectivo",
         "detalle": "Sin recargo", "icon": ft.Icons.PAYMENTS,
-        "color": ft.Colors.GREEN_400,
+        "color": N.GREEN_400,
     }]
     if _cfg_bool(db_manager, "TARJETA_DEBITO_ACTIVO", True):
         r = recargos["tarjeta_debito"]
         opciones.append({
             "clave": "tarjeta_debito", "label": "Débito",
             "detalle": f"Recargo +{r:g}%" if r else "Sin recargo",
-            "icon": ft.Icons.CREDIT_CARD, "color": ft.Colors.CYAN_400,
+            "icon": ft.Icons.CREDIT_CARD, "color": N.CYAN_400,
         })
     if _cfg_bool(db_manager, "TARJETA_CREDITO_ACTIVO", True):
         r = recargos["tarjeta_credito"]
         opciones.append({
             "clave": "tarjeta_credito", "label": "Crédito",
             "detalle": f"Recargo +{r:g}%" if r else "Sin recargo",
-            "icon": ft.Icons.CREDIT_SCORE, "color": ft.Colors.PURPLE_300,
+            "icon": ft.Icons.CREDIT_SCORE, "color": N.PURPLE_300,
         })
     if _cfg_bool(db_manager, "MP_ACTIVO", True):
         r = recargos["mercadopago_qr"]
         opciones.append({
             "clave": "mercadopago_qr", "label": "QR / Mercado Pago",
             "detalle": f"Recargo +{r:g}%" if r else "Sin recargo",
-            "icon": ft.Icons.QR_CODE_2, "color": ft.Colors.ORANGE_300,
+            "icon": ft.Icons.QR_CODE_2, "color": N.ORANGE_300,
         })
 
     seleccion = {"idx": 0}
@@ -128,13 +129,13 @@ def SeleccionMetodoPagoView(db_manager, page, on_metodo, on_cancelar=None, sm_ma
     def _pintar():
         for i, tarjeta in enumerate(tarjetas):
             activa = (i == seleccion["idx"])
-            tarjeta.bgcolor = (ft.Colors.with_opacity(0.18, ft.Colors.GREEN)
+            tarjeta.bgcolor = (ft.Colors.with_opacity(0.18, N.GREEN)
                                if activa else ft.Colors.with_opacity(0.06, ft.Colors.WHITE))
             tarjeta.border = ft.Border.all(
-                2, ft.Colors.GREEN if activa else ft.Colors.BLUE_GREY_700)
+                2, N.GREEN if activa else N.BLUE_GREY_700)
             tarjeta.shadow = (ft.BoxShadow(
                 blur_radius=16, spread_radius=1,
-                color=ft.Colors.with_opacity(0.35, ft.Colors.GREEN))
+                color=ft.Colors.with_opacity(0.35, N.GREEN))
                 if activa else None)
             try:
                 tarjeta.content.controls[2].visible = activa
@@ -153,8 +154,6 @@ def SeleccionMetodoPagoView(db_manager, page, on_metodo, on_cancelar=None, sm_ma
         _seleccionar(seleccion["idx"] + delta)
 
     def _cleanup(forzar: bool = False):
-        # Si ya se aceptó, el modal de venta registra sus propias flechas.
-        # El on_dismiss del selector puede llegar después y no debe borrarlas.
         if aceptado["valor"] and not forzar:
             return
         if sm_manager is not None:
@@ -206,12 +205,12 @@ def SeleccionMetodoPagoView(db_manager, page, on_metodo, on_cancelar=None, sm_ma
                 ),
                 ft.Column([
                     ft.Text(opcion["label"], size=16, weight=ft.FontWeight.BOLD),
-                    ft.Text(opcion["detalle"], size=11, color=ft.Colors.GREY_400),
+                    ft.Text(opcion["detalle"], size=11, color=N.GREY_400),
                 ], spacing=2, expand=True),
-                ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN, visible=False),
+                ft.Icon(ft.Icons.CHECK_CIRCLE, color=N.GREEN, visible=False),
             ], spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=14, border_radius=10, ink=True,
-            border=ft.Border.all(2, ft.Colors.BLUE_GREY_700),
+            border=ft.Border.all(2, N.BLUE_GREY_700),
             bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
             on_click=lambda _, idx=i: _seleccionar(idx),
             col={"xs": 12, "sm": 6},
@@ -222,13 +221,13 @@ def SeleccionMetodoPagoView(db_manager, page, on_metodo, on_cancelar=None, sm_ma
         modal=True,
         on_dismiss=lambda _: _cleanup(),
         title=ft.Row([
-            ft.Icon(ft.Icons.POINT_OF_SALE, color=ft.Colors.GREEN_700),
+            ft.Icon(ft.Icons.POINT_OF_SALE, color=N.GREEN_700),
             ft.Text("¿Cómo se cobra?", size=20, weight=ft.FontWeight.BOLD),
         ]),
         content=ft.Container(
             content=ft.Column([
                 ft.Text("Elegí con las flechas y Enter, o hacé clic y presioná Aceptar.",
-                        size=12, color=ft.Colors.GREY_400),
+                        size=12, color=N.GREY_400),
                 ft.ResponsiveRow(tarjetas, spacing=10, run_spacing=10),
                 ft.Row([
                     ft.TextButton("CANCELAR (Esc)", on_click=_cancelar),
@@ -270,10 +269,10 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
     auto_efectivo = flags["activa"] and flags["auto_efectivo"]
 
     metodos = {
-        "efectivo": ("Efectivo", ft.Icons.PAYMENTS, ft.Colors.GREEN_400, 0.0),
-        "tarjeta_debito": ("Débito", ft.Icons.CREDIT_CARD, ft.Colors.CYAN_400, recargo_debito),
-        "tarjeta_credito": ("Crédito", ft.Icons.CREDIT_SCORE, ft.Colors.PURPLE_300, recargo_credito),
-        "mercadopago_qr": ("QR / Mercado Pago", ft.Icons.QR_CODE_2, ft.Colors.ORANGE_300, recargo_mp),
+        "efectivo": ("Efectivo", ft.Icons.PAYMENTS, N.GREEN_400, 0.0),
+        "tarjeta_debito": ("Débito", ft.Icons.CREDIT_CARD, N.CYAN_400, recargo_debito),
+        "tarjeta_credito": ("Crédito", ft.Icons.CREDIT_SCORE, N.PURPLE_300, recargo_credito),
+        "mercadopago_qr": ("QR / Mercado Pago", ft.Icons.QR_CODE_2, N.ORANGE_300, recargo_mp),
     }
     if metodo_pago not in metodos:
         metodo_pago = "efectivo"
@@ -293,7 +292,7 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
     # ---- panel mensajes ----
     log_text = ft.Text("Listo para registrar una venta.", size=13, color=ft.Colors.WHITE)
     log_box = ft.Container(
-        bgcolor=ft.Colors.with_opacity(0.15, ft.Colors.BLUE_GREY_700),
+        bgcolor=ft.Colors.with_opacity(0.15, N.BLUE_GREY_700),
         border_radius=6, padding=10, content=log_text,
         alignment=ft.Alignment.CENTER_LEFT, width=280,
     )
@@ -309,9 +308,9 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         except Exception:
             pass
 
-    def mostrar_exito(m): mostrar_mensaje(f"✅ {m}", ft.Colors.GREEN_700)
-    def mostrar_error(m): mostrar_mensaje(f"⚠️ {m}", ft.Colors.RED_700)
-    def log_ui(m): mostrar_mensaje(f"ℹ️ {m}", ft.Colors.BLUE_GREY_700)
+    def mostrar_exito(m): mostrar_mensaje(f"✅ {m}", N.GREEN_700)
+    def mostrar_error(m): mostrar_mensaje(f"⚠️ {m}", N.RED_700)
+    def log_ui(m): mostrar_mensaje(f"ℹ️ {m}", N.BLUE_GREY_700)
 
     # ---- búsqueda ----
     search_field = ft.TextField(label="Buscar producto", prefix_icon=ft.Icons.SEARCH,
@@ -345,19 +344,19 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
     total_panel = ft.Container(
         content=ft.Column([
             ft.Row([ft.Text("TOTAL", size=11, weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.GREEN_400),
+                            color=N.GREEN_400),
                     ft.Container(expand=True),
                     ft.Text("$", size=20, weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.GREEN_400)],
+                            color=N.GREEN_400)],
                    spacing=0, vertical_alignment=ft.CrossAxisAlignment.CENTER),
             total_text,
         ], spacing=0, tight=True),
-        bgcolor=ft.Colors.BLACK,
-        border=ft.Border.all(2, ft.Colors.GREEN),
+        bgcolor=N.BLACK,
+        border=ft.Border.all(2, N.GREEN),
         border_radius=10,
         padding=ft.Padding.symmetric(horizontal=14, vertical=8),
         shadow=ft.BoxShadow(blur_radius=16, spread_radius=1,
-                            color=ft.Colors.with_opacity(0.45, ft.Colors.GREEN)),
+                            color=ft.Colors.with_opacity(0.45, N.GREEN)),
         width=300,
         alignment=ft.Alignment.CENTER_RIGHT,
     )
@@ -366,11 +365,11 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         ft.Text(f"Método elegido: {metodo_label}", size=15,
                 weight=ft.FontWeight.BOLD),
     ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
-    metodo_detalle_text = ft.Text("", size=11, color=ft.Colors.GREY_400)
-    total_efectivo_text = ft.Text(value="Efectivo: $0,00", size=12, color=ft.Colors.BLUE_200)
-    total_qr_text = ft.Text(value="QR/MP: $0,00", size=12, color=ft.Colors.ORANGE_300)
-    total_debito_text = ft.Text(value="Débito: $0,00", size=12, color=ft.Colors.CYAN_300)
-    total_credito_text = ft.Text(value="Crédito: $0,00", size=12, color=ft.Colors.PURPLE_300)
+    metodo_detalle_text = ft.Text("", size=11, color=N.GREY_400)
+    total_efectivo_text = ft.Text(value="Efectivo: $0,00", size=12, color=N.BLUE_200)
+    total_qr_text = ft.Text(value="QR/MP: $0,00", size=12, color=N.ORANGE_300)
+    total_debito_text = ft.Text(value="Débito: $0,00", size=12, color=N.CYAN_300)
+    total_credito_text = ft.Text(value="Crédito: $0,00", size=12, color=N.PURPLE_300)
     recibe_field = ft.TextField(label="Recibe $", width=110, height=44,
                                keyboard_type=ft.KeyboardType.NUMBER, text_align=ft.TextAlign.CENTER)
     vuelto_text = ft.Text(value="", size=13, weight=ft.FontWeight.BOLD)
@@ -382,7 +381,7 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
             recibe = float((recibe_field.value or "0").replace(",", "."))
         except ValueError:
             vuelto_text.value = "Monto inválido"
-            vuelto_text.color = ft.Colors.RED_400
+            vuelto_text.color = N.RED_400
             try:
                 page.update()
             except Exception:
@@ -391,10 +390,10 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         diferencia = recibe - total_efectivo
         if diferencia >= 0:
             vuelto_text.value = f"Vuelto: ${_fmt_ars(diferencia)}"
-            vuelto_text.color = ft.Colors.GREEN_300
+            vuelto_text.color = N.GREEN_300
         else:
             vuelto_text.value = f"Faltan: ${_fmt_ars(-diferencia)}"
-            vuelto_text.color = ft.Colors.RED_400
+            vuelto_text.color = N.RED_400
         try:
             page.update()
         except Exception:
@@ -408,23 +407,23 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         resultados_list.controls.clear()
         for i, producto in enumerate(resultados_actuales):
             seleccionado = (i == indice_seleccionado)
-            stock_color = ft.Colors.GREEN_700 if producto["stock_actual"] > producto["stock_minimo"] else ft.Colors.RED_700
+            stock_color = N.GREEN_700 if producto["stock_actual"] > producto["stock_minimo"] else N.RED_700
             resultados_list.controls.append(ft.Container(
                 key=f"res_{i}",
                 content=ft.Row([
                     ft.Column([ft.Text(producto["descripcion"], weight=ft.FontWeight.BOLD, size=13),
-                               ft.Text(f"Código: {producto['codigo']}", size=10, color=ft.Colors.GREY_500)],
+                               ft.Text(f"Código: {producto['codigo']}", size=10, color=N.GREY_500)],
                               spacing=2, expand=True),
                     ft.Column([ft.Text(f"${_fmt_ars(producto['precio_lista'])}", size=15, weight=ft.FontWeight.BOLD),
                                ft.Text(f"Stock: {producto['stock_actual']}", size=10, color=stock_color)],
                               horizontal_alignment=ft.CrossAxisAlignment.END, spacing=2),
-                    ft.IconButton(icon=ft.Icons.ADD_SHOPPING_CART, icon_color=ft.Colors.GREEN_700,
+                    ft.IconButton(icon=ft.Icons.ADD_SHOPPING_CART, icon_color=N.GREEN_700,
                                   icon_size=18, width=30, height=30, padding=0,
                                   tooltip="Agregar",
                                   on_click=lambda _, p=producto: agregar_al_carrito(p)),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                bgcolor=ft.Colors.GREEN_900 if seleccionado else ft.Colors.BLUE_GREY_900,
-                border=ft.Border.all(2, ft.Colors.GREEN_400) if seleccionado else None,
+                bgcolor=N.GREEN_900 if seleccionado else N.BLUE_GREY_900,
+                border=ft.Border.all(2, N.GREEN_400) if seleccionado else None,
                 padding=6, border_radius=5,
                 on_click=lambda _, p=producto: agregar_al_carrito(p), ink=True,
             ))
@@ -530,11 +529,11 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                     ], spacing=0),
                     ft.Text(f"${_fmt_ars(item['subtotal'])}", width=90, text_align=ft.TextAlign.RIGHT,
                             weight=ft.FontWeight.BOLD, size=12),
-                    ft.IconButton(icon=ft.Icons.DELETE, icon_size=16, icon_color=ft.Colors.RED_400,
+                    ft.IconButton(icon=ft.Icons.DELETE, icon_size=16, icon_color=N.RED_400,
                                   width=28, height=28, padding=0,
                                   on_click=lambda _, idx=i: eliminar_item(idx)),
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                bgcolor=ft.Colors.GREEN_900, padding=4, border_radius=5,
+                bgcolor=N.GREEN_900, padding=4, border_radius=5,
             ))
         def _total_metodo(porcentaje: float) -> float:
             if not porcentaje:
@@ -755,7 +754,7 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
             pass
 
     # ---- pago QR ----
-    qr_estado = ft.Text("", size=12, color=ft.Colors.GREY_400)
+    qr_estado = ft.Text("", size=12, color=N.GREY_400)
     qr_spin = ft.ProgressRing(width=18, height=18, visible=False)
 
     def pagar_con_qr(e):
@@ -856,7 +855,7 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         modal=True,
         on_dismiss=lambda _: _unregister_shortcuts(),
         title=ft.Row([
-            ft.Icon(ft.Icons.SHOPPING_CART, color=ft.Colors.GREEN_700),
+            ft.Icon(ft.Icons.SHOPPING_CART, color=N.GREEN_700),
             ft.Text("Nueva Venta", size=20, weight=ft.FontWeight.BOLD),
             ft.Container(
                 content=ft.Text(metodo_label, size=11, weight=ft.FontWeight.BOLD,
@@ -867,7 +866,7 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                 border=ft.Border.all(1, metodo_color),
             ),
             ft.Container(expand=True),
-            ft.Text(f"Modo: {filtro_dropdown.value}", size=12, color=ft.Colors.GREY_500),
+            ft.Text(f"Modo: {filtro_dropdown.value}", size=12, color=N.GREY_500),
         ]),
         content=ft.Container(
             content=ft.Column([
@@ -876,17 +875,17 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                     ft.ResponsiveRow([search_field, filtro_dropdown],
                                      spacing=8, run_spacing=8),
                     ft.Text("Resultados (click o Enter para agregar):", size=11, italic=True,
-                            color=ft.Colors.GREY_500),
-                    ft.Container(content=resultados_list, border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                            color=N.GREY_500),
+                    ft.Container(content=resultados_list, border=ft.Border.all(1, N.BLUE_GREY_700),
                                  border_radius=5, padding=5),
                     ft.Divider(),
                     ft.ResponsiveRow([
                         col_izquierda,
                         ft.Column([
-                            ft.Row([ft.Icon(ft.Icons.SHOPPING_CART, color=ft.Colors.GREEN_700, size=20),
+                            ft.Row([ft.Icon(ft.Icons.SHOPPING_CART, color=N.GREEN_700, size=20),
                                     ft.Text("CARRITO", size=15, weight=ft.FontWeight.BOLD)]),
                             ft.Container(content=carrito_list,
-                                         border=ft.Border.all(1, ft.Colors.GREEN_700),
+                                         border=ft.Border.all(1, N.GREEN_700),
                                          border_radius=5, padding=5),
                         ], col={"xs": 12, "sm": 8}, spacing=8),
                     ], spacing=16, run_spacing=12),

@@ -1,5 +1,6 @@
 import flet as ft
-from ui.helpers import cerrar_dialogo, snack as _snack
+from ui.paleta import N
+from ui.helpers import abrir_dialogo, cerrar_dialogo, snack as _snack
 
 def ProductoModal(db_manager, producto, on_guardado, page):
     """Modal para crear o editar producto"""
@@ -41,6 +42,50 @@ def ProductoModal(db_manager, producto, on_guardado, page):
         value=str(producto.get("proveedor_id")) if producto and producto.get("proveedor_id") else None,
         options=[ft.dropdown.Option(str(p["id"]), p["nombre"]) for p in proveedores],
     )
+
+    def _refrescar_proveedores(seleccionar=None):
+        nonlocal proveedores
+        try:
+            proveedores = db_manager.listar_proveedores("", 1000)
+        except Exception:
+            proveedores = []
+        proveedor_field.options = [ft.dropdown.Option(str(p["id"]), p["nombre"]) for p in proveedores]
+        if seleccionar is not None:
+            proveedor_field.value = str(seleccionar)
+        page.update()
+
+    def _nuevo_proveedor(e=None):
+        nombre_field = ft.TextField(label="Nombre del proveedor", width=300, autofocus=True)
+
+        def _guardar_prov(_ev=None):
+            nombre = (nombre_field.value or "").strip()
+            if not nombre:
+                _snack(page, "Ingresá un nombre de proveedor", ok=False)
+                return
+            try:
+                pid = db_manager.guardar_proveedor({"nombre": nombre})
+            except Exception as ex:  # noqa: BLE001
+                _snack(page, f"Error al crear proveedor: {ex}", ok=False)
+                return
+            try:
+                dlg.open = False
+                page.update()
+            except Exception:
+                cerrar_dialogo(page)
+            _refrescar_proveedores(pid)
+            _snack(page, "Proveedor creado", ok=True)
+
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Nuevo proveedor"),
+            content=nombre_field,
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: cerrar_dialogo(page)),
+                ft.FilledButton("Guardar", icon=ft.Icons.SAVE, on_click=_guardar_prov),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        abrir_dialogo(page, dlg)
     
     precio_lista_field = ft.TextField(
         label="PRECIO LISTA *",
@@ -85,12 +130,12 @@ def ProductoModal(db_manager, producto, on_guardado, page):
                 margen = ((lista - costo) / costo) * 100
                 ganancia = lista - costo
                 
-                color = ft.Colors.GREEN_700 if margen > 30 else ft.Colors.ORANGE_700 if margen > 15 else ft.Colors.RED_700
+                color = N.GREEN_700 if margen > 30 else N.ORANGE_700 if margen > 15 else N.RED_700
                 margen_text.value = f"Margen: {margen:.1f}% | Ganancia: ${ganancia:.2f}"
                 margen_text.color = color
             else:
                 margen_text.value = "Ingrese precios para calcular margen"
-                margen_text.color = ft.Colors.GREY_500
+                margen_text.color = N.GREY_500
             
             page.update()
         except:
@@ -170,7 +215,7 @@ def ProductoModal(db_manager, producto, on_guardado, page):
     dialog = ft.AlertDialog(
         modal=True,
         title=ft.Row([
-            ft.Icon(ft.Icons.INVENTORY_2 if es_nuevo else ft.Icons.EDIT, color=ft.Colors.BLUE_700),
+            ft.Icon(ft.Icons.INVENTORY_2 if es_nuevo else ft.Icons.EDIT, color=N.BLUE_700),
             ft.Text(
                 "NUEVO PRODUCTO" if es_nuevo else f"EDITAR PRODUCTO (#{producto['id']})",
                 size=20,
@@ -179,23 +224,27 @@ def ProductoModal(db_manager, producto, on_guardado, page):
         ]),
         content=ft.Container(
             content=ft.Column([
-                ft.Text("Información básica", weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400),
+                ft.Text("Información básica", weight=ft.FontWeight.BOLD, color=N.BLUE_400),
                 ft.Row([codigo_field, categoria_field], spacing=10),
                 descripcion_field,
-                ft.Row([marca_field, proveedor_field], spacing=10, wrap=True),
+                ft.Row([marca_field, proveedor_field,
+                        ft.IconButton(icon=ft.Icons.ADD_CIRCLE_OUTLINE,
+                                      tooltip="Dar de alta un proveedor",
+                                      on_click=_nuevo_proveedor)],
+                       spacing=10, wrap=True),
                 ft.Divider(),
-                ft.Text("Precios", weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_400),
+                ft.Text("Precios", weight=ft.FontWeight.BOLD, color=N.GREEN_400),
                 ft.Row([precio_costo_field, precio_lista_field], spacing=10),
                 ft.Container(
                     content=margen_text,
-                    bgcolor=ft.Colors.BLUE_GREY_900,
+                    bgcolor=N.BLUE_GREY_900,
                     padding=10,
                     border_radius=5
                 ),
                 ft.Divider(),
-                ft.Text("Inventario", weight=ft.FontWeight.BOLD, color=ft.Colors.ORANGE_400),
+                ft.Text("Inventario", weight=ft.FontWeight.BOLD, color=N.ORANGE_400),
                 ft.Row([stock_field, stock_minimo_field], spacing=10),
-                ft.Text("* Campos obligatorios", size=11, italic=True, color=ft.Colors.GREY_500)
+                ft.Text("* Campos obligatorios", size=11, italic=True, color=N.GREY_500)
             ], scroll=ft.ScrollMode.AUTO, spacing=10),
             width=500,
             height=480
@@ -207,7 +256,7 @@ def ProductoModal(db_manager, producto, on_guardado, page):
                 icon=ft.Icons.SAVE,
                 on_click=guardar,
                 style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.GREEN_700,
+                    bgcolor=N.GREEN_700,
                     color=ft.Colors.WHITE
                 )
             )

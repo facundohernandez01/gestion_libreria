@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime
 
 import flet as ft
+from ui.paleta import N
 
 from services.compra_service import exportar_orden_excel
 from ui.helpers import cerrar_dialogo, snack
@@ -40,8 +41,8 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
     resultados = ft.ListView(height=150, spacing=4)
     carrito_list = ft.ListView(height=250, spacing=6)
     total_text = ft.Text("TOTAL: $0.00", size=18, weight=ft.FontWeight.BOLD,
-                         color=ft.Colors.GREEN_300)
-    grupos_text = ft.Text("", size=11, color=ft.Colors.GREY_400)
+                         color=N.GREEN_300)
+    grupos_text = ft.Text("", size=11, color=N.GREY_400)
     observaciones = ft.TextField(
         label="Observaciones", multiline=True, min_lines=1, max_lines=2,
         width=620, hint_text="Ej.: pedido para reposición semanal",
@@ -79,20 +80,20 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
     def _tarjeta(p: dict):
         stock = int(p.get("stock_actual") or 0)
         minimo = int(p.get("stock_minimo") or 0)
-        color = ft.Colors.RED_400 if stock <= 0 else (
-            ft.Colors.ORANGE_400 if stock <= minimo else ft.Colors.GREEN_400)
+        color = N.RED_400 if stock <= 0 else (
+            N.ORANGE_400 if stock <= minimo else N.GREEN_400)
         return ft.Container(
             content=ft.Row([
                 ft.Column([
                     ft.Text(p["descripcion"], size=12, weight=ft.FontWeight.BOLD),
                     ft.Text(f"{p['codigo']} · {p.get('proveedor_nombre') or 'Sin proveedor'}",
-                            size=10, color=ft.Colors.GREY_500),
+                            size=10, color=N.GREY_500),
                 ], spacing=1, expand=True),
                 ft.Text(f"Stock: {stock}", size=11, color=color),
-                ft.IconButton(icon=ft.Icons.ADD_CIRCLE, icon_color=ft.Colors.GREEN_400,
+                ft.IconButton(icon=ft.Icons.ADD_CIRCLE, icon_color=N.GREEN_400,
                               tooltip="Agregar", on_click=lambda _e, prod=p: _agregar(prod)),
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            bgcolor=ft.Colors.BLUE_GREY_900, padding=7, border_radius=5,
+            bgcolor=N.BLUE_GREY_900, padding=7, border_radius=5,
         )
 
     def _buscar(e=None):
@@ -109,7 +110,7 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
             if sugeridos:
                 resultados.controls.append(
                     ft.Text("Sugeridos (stock bajo o agotado)", size=10,
-                            color=ft.Colors.ORANGE_300))
+                            color=N.ORANGE_300))
                 for p in sugeridos:
                     resultados.controls.append(_tarjeta(p))
         page.update()
@@ -187,7 +188,7 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
                 content=ft.Row([
                     ft.Column([
                         ft.Text(item["descripcion"], size=12, weight=ft.FontWeight.BOLD),
-                        ft.Text(item["codigo"], size=10, color=ft.Colors.GREY_500),
+                        ft.Text(item["codigo"], size=10, color=N.GREY_500),
                     ], spacing=1, width=260),
                     prov_dropdown,
                     ft.Row([
@@ -201,16 +202,16 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
                     costo_field,
                     subtotal_text,
                     ft.IconButton(icon=ft.Icons.DELETE_OUTLINE,
-                                  icon_color=ft.Colors.RED_400, tooltip="Quitar",
+                                  icon_color=N.RED_400, tooltip="Quitar",
                                   on_click=_quitar),
                 ], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER),
-                bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.BLUE_GREY_700),
+                bgcolor=ft.Colors.with_opacity(0.06, N.BLUE_GREY_700),
                 padding=6, border_radius=5,
             ))
         if not carrito:
             carrito_list.controls.append(ft.Container(
                 content=ft.Text("Agregá productos con el buscador",
-                                italic=True, color=ft.Colors.GREY_500),
+                                italic=True, color=N.GREY_500),
                 padding=20, alignment=ft.Alignment.CENTER))
         total_text.value = f"TOTAL: ${total:.2f}"
         if grupos:
@@ -299,7 +300,7 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
     dialog = ft.AlertDialog(
         modal=True,
         title=ft.Row([
-            ft.Icon(ft.Icons.SHOPPING_CART, color=ft.Colors.ORANGE_400),
+            ft.Icon(ft.Icons.SHOPPING_CART, color=N.ORANGE_400),
             ft.Text(f"EDITAR ORDEN #{orden['id']}" if orden
                     else "REPONER STOCK — NUEVA ORDEN DE COMPRA", size=17,
                     weight=ft.FontWeight.BOLD),
@@ -311,12 +312,12 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
                 ft.Divider(height=8),
                 ft.Row([
                     ft.Text("Artículos del pedido", weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.BLUE_300),
+                            color=N.BLUE_300),
                     ft.Container(expand=True),
                     grupos_text,
                 ], spacing=8),
                 ft.Container(content=carrito_list, height=250,
-                             border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                             border=ft.Border.all(1, N.BLUE_GREY_700),
                              border_radius=6, padding=4),
                 ft.Row([observaciones, ft.Container(expand=True),
                         ft.Column([total_text, grupos_text], spacing=2,
@@ -328,12 +329,12 @@ def ReponerModal(db_manager, page: ft.Page, on_creada=None, orden: dict | None =
             ft.TextButton("CANCELAR", on_click=lambda _e: _cerrar_modal()),
             ft.FilledButton("GUARDAR CAMBIOS" if orden else "GENERAR ORDEN",
                             icon=ft.Icons.SAVE, on_click=generar,
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700,
+                            style=ft.ButtonStyle(bgcolor=N.BLUE_700,
                                                  color=ft.Colors.WHITE)),
             ft.FilledButton("GUARDAR + EXCEL" if orden else "GENERAR + EXCEL",
                             icon=ft.Icons.TABLE_VIEW,
                             on_click=generar_y_exportar,
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700,
+                            style=ft.ButtonStyle(bgcolor=N.GREEN_700,
                                                  color=ft.Colors.WHITE)),
         ],
         actions_alignment=ft.MainAxisAlignment.END,

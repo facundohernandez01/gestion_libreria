@@ -1,4 +1,7 @@
-flet>=1.0,<2
+flet==1.0.4
+flet-camera==1.0.4
+flet-permission-handler==1.0.4
+zxing-cpp>=2.2,<4
 pandas>=2.0
 openpyxl>=3.1
 requests>=2.31

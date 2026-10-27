@@ -9,6 +9,7 @@ import asyncio
 from datetime import datetime, timedelta
 
 import flet as ft
+from ui.paleta import N
 
 from services.compra_service import exportar_orden_excel, exportar_ordenes_excel
 from ui.helpers import abrir_dialogo, cerrar_dialogo, snack
@@ -16,10 +17,10 @@ from ui.theme import BTN_PRIMARIO
 from utils.file_dialogs import agregar_extension, save_file
 
 ESTADOS = {
-    "en_proceso": ("EN PROCESO", ft.Colors.ORANGE_400),
-    "parcial": ("PARCIAL", ft.Colors.AMBER_400),
-    "confirmada": ("CONFIRMADA", ft.Colors.GREEN_400),
-    "cancelada": ("CANCELADA", ft.Colors.RED_400),
+    "en_proceso": ("EN PROCESO", N.ORANGE_400),
+    "parcial": ("PARCIAL", N.AMBER_400),
+    "confirmada": ("CONFIRMADA", N.GREEN_400),
+    "cancelada": ("CANCELADA", N.RED_400),
 }
 
 COLUMNAS = [
@@ -65,7 +66,7 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
                              last_date=hoy + timedelta(days=365))
     hasta_dp = ft.DatePicker(first_date=hoy - timedelta(days=365 * 5),
                              last_date=hoy + timedelta(days=365))
-    resumen_text = ft.Text("", size=12, color=ft.Colors.GREY_400)
+    resumen_text = ft.Text("", size=12, color=N.GREY_400)
 
     def _elegir(dp, campo):
         try:
@@ -113,7 +114,7 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
         return None if filtro.value == "todas" else filtro.value
 
     def _badge(estado: str):
-        texto, color = ESTADOS.get(estado, (estado.upper(), ft.Colors.GREY_400))
+        texto, color = ESTADOS.get(estado, (estado.upper(), N.GREY_400))
         return ft.Container(
             content=ft.Text(texto, size=10, color=ft.Colors.WHITE,
                             weight=ft.FontWeight.BOLD),
@@ -136,26 +137,26 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
             en_proceso = o.get("estado") == "en_proceso"
             abierta = o.get("estado") in ("en_proceso", "parcial")
             acciones = [ft.IconButton(
-                icon=ft.Icons.VISIBILITY, icon_color=ft.Colors.BLUE_400,
+                icon=ft.Icons.VISIBILITY, icon_color=N.BLUE_400,
                 tooltip="Ver detalle",
                 on_click=lambda _e, orden=o: ver_orden(orden))]
             if pendientes > 0 and abierta:
                 acciones.append(ft.IconButton(
-                    icon=ft.Icons.INVENTORY, icon_color=ft.Colors.AMBER_400,
+                    icon=ft.Icons.INVENTORY, icon_color=N.AMBER_400,
                     tooltip="Recepcionar mercadería",
                     on_click=lambda _e, orden=o: abrir_recepcion(orden)))
             if en_proceso:
                 acciones.append(ft.IconButton(
-                    icon=ft.Icons.EDIT, icon_color=ft.Colors.CYAN_400,
+                    icon=ft.Icons.EDIT, icon_color=N.CYAN_400,
                     tooltip="Editar",
                     on_click=lambda _e, orden=o: editar_orden(orden)))
             if abierta:
                 acciones.append(ft.IconButton(
-                    icon=ft.Icons.CANCEL, icon_color=ft.Colors.RED_400,
+                    icon=ft.Icons.CANCEL, icon_color=N.RED_400,
                     tooltip="Cancelar",
                     on_click=lambda _e, orden=o: preguntar_cancelar(orden)))
             acciones.append(ft.IconButton(
-                icon=ft.Icons.DOWNLOAD, icon_color=ft.Colors.GREY_300,
+                icon=ft.Icons.DOWNLOAD, icon_color=N.GREY_300,
                 tooltip="Exportar Excel",
                 on_click=_exportar_cb(o)))
             tabla.rows.append(ft.DataRow(cells=[
@@ -163,16 +164,16 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
                                     weight=ft.FontWeight.BOLD)),
                 ft.DataCell(ft.Text(str(o.get("fecha_creacion") or "")[:16], size=11)),
                 ft.DataCell(ft.Text(o.get("usuario") or "—", size=11,
-                                    color=ft.Colors.CYAN_300)),
+                                    color=N.CYAN_300)),
                 ft.DataCell(_badge(o.get("estado") or "")),
                 ft.DataCell(ft.Text(o.get("proveedores") or "—", size=11)),
                 ft.DataCell(ft.Text(str(o.get("items_count") or 0), size=11)),
                 ft.DataCell(ft.Text(str(o.get("unidades") or 0), size=11)),
                 ft.DataCell(ft.Text(str(o.get("unidades_recibidas") or 0), size=11,
-                                    color=ft.Colors.GREEN_300)),
+                                    color=N.GREEN_300)),
                 ft.DataCell(ft.Text(str(pendientes), size=11,
-                                    color=ft.Colors.AMBER_300 if pendientes else
-                                    ft.Colors.GREY_500,
+                                    color=N.AMBER_300 if pendientes else
+                                    N.GREY_500,
                                     weight=ft.FontWeight.BOLD if pendientes else None)),
                 ft.DataCell(ft.Text(f"${float(o.get('total') or 0):,.2f}", size=11)),
                 ft.DataCell(ft.Row(acciones, spacing=0)),
@@ -180,14 +181,14 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
         if not ordenes:
             tabla.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text("No hay órdenes para este filtro", italic=True,
-                                    color=ft.Colors.GREY_500, size=11)),
+                                    color=N.GREY_500, size=11)),
                 *[ft.DataCell(ft.Text("")) for _ in range(len(COLUMNAS) - 1)],
             ]))
         resumen_text.value = (f"{len(ordenes)} orden(es) · total ${total:,.2f}")
         page.update()
 
     # ---------- acciones ----------
-    def preguntar(titulo: str, mensaje: str, accion, color=ft.Colors.GREEN_700):
+    def preguntar(titulo: str, mensaje: str, accion, color=N.GREEN_700):
         def _ok(_e):
             cerrar_dialogo(page)
             accion()
@@ -209,7 +210,7 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
             f"Cancelar orden #{o['id']}",
             "La orden quedará cancelada y no modificará el stock. "
             "Las unidades ya recibidas se conservan.",
-            lambda: _cancelar(o), color=ft.Colors.RED_700,
+            lambda: _cancelar(o), color=N.RED_700,
         )
 
     def _cancelar(o):
@@ -239,10 +240,10 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
                 ft.DataCell(ft.Text(it.get("proveedor_nombre") or "—", size=11)),
                 ft.DataCell(ft.Text(str(it.get("cantidad") or 0), size=11)),
                 ft.DataCell(ft.Text(str(it.get("cantidad_recibida") or 0), size=11,
-                                    color=ft.Colors.GREEN_300)),
+                                    color=N.GREEN_300)),
                 ft.DataCell(ft.Text(str(pendiente), size=11,
-                                    color=ft.Colors.AMBER_300 if pendiente else
-                                    ft.Colors.GREY_500)),
+                                    color=N.AMBER_300 if pendiente else
+                                    N.GREY_500)),
                 ft.DataCell(ft.Text(f"${float(it.get('precio_costo') or 0):.2f}",
                                     size=11)),
                 ft.DataCell(ft.Text(f"${float(it.get('subtotal') or 0):.2f}",
@@ -279,13 +280,13 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
             acciones.append(ft.FilledButton(
                 "EDITAR", icon=ft.Icons.EDIT,
                 on_click=lambda _e: _editar_desde_detalle(),
-                style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700,
+                style=ft.ButtonStyle(bgcolor=N.BLUE_700,
                                      color=ft.Colors.WHITE)))
         if pendientes > 0 and detalle.get("estado") in ("en_proceso", "parcial"):
             acciones.append(ft.FilledButton(
                 "RECEPCIONAR", icon=ft.Icons.INVENTORY,
                 on_click=lambda _e: _recepcionar_desde_detalle(),
-                style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700,
+                style=ft.ButtonStyle(bgcolor=N.GREEN_700,
                                      color=ft.Colors.WHITE)))
 
         historial = detalle.get("recepciones") or []
@@ -294,7 +295,7 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
             historial_controles.append(ft.Divider(height=8))
             historial_controles.append(ft.Text(
                 "HISTORIAL DE RECEPCIONES", size=11, weight=ft.FontWeight.BOLD,
-                color=ft.Colors.AMBER_300))
+                color=N.AMBER_300))
             for rec in historial:
                 detalle_items = ", ".join(
                     f"{i['producto_codigo'] or i['producto_nombre']} x{i['cantidad']}"
@@ -303,19 +304,19 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
                     content=ft.Column([
                         ft.Row([
                             ft.Icon(ft.Icons.INVENTORY_2, size=14,
-                                    color=ft.Colors.GREEN_300),
+                                    color=N.GREEN_300),
                             ft.Text(str(rec.get("fecha") or "")[:19], size=11,
                                     weight=ft.FontWeight.BOLD),
                             ft.Text(f"Remito: {rec.get('remito') or '—'}", size=11,
-                                    color=ft.Colors.GREY_400),
+                                    color=N.GREY_400),
                             ft.Text(f"Usuario: {rec.get('usuario') or '—'}", size=11,
-                                    color=ft.Colors.CYAN_300),
+                                    color=N.CYAN_300),
                             ft.Container(expand=True),
                             ft.Text("CANCELÓ RESTANTE", size=9,
-                                    color=ft.Colors.RED_300, visible=
+                                    color=N.RED_300, visible=
                                     bool(rec.get("cancelo_restante"))),
                         ], spacing=8),
-                        ft.Text(detalle_items, size=10, color=ft.Colors.GREY_400),
+                        ft.Text(detalle_items, size=10, color=N.GREY_400),
                     ], spacing=2),
                     padding=7, border_radius=5,
                     bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.WHITE),
@@ -328,22 +329,22 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
                 content=ft.Column([
                     ft.Row([_badge(detalle.get("estado") or ""),
                             ft.Text(f"Creada: {str(detalle.get('fecha_creacion') or '')[:19]}",
-                                    size=11, color=ft.Colors.GREY_400),
+                                    size=11, color=N.GREY_400),
                             ft.Text(f"Usuario: {detalle.get('usuario') or '—'}",
-                                    size=11, color=ft.Colors.CYAN_300),
+                                    size=11, color=N.CYAN_300),
                             ft.Text(f"Confirmada: {str(detalle.get('fecha_confirmacion') or '—')[:19]}",
-                                    size=11, color=ft.Colors.GREY_400)]),
+                                    size=11, color=N.GREY_400)]),
                     ft.Text(f"Observaciones: {detalle.get('observaciones') or '—'}",
-                            size=11, color=ft.Colors.GREY_300),
+                            size=11, color=N.GREY_300),
                     ft.Divider(height=8),
                     ft.Column([detalle_tabla], scroll=ft.ScrollMode.AUTO),
                     ft.Row([
                         ft.Text(f"Pendiente: {pendientes} unid.", size=12,
-                                color=ft.Colors.AMBER_300),
+                                color=N.AMBER_300),
                         ft.Container(expand=True),
                         ft.Text(f"TOTAL: ${total:,.2f}", size=16,
                                 weight=ft.FontWeight.BOLD,
-                                color=ft.Colors.GREEN_300)]),
+                                color=N.GREEN_300)]),
                     *historial_controles,
                 ], spacing=8, scroll=ft.ScrollMode.AUTO),
                 width=860, height=500,
@@ -432,7 +433,7 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
                vertical_alignment=ft.CrossAxisAlignment.CENTER),
         ], spacing=8),
         padding=12, border_radius=8,
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.35, ft.Colors.BLUE_GREY_700)),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.35, N.BLUE_GREY_700)),
         bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.WHITE),
     )
 
@@ -441,11 +442,11 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
             ft.Container(
                 content=ft.Row([
                     ft.Icon(ft.Icons.SHOPPING_CART, size=24,
-                            color=ft.Colors.ORANGE_300),
+                            color=N.ORANGE_300),
                     ft.Text("COMPRAS — ÓRDENES DE REPOSICIÓN", size=20,
                             weight=ft.FontWeight.BOLD),
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
-                bgcolor=ft.Colors.BLUE_900, padding=8, alignment=ft.Alignment.CENTER),
+                bgcolor=N.BLUE_900, padding=8, alignment=ft.Alignment.CENTER),
             ft.Container(height=10),
             contenedor_filtros,
             ft.Container(height=8),
@@ -454,13 +455,13 @@ def ComprasView(db_manager, on_volver, page: ft.Page):
                     ft.Row([tabla], scroll=ft.ScrollMode.AUTO,
                            vertical_alignment=ft.CrossAxisAlignment.START),
                 ], scroll=ft.ScrollMode.AUTO),
-                expand=True, border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                expand=True, border=ft.Border.all(1, N.BLUE_GREY_700),
                 border_radius=6, padding=10),
             ft.Container(height=6),
             ft.Text("Al recepcionar podés ingresar cantidades parciales: la orden "
                     "queda «PARCIAL» y podés cancelar el resto o dejarlo pendiente. "
                     "Las órdenes confirmadas no se pueden editar.",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], expand=True,
            horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
         padding=20, expand=True,

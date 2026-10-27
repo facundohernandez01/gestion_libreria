@@ -7,13 +7,14 @@ import sys
 from pathlib import Path
 
 import flet as ft
+from ui.paleta import N
 
 
 def snack(page: ft.Page, mensaje: str, ok: bool = True) -> None:
     """Muestra un SnackBar (Flet 1.x: vía show_dialog)."""
     bar = ft.SnackBar(
         content=ft.Text(mensaje, color=ft.Colors.WHITE),
-        bgcolor=ft.Colors.GREEN_700 if ok else ft.Colors.RED_700,
+        bgcolor=N.GREEN_700 if ok else N.RED_700,
     )
     try:
         page.show_dialog(bar)

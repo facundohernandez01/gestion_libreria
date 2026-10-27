@@ -1,4 +1,5 @@
 import flet as ft
+from ui.paleta import N
 from datetime import datetime
 
 class GestionStockView(ft.Container):
@@ -10,14 +11,14 @@ class GestionStockView(ft.Container):
         # Header
         self.header = ft.Container(
             content=ft.Text("GESTIÓN DE STOCK", size=28, weight=ft.FontWeight.BOLD),
-            bgcolor=ft.Colors.BLUE_900,
+            bgcolor=N.BLUE_900,
             padding=20,
             alignment=ft.Alignment.CENTER
         )
         
         # Alertas de stock bajo
         self.alertas_container = ft.Container(
-            bgcolor=ft.Colors.RED_900,
+            bgcolor=N.RED_900,
             padding=15,
             border_radius=10,
             visible=False
@@ -143,12 +144,12 @@ class GestionStockView(ft.Container):
         if productos:
             # Mostrar alerta
             self.alertas_container.content = ft.Row([
-                ft.Icon(ft.Icons.WARNING, color=ft.Colors.YELLOW, size=30),
+                ft.Icon(ft.Icons.WARNING, color=N.YELLOW, size=30),
                 ft.Text(
                     f"¡ATENCIÓN! {len(productos)} producto(s) con stock bajo o crítico",
                     size=16,
                     weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.YELLOW
+                    color=N.YELLOW
                 )
             ])
             self.alertas_container.visible = True
@@ -159,15 +160,15 @@ class GestionStockView(ft.Container):
             porcentaje_stock = (producto['stock_actual'] / producto['stock_minimo'] * 100) if producto['stock_minimo'] > 0 else 0
             
             if producto['stock_actual'] == 0:
-                color = ft.Colors.RED_900
+                color = N.RED_900
                 icono = ft.Icons.CANCEL
                 estado = "SIN STOCK"
             elif porcentaje_stock <= 50:
-                color = ft.Colors.RED_800
+                color = N.RED_800
                 icono = ft.Icons.ERROR
                 estado = "CRÍTICO"
             else:
-                color = ft.Colors.ORANGE_800
+                color = N.ORANGE_800
                 icono = ft.Icons.WARNING
                 estado = "BAJO"
             
@@ -176,7 +177,7 @@ class GestionStockView(ft.Container):
                     ft.Icon(icono, color=ft.Colors.WHITE),
                     ft.Column([
                         ft.Text(producto['descripcion'], weight=ft.FontWeight.BOLD, size=14),
-                        ft.Text(f"Código: {producto['codigo']}", size=11, color=ft.Colors.GREY_400)
+                        ft.Text(f"Código: {producto['codigo']}", size=11, color=N.GREY_400)
                     ], spacing=2),
                     ft.Column([
                         ft.Text(f"Stock: {producto['stock_actual']}", size=14, weight=ft.FontWeight.BOLD),
@@ -184,7 +185,7 @@ class GestionStockView(ft.Container):
                     ], horizontal_alignment=ft.CrossAxisAlignment.END),
                     ft.Container(
                         content=ft.Text(estado, size=12, weight=ft.FontWeight.BOLD),
-                        bgcolor=ft.Colors.RED_700 if estado == "CRÍTICO" or estado == "SIN STOCK" else ft.Colors.ORANGE_700,
+                        bgcolor=N.RED_700 if estado == "CRÍTICO" or estado == "SIN STOCK" else N.ORANGE_700,
                         padding=8,
                         border_radius=5
                     ),
@@ -205,9 +206,9 @@ class GestionStockView(ft.Container):
             self.stock_bajo_list.controls.append(
                 ft.Container(
                     content=ft.Column([
-                        ft.Icon(ft.Icons.CHECK_CIRCLE, color=ft.Colors.GREEN_700, size=60),
+                        ft.Icon(ft.Icons.CHECK_CIRCLE, color=N.GREEN_700, size=60),
                         ft.Text("¡Todos los productos tienen stock suficiente!", 
-                               size=18, color=ft.Colors.GREEN_700, weight=ft.FontWeight.BOLD)
+                               size=18, color=N.GREEN_700, weight=ft.FontWeight.BOLD)
                     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
                     padding=40,
                     alignment=ft.Alignment.CENTER
@@ -227,13 +228,13 @@ class GestionStockView(ft.Container):
         self.resultados_ajuste.controls.clear()
         
         for producto in productos[:10]:
-            stock_color = ft.Colors.GREEN_700 if producto['stock_actual'] > producto['stock_minimo'] else ft.Colors.RED_700
+            stock_color = N.GREEN_700 if producto['stock_actual'] > producto['stock_minimo'] else N.RED_700
             
             resultado_row = ft.Container(
                 content=ft.Row([
                     ft.Column([
                         ft.Text(producto['descripcion'], weight=ft.FontWeight.BOLD, size=14),
-                        ft.Text(f"Código: {producto['codigo']}", size=11, color=ft.Colors.GREY_400)
+                        ft.Text(f"Código: {producto['codigo']}", size=11, color=N.GREY_400)
                     ], spacing=2),
                     ft.Column([
                         ft.Text(f"Stock actual: {producto['stock_actual']}", 
@@ -246,7 +247,7 @@ class GestionStockView(ft.Container):
                         on_click=lambda e, p=producto: self.ajustar_stock_producto(p)
                     )
                 ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                bgcolor=ft.Colors.BLUE_GREY_900,
+                bgcolor=N.BLUE_GREY_900,
                 padding=10,
                 border_radius=5
             )
@@ -308,7 +309,7 @@ class GestionStockView(ft.Container):
                 content=ft.Column([
                     ft.Row([
                         ft.Text("Stock actual:", weight=ft.FontWeight.BOLD),
-                        ft.Text(str(producto['stock_actual']), size=18, color=ft.Colors.BLUE_700)
+                        ft.Text(str(producto['stock_actual']), size=18, color=N.BLUE_700)
                     ]),
                     ft.Container(height=10),
                     cantidad_field,
@@ -324,7 +325,7 @@ class GestionStockView(ft.Container):
                     "GUARDAR",
                     icon=ft.Icons.SAVE,
                     on_click=guardar_ajuste,
-                    style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+                    style=ft.ButtonStyle(bgcolor=N.GREEN_700, color=ft.Colors.WHITE)
                 )
             ]
         )

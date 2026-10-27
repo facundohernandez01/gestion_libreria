@@ -1,7 +1,9 @@
 """App principal Flet — navegación caja → principal → modales."""
+import asyncio
 import logging
 import os
 import sys
+import time
 from pathlib import Path
 
 # Trabajar siempre junto al ejecutable/script: imprescindible en modo servicio
@@ -12,9 +14,110 @@ def _base_dir() -> Path:
     return Path(__file__).resolve().parent
 
 
+def _es_modo_web() -> bool:
+    return os.getenv("FLET_FORCE_WEB_SERVER", "").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
+
+
+def _duracion_splash() -> float:
+    try:
+        return max(0.0, float(os.getenv("SPLASH_SEGUNDOS", "2.0")))
+    except ValueError:
+        return 2.0
+
+
+def _preparar_icono_ventana() -> None:
+    if _es_modo_web():
+        return
+    try:
+        from utils.app_icon import aplicar_icono_ventana
+
+        aplicar_icono_ventana(_base_dir() / "img" / "kiosmico_logo.png")
+    except Exception:
+        pass
+
+
+def _lanzar_splash() -> str | None:
+    """Abre la ventana de presentación en un proceso aparte.
+
+    Devuelve la ruta del archivo que debe crearse para cerrarla, o None si no
+    se pudo lanzar (por ejemplo, en modo web o sin Tkinter).
+    """
+    global _SPLASH_START
+    if _es_modo_web():
+        return None
+    ruta = _base_dir() / "img" / "kiosmico_splash.png"
+    if not ruta.is_file():
+        return None
+    try:
+        import importlib.util
+        import subprocess
+        import tempfile
+
+        if (importlib.util.find_spec("tkinter") is None
+                or importlib.util.find_spec("_tkinter") is None
+                or importlib.util.find_spec("PIL.ImageTk") is None):
+            return None
+
+        cierre = Path(tempfile.gettempdir()) / f"kiosmico_splash_{os.getpid()}.done"
+        try:
+            cierre.unlink()
+        except OSError:
+            pass
+
+        env = dict(os.environ)
+        env["SPLASH_IMAGE"] = str(ruta)
+        env["SPLASH_CLOSE_FILE"] = str(cierre)
+        env.setdefault("SPLASH_MIN_MS", "700")
+        env.setdefault("SPLASH_MAX_MS", "30000")
+
+        if getattr(sys, "frozen", False):
+            cmd = [sys.executable, "--splash"]
+        else:
+            cmd = [sys.executable, str(_base_dir() / "utils" / "splash_window.py")]
+
+        opciones = {
+            "cwd": str(_base_dir()),
+            "env": env,
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.DEVNULL,
+        }
+        if os.name == "nt":
+            opciones["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        else:
+            opciones["start_new_session"] = True
+        subprocess.Popen(cmd, **opciones)
+        _SPLASH_START = time.monotonic()
+        return str(cierre)
+    except Exception:
+        return None
+
+
+def _cerrar_splash(ruta: str | None) -> None:
+    if not ruta:
+        return
+    try:
+        Path(ruta).write_text("1", encoding="utf-8")
+    except OSError:
+        pass
+
+
+_SPLASH_CLOSE_FILE: str | None = None
+_SPLASH_START: float | None = None
+
+
 os.chdir(_base_dir())
 
+if __name__ == "__main__" and "--splash" in sys.argv:
+    from utils.splash_window import mostrar_splash
+
+    mostrar_splash()
+    raise SystemExit(0)
+
 import flet as ft
+from ui.paleta import N
 
 from core.settings import settings
 from core.db_factory import crear_acceso_datos
@@ -23,17 +126,57 @@ from ui.helpers import abrir_dialogo
 logging.basicConfig(level=getattr(logging, settings.log_level.upper(), logging.INFO))
 
 
+def _iniciar_servidor_seguro(server_manager, settings) -> None:
+    try:
+        server_manager.iniciar(host=settings.api_host, port=settings.api_port)
+    except Exception:
+        pass
+
+
 class LibreriaApp:
-    def __init__(self, page: ft.Page, modo_web: str = "admin"):
+    def __init__(self, page: ft.Page, modo_web: str = "admin",
+                 codigo_inicial: str | None = None):
         self.page = page
+        self.codigo_inicial = codigo_inicial
+        self._token_sesion = None
+        self._restauracion_intentada = False
+        self._prefs = None
         self.modo_web = modo_web
+        self.es_web = bool(getattr(page, "web", False))
+        self._splash_close_file: str | None = None
         self.page.title = f"Sistema de Gestión — {settings.nombre_negocio}"
-        self.page.window.maximized = True
-        self.page.theme_mode = ft.ThemeMode.DARK
+        from ui.theme import aplicar_tema
+
+        aplicar_tema(self.page)
 
         # Acceso a datos: local (SQLite) o cliente (HTTP FastAPI)
         self.db, self.modo = crear_acceso_datos()
         self.caja_actual = None
+
+        # Modo servidor: asegurar que el servidor HTTP esté disponible.
+        # En Windows se prefiere el servicio del SO (auto-inicio); si no está
+        # instalado se levanta en proceso al abrir la app.
+        if getattr(settings, "modo_red", "") == "servidor":
+            try:
+                if os.name == "nt":
+                    import windows_service as wsp
+
+                    if not (wsp.esta_instalado() and wsp.esta_corriendo()):
+                        from server_manager import server_manager
+
+                        threading.Thread(
+                            target=lambda: _iniciar_servidor_seguro(server_manager, settings),
+                            daemon=True,
+                        ).start()
+                else:
+                    from server_manager import server_manager
+
+                    threading.Thread(
+                        target=lambda: _iniciar_servidor_seguro(server_manager, settings),
+                        daemon=True,
+                    ).start()
+            except Exception:
+                pass
         self.vista_actual = None
         self.autenticado = False
         self.usuario = {}
@@ -50,7 +193,64 @@ class LibreriaApp:
         # Escape cierra el modal abierto (login, ajustes, venta, etc.)
         page.on_keyboard_event = self._on_keyboard
 
+        if self.es_web:
+            try:
+                self.page.run_task(self._mostrar_splash)
+            except Exception:
+                self.iniciar()
+            return
+
+        # Escritorio: ventana de presentación independiente y luego ventana
+        # principal maximizada. Si no se pudo abrir el splash, se muestra la
+        # ventana directamente.
+        self._splash_close_file = _SPLASH_CLOSE_FILE
+        if self._splash_close_file:
+            try:
+                self.page.run_task(self._mostrar_splash_externo)
+                return
+            except Exception:
+                _cerrar_splash(self._splash_close_file)
+                self._splash_close_file = None
+        self._mostrar_ventana()
         self.iniciar()
+
+    def _mostrar_ventana(self):
+        try:
+            self.page.window.visible = True
+            self.page.window.maximized = True
+            self.page.update()
+        except Exception:
+            pass
+
+    async def _mostrar_splash_externo(self):
+        try:
+            inicio = _SPLASH_START or time.monotonic()
+            restante = _duracion_splash() - (time.monotonic() - inicio)
+            await asyncio.sleep(max(0.0, restante))
+        finally:
+            try:
+                self.iniciar()
+            finally:
+                self._mostrar_ventana()
+                _cerrar_splash(self._splash_close_file)
+
+    async def _mostrar_splash(self):
+        ruta = _base_dir() / "img" / "kiosmico_splash.png"
+        try:
+            if not ruta.is_file():
+                return
+            self._set_vista(ft.Container(
+                content=ft.Image(src=ruta.read_bytes(), fit=ft.BoxFit.CONTAIN,
+                                 expand=True),
+                alignment=ft.Alignment.CENTER,
+                bgcolor=N.BLACK,
+                expand=True,
+            ))
+            await asyncio.sleep(_duracion_splash())
+        except Exception:
+            pass
+        finally:
+            self.iniciar()
 
     # ---------- teclado ----------
     def _on_keyboard(self, e):
@@ -82,6 +282,12 @@ class LibreriaApp:
 
     # ---------- navegación ----------
     def iniciar(self):
+        from utils import licencia as _lic
+
+        if not _lic.esta_activada_local():
+            self.mostrar_activacion_licencia()
+            return
+
         try:
             primer_uso = bool(self.db.es_primer_uso())
         except AttributeError:
@@ -90,6 +296,13 @@ class LibreriaApp:
             self.mostrar_primer_uso()
             return
         if not self.autenticado:
+            if self.es_web and not self._restauracion_intentada:
+                self._restauracion_intentada = True
+                try:
+                    self.page.run_task(self._restaurar_sesion)
+                    return
+                except Exception:
+                    pass
             self.mostrar_login()
             return
         if self.modo_web == "stock":
@@ -116,12 +329,55 @@ class LibreriaApp:
         self._set_vista(PrimerUsoView(db_manager=self.db,
                                       on_finish=self.iniciar, page=self.page))
 
+    def mostrar_activacion_licencia(self, mensaje=None):
+        from componente_licencia import LicenciaView
+        self._set_vista(LicenciaView(
+            db_manager=self.db, page=self.page,
+            on_activado=lambda: self.iniciar(), mensaje=mensaje))
+
     def mostrar_login(self):
         from componente_login import LoginView
         self._set_vista(LoginView(db_manager=self.db, on_login=self.on_login,
                                   page=self.page))
 
-    def on_login(self, usuario=None):
+    def _servicio_prefs(self):
+        """Almacenamiento del navegador (localStorage) para recordar la sesión."""
+        if self._prefs is None:
+            self._prefs = ft.SharedPreferences()
+            self.page.services.append(self._prefs)
+        return self._prefs
+
+    async def _restaurar_sesion(self):
+        from utils import sesion_recordada as sr
+
+        try:
+            token = await self._servicio_prefs().get(sr.CLAVE_PREFS)
+            usuario = sr.validar(token, self.db)
+        except Exception:
+            token, usuario = None, None
+        if usuario:
+            self._token_sesion = token
+            self.on_login(usuario)
+        else:
+            self.iniciar()  # ya intentó restaurar: muestra el login
+
+    async def _guardar_token(self, token: str):
+        from utils import sesion_recordada as sr
+
+        try:
+            await self._servicio_prefs().set(sr.CLAVE_PREFS, token)
+        except Exception:
+            pass
+
+    async def _borrar_token(self):
+        from utils import sesion_recordada as sr
+
+        try:
+            await self._servicio_prefs().remove(sr.CLAVE_PREFS)
+        except Exception:
+            pass
+
+    def on_login(self, usuario=None, recordar: bool = False):
         from core.permisos import permisos_todos
 
         if isinstance(usuario, dict):
@@ -136,9 +392,26 @@ class LibreriaApp:
         except Exception:
             pass
         self.autenticado = True
+        if recordar and self.es_web:
+            from utils import sesion_recordada as sr
+
+            self._token_sesion = sr.crear(self.usuario)
+            try:
+                self.page.run_task(self._guardar_token, self._token_sesion)
+            except Exception:
+                pass
         self.iniciar()
 
     def cerrar_sesion(self):
+        if self._token_sesion:
+            from utils import sesion_recordada as sr
+
+            sr.revocar(self._token_sesion)
+            self._token_sesion = None
+            try:
+                self.page.run_task(self._borrar_token)
+            except Exception:
+                pass
         self.autenticado = False
         self.caja_actual = None
         self.usuario = {}
@@ -242,9 +515,12 @@ class LibreriaApp:
         from componente_ingreso_stock import IngresoStockView
         volver = (self.cerrar_sesion if self.modo_web == "stock"
                   else self.mostrar_ventana_principal)
+        codigo, self.codigo_inicial = self.codigo_inicial, None
         self._set_vista(IngresoStockView(db_manager=self.db,
                                          on_volver=volver,
-                                         page=self.page))
+                                         page=self.page,
+                                         codigo_inicial=codigo,
+                                         mostrar_volver=self.modo_web != "stock"))
 
     def mostrar_roles_usuarios(self):
         if not self.es_admin:
@@ -291,7 +567,25 @@ def _modo_desde_ruta(route: str) -> str:
 
 
 def main(page: ft.Page):
-    LibreriaApp(page, modo_web=_modo_desde_ruta(getattr(page, "route", "")))
+    try:
+        codigo = None
+        try:
+            from utils.scan_relay import leer_retorno
+
+            codigo = leer_retorno(page)  # vuelve de Binary Eye con ?codigo=
+        except Exception:
+            pass
+        modo = "stock" if codigo else _modo_desde_ruta(getattr(page, "route", ""))
+        LibreriaApp(page, modo_web=modo, codigo_inicial=codigo)
+    except Exception:
+        _cerrar_splash(_SPLASH_CLOSE_FILE)
+        try:
+            page.window.visible = True
+            page.window.maximized = True
+            page.update()
+        except Exception:
+            pass
+        raise
 
 
 def _servir(stop_event=None):
@@ -366,4 +660,10 @@ if __name__ == "__main__":
 
         _cli_servicio(desinstalar)
     else:
-        ft.run(main)
+        if _es_modo_web():
+            ft.run(main)
+        else:
+            _SPLASH_CLOSE_FILE = _lanzar_splash()
+            _preparar_icono_ventana()
+            ft.run(main, view=ft.AppView.FLET_APP_HIDDEN
+                   if _SPLASH_CLOSE_FILE else ft.AppView.FLET_APP)

@@ -10,6 +10,7 @@ import os
 import threading
 
 import flet as ft
+from ui.paleta import N
 
 from core.settings import settings
 from services.mercadopago_service import mp_service
@@ -78,7 +79,7 @@ def ConfigModal(page: ft.Page):
     login_pass_field = ft.TextField(
         label="Clave de acceso", width=220, password=True,
         can_reveal_password=True, value=cfg.get("LOGIN_CLAVE") or "admin")
-    resultado_text = ft.Text("", size=12, color=ft.Colors.GREEN_400)
+    resultado_text = ft.Text("", size=12, color=N.GREEN_400)
 
     # ---------- campos AFIP ----------
     afip_cuit_field = ft.TextField(
@@ -135,6 +136,7 @@ def ConfigModal(page: ft.Page):
                                  extensions=["crt", "pem", "cer"])
         if picked:
             afip_cert_field.value = picked
+            _actualizar_estado_cert()
             page.update()
 
     async def _pick_key(e=None):
@@ -158,6 +160,47 @@ def ConfigModal(page: ft.Page):
     cert_row.visible = True
     key_row.visible = True
 
+    afip_cert_status = ft.Text("", size=12, color=N.GREY_400)
+
+    def _estado_certificado(ruta: str):
+        import os as _os
+        from datetime import datetime as _dt
+
+        ruta = (ruta or "").strip()
+        if not ruta or not _os.path.exists(ruta):
+            return "Certificado: no encontrado", N.RED_400
+        try:
+            from cryptography import x509
+            from cryptography.hazmat.backends import default_backend
+
+            with open(ruta, "rb") as _f:
+                cert = x509.load_pem_x509_certificate(_f.read(), default_backend())
+            ahora = _dt.utcnow()
+            nb = getattr(cert, "not_valid_before", None)
+            na = getattr(cert, "not_valid_after", None)
+            if nb is None or na is None:
+                return "Certificado: no se pudo leer la vigencia", N.GREY_400
+            if ahora < nb:
+                return (f"Certificado: aún no vigente (desde "
+                        f"{nb.strftime('%d/%m/%Y')})"), N.ORANGE_400
+            if ahora > na:
+                return (f"Certificado: VENCIDO el {na.strftime('%d/%m/%Y')}"), N.RED_400
+            return (f"Certificado: VIGENTE, vence el {na.strftime('%d/%m/%Y')}"), N.GREEN_400
+        except Exception as _ex:  # noqa: BLE001
+            return f"Certificado: error al leer ({_ex})", N.RED_400
+
+    def _actualizar_estado_cert(e=None):
+        texto, color = _estado_certificado(afip_cert_field.value)
+        afip_cert_status.value = texto
+        afip_cert_status.color = color
+        try:
+            page.update()
+        except Exception:
+            pass
+
+    _actualizar_estado_cert()
+    afip_cert_field.on_change = lambda _e: _actualizar_estado_cert()
+
     facturacion_activa_switch = ft.Switch(
         label="Facturación AFIP activa", value=_cfg_bool("FACTURACION_ACTIVA", "facturacion_activa", True))
     facturar_qr_switch = ft.Switch(
@@ -177,7 +220,7 @@ def ConfigModal(page: ft.Page):
     red_url_field = ft.TextField(
         label="Dirección del servidor", width=340,
         value=cfg.get("SERVER_URL") or settings.server_url or "http://127.0.0.1:8000")
-    red_estado_text = ft.Text("", size=12, color=ft.Colors.GREEN_400)
+    red_estado_text = ft.Text("", size=12, color=N.GREEN_400)
 
     def _escanear_red(e=None):
         red_estado_text.value = "🔍 Escaneando la red…"
@@ -200,23 +243,63 @@ def ConfigModal(page: ft.Page):
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _estado_servidor() -> str:
-        """Estado actual del servicio Windows o del servidor en proceso."""
+    def _info_servidor() -> dict:
+        servicio_instalado = False
+        servicio_corriendo = False
         try:
             import windows_service as wsp
 
-            if wsp.is_windows() and wsp.esta_instalado():
-                return f"Servicio Windows: {wsp.estado()}"
+            if wsp.is_windows():
+                servicio_instalado = wsp.esta_instalado()
+                if servicio_instalado:
+                    servicio_corriendo = wsp.esta_corriendo()
         except Exception:
             pass
+        en_proceso = False
         try:
             from server_manager import server_manager
 
-            if server_manager.activo:
-                return f"Servidor en este equipo: {server_manager.url()}"
+            en_proceso = bool(server_manager.activo)
         except Exception:
             pass
-        return "Servidor detenido."
+        activo = servicio_corriendo or en_proceso
+        if servicio_corriendo:
+            descripcion = ("✅ Servicio Windows en ejecución "
+                           "(sigue activo al cerrar la app).")
+        elif en_proceso:
+            try:
+                descripcion = f"✅ Servidor activo en {server_manager.url()}"
+            except Exception:
+                descripcion = "✅ Servidor activo."
+        elif servicio_instalado:
+            descripcion = "⏸️ Servicio Windows instalado, detenido."
+        else:
+            descripcion = "Servidor detenido."
+        return {
+            "activo": activo,
+            "servicio_instalado": servicio_instalado,
+            "servicio_corriendo": servicio_corriendo,
+            "en_proceso": en_proceso,
+            "descripcion": descripcion,
+        }
+
+    def _actualizar_controles_servidor(mensaje: str | None = None) -> None:
+        info = _info_servidor()
+        red_estado_text.value = mensaje or info["descripcion"]
+        btn_encender.visible = not info["activo"]
+        btn_detener.visible = info["activo"]
+        btn_quitar.visible = info["servicio_instalado"]
+        if not info["activo"]:
+            if info["servicio_instalado"]:
+                btn_encender.content = "🖥️ Iniciar servicio"
+            elif os.name == "nt":
+                btn_encender.content = "🖥️ Instalar y encender servicio"
+            else:
+                btn_encender.content = "🖥️ Encender servidor"
+        try:
+            page.update()
+        except Exception:
+            pass
 
     def _encender_servidor(e=None):
         puerto = int(cfg.get("API_PORT") or settings.api_port or 8000)
@@ -224,29 +307,29 @@ def ConfigModal(page: ft.Page):
         page.update()
 
         def worker():
+            mensaje = None
             try:
                 if os.name == "nt":
                     import windows_service as wsp
 
                     if wsp.esta_instalado():
-                        # Ya está instalado (inicio automático): sólo asegurar que corra.
                         if not wsp.esta_corriendo() and not wsp.iniciar_con_elevacion():
                             raise RuntimeError("El servicio no pudo iniciarse.")
+                        mensaje = ("✅ Servicio Windows activo (inicio automático, "
+                                   "sigue funcionando al cerrar la app).")
                     else:
-                        # Servicio nuevo con inicio automático (sobrevive al cierre de la app).
                         if not wsp.instalar_con_elevacion():
                             raise RuntimeError("El servicio no quedó activo.")
-                    red_estado_text.value = (
-                        f"✅ Servicio Windows activo (inicio automático). {_estado_servidor()}"
-                    )
+                        mensaje = ("✅ Servicio Windows instalado y activo "
+                                   "(inicio automático, sigue funcionando al cerrar la app).")
                 else:
                     from server_manager import server_manager
 
                     url = server_manager.iniciar(host=settings.api_host, port=puerto)
-                    red_estado_text.value = f"✅ Servidor activo en {url}"
+                    mensaje = f"✅ Servidor activo en {url}"
             except Exception as ex:  # noqa: BLE001
-                red_estado_text.value = f"❌ No se pudo activar el servidor: {ex}"
-            page.update()
+                mensaje = f"❌ No se pudo activar el servidor: {ex}"
+            _actualizar_controles_servidor(mensaje)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -276,12 +359,11 @@ def ConfigModal(page: ft.Page):
             except Exception:  # noqa: BLE001
                 pass
             if error:
-                red_estado_text.value = f"❌ No se pudo detener el servidor: {error}"
+                mensaje = f"❌ No se pudo detener el servidor: {error}"
             else:
-                red_estado_text.value = (
-                    "⏹️ Servidor detenido." if detenido else "ℹ️ El servidor ya estaba detenido."
-                )
-            page.update()
+                mensaje = ("⏹️ Servidor detenido." if detenido
+                           else "ℹ️ El servidor ya estaba detenido.")
+            _actualizar_controles_servidor(mensaje)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -292,16 +374,15 @@ def ConfigModal(page: ft.Page):
 
                 if wsp.is_windows() and wsp.esta_instalado():
                     if wsp.desinstalar_con_elevacion():
-                        red_estado_text.value = (
-                            "🗑️ Servicio desinstalado (no volverá a iniciar solo)."
-                        )
+                        mensaje = ("🗑️ Servicio desinstalado "
+                                   "(no volverá a iniciar solo).")
                     else:
-                        red_estado_text.value = "❌ No se pudo desinstalar el servicio."
+                        mensaje = "❌ No se pudo desinstalar el servicio."
                 else:
-                    red_estado_text.value = "ℹ️ No hay servicio instalado."
+                    mensaje = "ℹ️ No hay servicio instalado."
             except Exception as ex:  # noqa: BLE001
-                red_estado_text.value = f"❌ Error: {ex}"
-            page.update()
+                mensaje = f"❌ Error: {ex}"
+            _actualizar_controles_servidor(mensaje)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -561,6 +642,8 @@ def ConfigModal(page: ft.Page):
         _guardar_afip_en_db()
         _guardar_red_en_db()
         _guardar_seguridad_en_db()
+        if (red_modo_dropdown.value or "").lower() == "servidor":
+            _encender_servidor()
         settings.reload()
         snack(page, "✅ Configuración guardada con éxito", ok=True)
         dialog.open = False
@@ -570,18 +653,18 @@ def ConfigModal(page: ft.Page):
     seccion_negocio = ft.Container(
         content=ft.Column([
             ft.Text("📋 Datos del Negocio", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLUE_400),
+                    color=N.BLUE_400),
             nombre_negocio_field,
             direccion_field,
             ft.Divider(height=8),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
     seccion_mp = ft.Container(
         content=ft.Column([
             ft.Text("🔐 Credenciales Mercado Pago", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLUE_400),
+                    color=N.BLUE_400),
             user_field,
             token_field,
             ft.Row([
@@ -590,22 +673,22 @@ def ConfigModal(page: ft.Page):
                 ft.FilledButton("Seleccionar", icon=ft.Icons.CHECK, on_click=seleccionar_pos),
             ], spacing=8, wrap=True),
             ft.Text("Los secretos definitivos van en el archivo .env (no en la DB).",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
             ft.Divider(height=8),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
     seccion_ventas = ft.Container(
         content=ft.Column([
             ft.Text("💰 Configuración de Ventas", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLUE_400),
+                    color=N.BLUE_400),
             recargo_field,
             recargo_debito_field,
             recargo_credito_field,
             ft.Divider(height=8),
             ft.Text("Medios de pago activos", size=12, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.BLUE_300),
+                    color=N.BLUE_300),
             mp_activo_switch,
             debito_activo_switch,
             credito_activo_switch,
@@ -613,79 +696,83 @@ def ConfigModal(page: ft.Page):
             vuelto_switch,
             ft.Text("Si el vuelto está activo, al cobrar en efectivo se pide con cuánto "
                     "paga el cliente y se muestra el vuelto a entregar.",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
     seccion_facturacion = ft.Container(
         content=ft.Column([
             ft.Text("🧾 Facturación AFIP", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.CYAN_400),
+                    color=N.CYAN_400),
             ft.Row([afip_cuit_field, afip_pv_field, afip_tipo_dropdown], spacing=8, wrap=True),
             ft.Row([condicion_iva_dropdown, iibb_field, inicio_actividades_field],
                    spacing=8, wrap=True),
             ft.Text("Condición IVA, Ingresos Brutos e Inicio de actividades se imprimen "
                     "en la factura y el ticket.", size=11, italic=True,
-                    color=ft.Colors.GREY_500),
+                    color=N.GREY_500),
             ft.Row([afip_modo_dropdown], spacing=8, wrap=True),
             cert_row,
             key_row,
+            afip_cert_status,
             ft.Text("Rutas por defecto: ./certificados/wsaa.crt y wsaa.key. Use el icono 📁 para cambiar.",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
             ft.Divider(height=8),
             facturacion_activa_switch,
             facturar_qr_switch,
             facturar_efectivo_switch,
             ft.Text("Por defecto: facturación automática DESACTIVADA (NO).",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
     seccion_seguridad = ft.Container(
         content=ft.Column([
             ft.Text("🔑 Acceso al sistema", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.AMBER_400),
+                    color=N.AMBER_400),
             ft.Row([login_user_field, login_pass_field], spacing=8, wrap=True),
             ft.Text("Este campo actualiza el usuario ADMIN. Para crear otros "
                     "usuarios, roles y permisos usá ROLES Y USUARIOS. Las claves "
                     "se guardan en la base sin cifrado.",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
     seccion_directorios = ft.Container(
         content=ft.Column([
             ft.Text("🖨️ Directorios de comprobantes", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.CYAN_400),
+                    color=N.CYAN_400),
             comprobantes_dir_row,
             tickets_dir_row,
             ft.Text("Los comprobantes .txt van en la primera carpeta; los tickets PDF "
                     "y facturas emitidas en la segunda.",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
-    red_estado_text.value = _estado_servidor()
+    btn_encender = ft.FilledButton("🖥️ Encender servidor", icon=ft.Icons.PLAY_ARROW,
+                                   on_click=_encender_servidor)
+    btn_detener = ft.FilledButton("⏹️ Detener servidor", icon=ft.Icons.STOP,
+                                  on_click=_detener_servidor)
+    btn_quitar = ft.TextButton("🗑️ Quitar servicio", icon=ft.Icons.DELETE_OUTLINE,
+                               on_click=_quitar_servicio)
+    _actualizar_controles_servidor()
 
     seccion_red = ft.Container(
         content=ft.Column([
             ft.Text("🌐 Red / Multi-usuario", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.INDIGO_400),
+                    color=N.INDIGO_400),
             ft.Row([red_modo_dropdown], spacing=8, wrap=True),
             red_url_field,
             ft.Row([
                 ft.FilledButton("🔍 Escanear red", icon=ft.Icons.WIFI_FIND,
                                 on_click=_escanear_red),
-                ft.FilledButton("🖥️ Instalar/Encender servidor", icon=ft.Icons.PLAY_ARROW,
-                                on_click=_encender_servidor),
-                ft.FilledButton("⏹️ Detener servidor", icon=ft.Icons.STOP,
-                                on_click=_detener_servidor),
-                ft.TextButton("🗑️ Quitar servicio", icon=ft.Icons.DELETE_OUTLINE,
-                              on_click=_quitar_servicio),
+                btn_encender,
+                btn_detener,
+                btn_quitar,
             ], spacing=8, wrap=True),
             red_estado_text,
             ft.Text("En Windows el servidor se instala como servicio con inicio automático "
@@ -695,15 +782,15 @@ def ConfigModal(page: ft.Page):
                     f"Versión web en la LAN: iniciá con --web y abrí "
                     f"http://IP-del-servidor:{getattr(settings, 'web_port', 8550)}"
                     "/cliente (caja) o /stock (depósito).",
-                    size=11, italic=True, color=ft.Colors.GREY_500),
+                    size=11, italic=True, color=N.GREY_500),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
     seccion_crear_pos = ft.Container(
         content=ft.Column([
             ft.Text("🏪 Gestión de POS", size=14, weight=ft.FontWeight.BOLD,
-                    color=ft.Colors.ORANGE_400),
+                    color=N.ORANGE_400),
             ft.Row([
                 ft.FilledButton("Crear Tienda+POS", icon=ft.Icons.STORE,
                                 on_click=crear_handler_initial),
@@ -712,24 +799,24 @@ def ConfigModal(page: ft.Page):
             ], spacing=8, wrap=True),
             ft.Divider(height=8),
         ], spacing=8),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8)
 
     seccion_resultado = ft.Container(
         content=ft.Column([resultado_text], spacing=4),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.1, ft.Colors.GREEN_900),
-        border_radius=8, border=ft.Border.all(1, ft.Colors.GREEN_700))
+        padding=6, bgcolor=ft.Colors.with_opacity(0.1, N.GREEN_900),
+        border_radius=8, border=ft.Border.all(1, N.GREEN_700))
 
     qr_panel = ft.Container(
         content=ft.Column([
-            ft.Text("QR", size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_400),
+            ft.Text("QR", size=12, weight=ft.FontWeight.BOLD, color=N.BLUE_400),
             qr_image,
             ft.Row([
                 ft.FilledButton("Descargar", icon=ft.Icons.DOWNLOAD, on_click=descargar_qr),
                 ft.FilledButton("Imprimir", icon=ft.Icons.PRINT, on_click=imprimir_qr_action),
             ], spacing=4),
         ], spacing=8, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-        padding=12, bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.BLUE_GREY_800),
+        padding=12, bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_GREY_800),
         border_radius=8, alignment=ft.Alignment.CENTER)
 
     if needs_initial_setup:
@@ -744,10 +831,10 @@ def ConfigModal(page: ft.Page):
                                          validar_backup as _validar_backup)
 
     backup_archivo = {"ruta": None, "info": None}
-    backup_estado = ft.Text("", size=12, color=ft.Colors.GREY_400)
-    backup_info = ft.Text("", size=11, color=ft.Colors.GREY_500)
-    backup_base = ft.Text(f"Base actual: {settings.db_path}", size=11,
-                          color=ft.Colors.GREY_500, selectable=True)
+    backup_estado = ft.Text("", size=12, color=N.GREY_400)
+    backup_info = ft.Text("", size=11, color=N.GREY_500)
+    backup_base = ft.Text(f"Ruta de la base de datos actual: {settings.db_path}", size=11,
+                          color=N.GREY_500, selectable=True)
 
     async def exportar_backup(e=None):
         try:
@@ -761,12 +848,12 @@ def ConfigModal(page: ft.Page):
             ruta = agregar_extension(destino, "db")
             info = await asyncio.to_thread(_exportar_backup, settings.db_path, ruta)
             backup_estado.value = f"Backup generado: {ruta}"
-            backup_estado.color = ft.Colors.GREEN_400
+            backup_estado.color = N.GREEN_400
             backup_info.value = f"Tablas: {info.get('conteos')} · {info.get('bytes', 0):,} bytes"
             page.update()
         except Exception as ex:  # noqa: BLE001
             backup_estado.value = f"Error al exportar: {ex}"
-            backup_estado.color = ft.Colors.RED_400
+            backup_estado.color = N.RED_400
             page.update()
 
     async def elegir_backup(e=None):
@@ -779,25 +866,25 @@ def ConfigModal(page: ft.Page):
             backup_archivo["info"] = info
             backup_info.value = (f"Backup válido · {_Path(ruta).name} · "
                                  f"{info.get('conteos')}")
-            backup_info.color = ft.Colors.GREEN_400
+            backup_info.color = N.GREEN_400
             backup_estado.value = "Elegí cómo restaurar: Fusionar o Reemplazar."
-            backup_estado.color = ft.Colors.BLUE_300
+            backup_estado.color = N.BLUE_300
             page.update()
         except Exception as ex:  # noqa: BLE001
             backup_archivo["ruta"] = None
             backup_info.value = f"Archivo inválido: {ex}"
-            backup_info.color = ft.Colors.RED_400
+            backup_info.color = N.RED_400
             page.update()
 
     async def _restaurar(modo: str):
         ruta = backup_archivo.get("ruta")
         if not ruta:
             backup_estado.value = "Primero elegí un archivo de backup."
-            backup_estado.color = ft.Colors.RED_400
+            backup_estado.color = N.RED_400
             page.update()
             return
         backup_estado.value = "Restaurando… no cierres la aplicación."
-        backup_estado.color = ft.Colors.ORANGE_400
+        backup_estado.color = N.ORANGE_400
         page.update()
         try:
             res = await asyncio.to_thread(_restaurar_backup, settings.db_path, ruta, modo)
@@ -812,13 +899,13 @@ def ConfigModal(page: ft.Page):
             else:
                 detalle = f"datos restaurados: {res.get('conteos')}"
             backup_estado.value = f"Restauración OK ({modo}): {detalle}"
-            backup_estado.color = ft.Colors.GREEN_400
+            backup_estado.color = N.GREEN_400
             backup_info.value = f"Backup de seguridad: {res.get('seguridad')}"
             snack(page, "Datos restaurados correctamente", ok=True)
             page.update()
         except Exception as ex:  # noqa: BLE001
             backup_estado.value = f"Error al restaurar: {ex}"
-            backup_estado.color = ft.Colors.RED_400
+            backup_estado.color = N.RED_400
             snack(page, f"Error al restaurar: {ex}", ok=False)
             page.update()
 
@@ -831,13 +918,13 @@ def ConfigModal(page: ft.Page):
             mensaje = ("Se reemplazará la base actual por el backup. "
                        "Se creará automáticamente una copia de seguridad en "
                        "la carpeta backups/ antes de continuar.")
-            color = ft.Colors.RED_700
+            color = N.RED_700
         else:
             titulo = "Fusionar backup"
             mensaje = ("Se agregarán proveedores, productos, ventas y órdenes "
                        "que no existan. No se duplican productos (por código) "
                        "ni ventas (por huella). La configuración actual no se modifica.")
-            color = ft.Colors.BLUE_700
+            color = N.BLUE_700
 
         def _ok(_e):
             cerrar_dialogo(page)
@@ -865,15 +952,15 @@ def ConfigModal(page: ft.Page):
 
     backup_tab = _tab_content([
         ft.Text("Copia de seguridad", size=15, weight=ft.FontWeight.BOLD,
-                color=ft.Colors.BLUE_300),
+                color=N.BLUE_300),
         ft.Text("Exportá la base completa o restaurá un backup. "
                 "En modo fusionar se evitan productos y ventas duplicadas.",
-                size=11, color=ft.Colors.GREY_400),
+                size=11, color=N.GREY_400),
         backup_base,
         ft.Row([
             ft.FilledButton("EXPORTAR BACKUP", icon=ft.Icons.SAVE_ALT,
                             on_click=exportar_backup,
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700,
+                            style=ft.ButtonStyle(bgcolor=N.GREEN_700,
                                                  color=ft.Colors.WHITE)),
             ft.OutlinedButton("ELEGIR BACKUP", icon=ft.Icons.FOLDER_OPEN,
                               on_click=elegir_backup),
@@ -882,25 +969,25 @@ def ConfigModal(page: ft.Page):
         ft.Row([
             ft.FilledButton("FUSIONAR", icon=ft.Icons.MERGE_TYPE,
                             on_click=lambda _e: preguntar_restaurar("fusionar"),
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_700,
+                            style=ft.ButtonStyle(bgcolor=N.BLUE_700,
                                                  color=ft.Colors.WHITE)),
             ft.FilledButton("REEMPLAZAR", icon=ft.Icons.RESTORE,
                             on_click=lambda _e: preguntar_restaurar("reemplazar"),
-                            style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700,
+                            style=ft.ButtonStyle(bgcolor=N.RED_700,
                                                  color=ft.Colors.WHITE)),
         ], spacing=10, wrap=True),
         ft.Container(
             content=ft.Column([
                 ft.Text("Recomendaciones", size=12, weight=ft.FontWeight.BOLD),
                 ft.Text("• Exportá un backup antes de restaurar.", size=11,
-                        color=ft.Colors.GREY_400),
+                        color=N.GREY_400),
                 ft.Text("• 'Fusionar' es ideal para unir datos de otra PC.", size=11,
-                        color=ft.Colors.GREY_400),
+                        color=N.GREY_400),
                 ft.Text("• 'Reemplazar' deja la base exactamente como el backup.",
-                        size=11, color=ft.Colors.GREY_400),
+                        size=11, color=N.GREY_400),
             ], spacing=3),
             padding=12, border_radius=8,
-            bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.BLUE_GREY_800),
+            bgcolor=ft.Colors.with_opacity(0.06, N.BLUE_GREY_800),
         ),
         backup_estado,
     ])
@@ -928,7 +1015,7 @@ def ConfigModal(page: ft.Page):
         sel["idx"] = i
         for j, b in enumerate(botones_tab):
             b.style = ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE_700 if j == i else ft.Colors.GREY_800,
+                bgcolor=N.BLUE_700 if j == i else N.GREY_800,
                 color=ft.Colors.WHITE,
             )
             b.icon = ft.Icons.CHECK if j == i else None
@@ -939,14 +1026,14 @@ def ConfigModal(page: ft.Page):
         botones_tab.append(ft.FilledTonalButton(
             label, icon=(ft.Icons.CHECK if i == 0 else None),
             style=ft.ButtonStyle(
-                bgcolor=ft.Colors.BLUE_700 if i == 0 else ft.Colors.GREY_800,
+                bgcolor=N.BLUE_700 if i == 0 else N.GREY_800,
                 color=ft.Colors.WHITE),
             on_click=lambda e, i=i: _cambiar_tab(i),
         ))
 
     alto_pantalla = int(getattr(page, "height", 0) or
                         getattr(getattr(page, "window", None), "height", 0) or 900)
-    alto_tabs = max(240, min(560, alto_pantalla - 300))
+    alto_tabs = max(200, min(460, alto_pantalla - 260))
     contenedor_tabs = ft.Container(
         content=ft.Column([contenidos[0]], expand=True),
         height=alto_tabs,
@@ -956,7 +1043,7 @@ def ConfigModal(page: ft.Page):
     dialog = ft.AlertDialog(
         modal=True,
         title=ft.Row([
-            ft.Icon(ft.Icons.SETTINGS, color=ft.Colors.BLUE_400),
+            ft.Icon(ft.Icons.SETTINGS, color=N.BLUE_400),
             ft.Text("Ajustes", size=20, weight=ft.FontWeight.BOLD),
         ], spacing=8),
         content=ft.Container(

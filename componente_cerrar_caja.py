@@ -1,4 +1,5 @@
 import flet as ft
+from ui.paleta import N
 from datetime import datetime
 from ui.helpers import cerrar_dialogo, snack as _snack
 
@@ -31,7 +32,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                     ft.Text(gasto['fecha'][11:16] if len(gasto['fecha']) > 11 else 'N/A', width=80),
                     ft.Text(f"${gasto['monto']:.2f}", width=100, text_align=ft.TextAlign.RIGHT)
                 ]),
-                bgcolor=ft.Colors.RED_900,
+                bgcolor=N.RED_900,
                 padding=10,
                 border_radius=5
             )
@@ -57,7 +58,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                 ft.Text(gasto['fecha'][11:16] if len(gasto['fecha']) > 11 else 'N/A', width=80),
                 ft.Text(f"${gasto['monto']:.2f}", width=100, text_align=ft.TextAlign.RIGHT)
             ]),
-            bgcolor=ft.Colors.RED_900,
+            bgcolor=N.RED_900,
             padding=10,
             border_radius=5
         )
@@ -78,8 +79,8 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
     )
     
     # Textos dinámicos
-    total_gastos_text = ft.Text(f"$ {total_gastos:.2f}", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.RED_700)
-    total_caja_text = ft.Text(f"$ {importe_cierre:.2f}", size=20, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)
+    total_gastos_text = ft.Text(f"$ {total_gastos:.2f}", size=14, weight=ft.FontWeight.BOLD, color=N.RED_700)
+    total_caja_text = ft.Text(f"$ {importe_cierre:.2f}", size=20, weight=ft.FontWeight.BOLD, color=N.BLUE_700)
     
     def agregar_gasto(e):
         """Abre diálogo para agregar gasto"""
@@ -176,7 +177,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
             ]),
             ft.Row([
                 ft.Text("Total ventas:", size=14, width=200),
-                ft.Text(f"$ {total_ventas:.2f}", size=14, weight=ft.FontWeight.BOLD, color=ft.Colors.GREEN_700)
+                ft.Text(f"$ {total_ventas:.2f}", size=14, weight=ft.FontWeight.BOLD, color=N.GREEN_700)
             ]),
             ft.Row([
                 ft.Text("Total gastos:", size=14, width=200),
@@ -188,7 +189,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                 total_caja_text
             ])
         ]),
-        bgcolor=ft.Colors.BLUE_GREY_900,
+        bgcolor=N.BLUE_GREY_900,
         padding=15,
         border_radius=10
     )
@@ -197,7 +198,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
     dialog = ft.AlertDialog(
         modal=True,
         title=ft.Row([
-            ft.Icon(ft.Icons.LOCK, color=ft.Colors.RED_700),
+            ft.Icon(ft.Icons.LOCK, color=N.RED_700),
             ft.Text("CERRAR CAJA", size=24, weight=ft.FontWeight.BOLD)
         ]),
         content=ft.Container(
@@ -233,14 +234,14 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
             ft.TextButton(
                 "CANCELAR",
                 on_click=cancelar,
-                style=ft.ButtonStyle(color=ft.Colors.RED_700)
+                style=ft.ButtonStyle(color=N.RED_700)
             ),
             ft.FilledButton(
                 "CONFIRMAR CIERRE",
                 icon=ft.Icons.LOCK,
                 on_click=confirmar_cierre,
                 style=ft.ButtonStyle(
-                    bgcolor=ft.Colors.RED_700,
+                    bgcolor=N.RED_700,
                     color=ft.Colors.WHITE
                 )
             )

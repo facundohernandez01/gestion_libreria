@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import flet as ft
+from ui.paleta import N
 
 from ui.helpers import imprimir_archivo, snack
 
@@ -22,7 +23,7 @@ def mostrar_qr(page: ft.Page):
                          error_content=ft.Text("QR no descargado aún.\nVaya a Ajustes → Mercado Pago.",
                                                text_align=ft.TextAlign.CENTER)),
                 ft.Text("Muestre este QR al cliente.\nEl monto se fija por venta (fixed_amount).",
-                        size=12, color=ft.Colors.GREY_400, text_align=ft.TextAlign.CENTER),
+                        size=12, color=N.GREY_400, text_align=ft.TextAlign.CENTER),
                 ft.FilledButton("Imprimir QR", icon=ft.Icons.PRINT, on_click=imprimir_qr),
             ],
             horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=16,

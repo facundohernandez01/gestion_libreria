@@ -287,6 +287,10 @@ class Settings:
         b("tarjeta_credito_activo", "TARJETA_CREDITO_ACTIVO")
         b("vuelto_activo", "VUELTO_ACTIVO")
         s("afip_cuit", "AFIP_CUIT")
+        if not self.cuit:
+            self.cuit = self.afip_cuit
+        if not self.afip_cuit:
+            self.afip_cuit = self.cuit
         it("afip_punto_venta", "AFIP_PUNTO_VENTA")
         s("afip_tipo_factura", "AFIP_TIPO_FACTURA")
         b("afip_testing", "AFIP_TESTING")

@@ -5,12 +5,53 @@ compatibilidad con el usuario/clave único de la tabla config.
 """
 from __future__ import annotations
 
-import flet as ft
+import json
+from pathlib import Path
 
-from ui.theme import BTN_PRIMARIO
+import flet as ft
+from ui.paleta import N
+
+from utils.paths import base_dir as _base_dir
+
+_RECUERDO_LOGIN = _base_dir() / "login_recordado.json"
+
+
+def _cargar_recordado() -> tuple[str, str]:
+    try:
+        data = json.loads(_RECUERDO_LOGIN.read_text(encoding="utf-8"))
+        return str(data.get("usuario") or ""), str(data.get("clave") or "")
+    except Exception:
+        return "", ""
+
+
+def _guardar_recordado(usuario: str, clave: str) -> None:
+    try:
+        _RECUERDO_LOGIN.write_text(
+            json.dumps({"usuario": usuario, "clave": clave}), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _borrar_recordado() -> None:
+    try:
+        _RECUERDO_LOGIN.unlink()
+    except Exception:
+        pass
+
+from ui.theme import (BTN_PRIMARIO, GRADIENTE_FONDO, GRADIENTE_NEON,
+                      logo_widget, sombra_neon)
 
 _USUARIO_DEFAULT = "admin"
 _CLAVE_DEFAULT = "admin"
+_NOMBRE_TIENDA_DEFAULT = "Tienda"
+
+
+def nombre_tienda(db_manager) -> str:
+    try:
+        nombre = (db_manager.get_config_value("NOMBRE_NEGOCIO") or "").strip()
+    except Exception:
+        nombre = ""
+    return nombre or _NOMBRE_TIENDA_DEFAULT
 
 
 def credenciales_configuradas(db_manager) -> bool:
@@ -43,20 +84,24 @@ def validar_login(db_manager, usuario: str, clave: str) -> bool:
 
 
 def LoginView(db_manager, on_login, page: ft.Page):
+    _rec_usuario, _rec_clave = _cargar_recordado()
     usuario_field = ft.TextField(
-        label="Usuario", value="", autofocus=True, width=320,
+        label="Usuario", value=_rec_usuario, autofocus=True, width=320,
         prefix_icon=ft.Icons.PERSON_OUTLINE)
     clave_field = ft.TextField(
         label="Clave", password=True, can_reveal_password=True, width=320,
+        value=_rec_clave,
         prefix_icon=ft.Icons.LOCK_OUTLINE)
-    error_text = ft.Text("", size=12, color=ft.Colors.RED_400, visible=False)
+    recordar_cb = ft.Checkbox(
+        label="Recordar usuario y clave", value=bool(_rec_usuario or _rec_clave))
+    error_text = ft.Text("", size=12, color=N.RED_400, visible=False)
     configurado = credenciales_configuradas(db_manager)
     ayuda = ft.Text(
         "Usuario inicial: «admin», clave «admin». Cambiala desde "
         "ROLES Y USUARIOS."
         if not configurado else
         "Ingresá con el usuario y la clave asignados por el administrador.",
-        size=11, italic=True, color=ft.Colors.GREY_500,
+        size=11, italic=True, color=N.GREY_500,
         text_align=ft.TextAlign.CENTER)
 
     def ingresar(e=None):
@@ -76,10 +121,14 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "permisos": permisos_todos(),
             }
         if usuario:
+            if recordar_cb.value:
+                _guardar_recordado(usuario_field.value or "", clave_field.value or "")
+            else:
+                _borrar_recordado()
             try:
-                on_login(usuario)
+                on_login(usuario, bool(recordar_cb.value))
             except TypeError:
-                on_login()
+                on_login(usuario)
             return
         error_text.value = "Usuario o clave incorrectos"
         error_text.visible = True
@@ -95,12 +144,13 @@ def LoginView(db_manager, on_login, page: ft.Page):
 
     tarjeta = ft.Container(
         content=ft.Column([
-            ft.Icon(ft.Icons.LOCK_PERSON, size=56, color=ft.Colors.BLUE_300),
+            ft.Icon(ft.Icons.LOCK_PERSON, size=56, color=N.BLUE_300),
             ft.Text("INICIAR SESIÓN", size=22, weight=ft.FontWeight.BOLD),
-            ft.Text("Sistema de Gestión", size=12, color=ft.Colors.GREY_400),
+            ft.Text("Sistema de Gestión", size=12, color=N.GREY_400),
             ft.Container(height=8),
             usuario_field,
             clave_field,
+            recordar_cb,
             error_text,
             ft.FilledButton(
                 "INGRESAR", icon=ft.Icons.LOGIN, width=320, height=46,
@@ -108,23 +158,27 @@ def LoginView(db_manager, on_login, page: ft.Page):
             ayuda,
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
         padding=32, border_radius=14, width=400,
-        bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.WHITE),
-        border=ft.Border.all(1, ft.Colors.with_opacity(0.25, ft.Colors.BLUE_GREY_600)),
+        bgcolor=ft.Colors.with_opacity(0.55, N.DEEP),
+        border=ft.Border.all(1.5, ft.Colors.with_opacity(0.7, N.CYAN)),
+        shadow=sombra_neon(N.VIOLET, 40, 0.35),
     )
 
     return ft.Container(
         content=ft.Column([
             ft.Container(
                 content=ft.Column([
-                    ft.Icon(ft.Icons.MENU_BOOK, size=34, color=ft.Colors.WHITE),
-                    ft.Text("LIBRERÍA", size=26, weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.WHITE),
+                    logo_widget(48),
+                    ft.Text(nombre_tienda(db_manager), size=26,
+                            weight=ft.FontWeight.BOLD, color=ft.Colors.WHITE,
+                            text_align=ft.TextAlign.CENTER),
                 ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=4),
-                bgcolor=ft.Colors.BLUE_900, padding=16, border_radius=12,
+                gradient=GRADIENTE_NEON, shadow=sombra_neon(N.CYAN, 30, 0.4),
+                padding=16, border_radius=12,
                 width=400, alignment=ft.Alignment.CENTER),
             ft.Container(height=16),
             tarjeta,
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER,
            alignment=ft.MainAxisAlignment.CENTER, spacing=0, expand=True),
         padding=20, expand=True, alignment=ft.Alignment.CENTER,
+        gradient=GRADIENTE_FONDO,
     )

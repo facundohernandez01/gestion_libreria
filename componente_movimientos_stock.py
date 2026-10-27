@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import flet as ft
+from ui.paleta import N
 
 from ui.helpers import cerrar_dialogo
 
 COLORES_TIPO = {
-    "venta": ft.Colors.RED_400,
-    "ingreso": ft.Colors.GREEN_400,
-    "ajuste": ft.Colors.ORANGE_400,
-    "devolucion": ft.Colors.CYAN_400,
+    "venta": N.RED_400,
+    "ingreso": N.GREEN_400,
+    "ajuste": N.ORANGE_400,
+    "devolucion": N.CYAN_400,
 }
 ETIQUETAS_TIPO = {
     "venta": "Venta",
@@ -76,7 +77,7 @@ def MovimientosStockModal(db_manager, producto: dict, page: ft.Page):
         for m in seleccion:
             fecha = str(m.get("fecha") or "")[:19]
             t = m.get("tipo") or ""
-            color = COLORES_TIPO.get(t, ft.Colors.GREY_400)
+            color = COLORES_TIPO.get(t, N.GREY_400)
             tabla.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text(fecha, size=11)),
                 ft.DataCell(ft.Container(
@@ -89,14 +90,14 @@ def MovimientosStockModal(db_manager, producto: dict, page: ft.Page):
                 ft.DataCell(ft.Text(str(m.get("stock_nuevo") or 0), size=11,
                                     weight=ft.FontWeight.BOLD)),
                 ft.DataCell(ft.Text(m.get("usuario") or "—", size=11,
-                                    color=ft.Colors.CYAN_300)),
+                                    color=N.CYAN_300)),
                 ft.DataCell(ft.Text(_referencia(m), size=11)),
-                ft.DataCell(ft.Text(_detalle(m), size=11, color=ft.Colors.GREY_400)),
+                ft.DataCell(ft.Text(_detalle(m), size=11, color=N.GREY_400)),
             ]))
         if not seleccion:
             tabla.rows.append(ft.DataRow(cells=[
                 ft.DataCell(ft.Text("Sin movimientos para este filtro",
-                                    italic=True, color=ft.Colors.GREY_500, size=11)),
+                                    italic=True, color=N.GREY_500, size=11)),
                 *[ft.DataCell(ft.Text("")) for _ in range(7)],
             ]))
         page.update()
@@ -104,7 +105,7 @@ def MovimientosStockModal(db_manager, producto: dict, page: ft.Page):
     def _card(titulo, valor, color):
         return ft.Container(
             content=ft.Column([
-                ft.Text(titulo, size=10, color=ft.Colors.GREY_400),
+                ft.Text(titulo, size=10, color=N.GREY_400),
                 ft.Text(str(valor), size=18, weight=ft.FontWeight.BOLD, color=color),
             ], spacing=1, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             width=120, padding=8, border_radius=6,
@@ -117,29 +118,29 @@ def MovimientosStockModal(db_manager, producto: dict, page: ft.Page):
     return ft.AlertDialog(
         modal=True,
         title=ft.Row([
-            ft.Icon(ft.Icons.HISTORY, color=ft.Colors.BLUE_400),
+            ft.Icon(ft.Icons.HISTORY, color=N.BLUE_400),
             ft.Column([
                 ft.Text(f"Movimientos — {producto['codigo']}", size=16,
                         weight=ft.FontWeight.BOLD),
                 ft.Text(producto.get("descripcion") or "", size=11,
-                        color=ft.Colors.GREY_500),
+                        color=N.GREY_500),
             ], spacing=0),
         ], spacing=10),
         content=ft.Container(
             content=ft.Column([
                 ft.Row([
                     _card("Stock actual", producto.get("stock_actual", 0),
-                          ft.Colors.BLUE_300),
-                    _card("Ingresos", resumen.get("ingresos", 0), ft.Colors.GREEN_400),
-                    _card("Ventas", resumen.get("ventas", 0), ft.Colors.RED_400),
+                          N.BLUE_300),
+                    _card("Ingresos", resumen.get("ingresos", 0), N.GREEN_400),
+                    _card("Ventas", resumen.get("ventas", 0), N.RED_400),
                     _card("Ajuste neto", resumen.get("ajuste_neto", 0),
-                          ft.Colors.ORANGE_400),
+                          N.ORANGE_400),
                     _card("Devoluciones", resumen.get("devoluciones", 0),
-                          ft.Colors.CYAN_400),
+                          N.CYAN_400),
                 ], spacing=8, wrap=True),
                 ft.Row([filtro], alignment=ft.MainAxisAlignment.END),
                 ft.Container(content=ft.Column([tabla], scroll=ft.ScrollMode.AUTO),
-                             height=330, border=ft.Border.all(1, ft.Colors.BLUE_GREY_700),
+                             height=330, border=ft.Border.all(1, N.BLUE_GREY_700),
                              border_radius=6, padding=8),
             ], spacing=10, scroll=ft.ScrollMode.AUTO),
             width=820, height=470,

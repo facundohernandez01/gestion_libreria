@@ -16,6 +16,7 @@ PERMISOS = [
     ("HISTORIAL_CAJAS", "Historial de cajas"),
     ("REPORTES", "Reportes"),
     ("CONFIGURACION", "Ajustes del sistema"),
+    ("EDITAR_MOVIMIENTOS_CAJA", "Editar/borrar movimientos de caja (solo admin)"),
 ]
 
 CLAVES = [clave for clave, _ in PERMISOS]
@@ -54,3 +55,15 @@ def tiene(permisos: dict, clave: str, es_admin: bool = False) -> bool:
     if es_admin:
         return True
     return bool((permisos or {}).get(clave))
+
+
+def puede_editar_movimiento_caja(permisos, es_admin: bool = False,
+                                 venta: dict | None = None) -> bool:
+    """Solo admins (o rol con permiso) pueden editar/borrar movimientos de caja.
+
+    Las ventas facturadas en ARCA quedan excluidas (no se modifican)."""
+    if venta and (venta.get("numero_factura") or venta.get("cae")):
+        return False
+    if es_admin:
+        return True
+    return bool((permisos or {}).get("EDITAR_MOVIMIENTOS_CAJA"))
