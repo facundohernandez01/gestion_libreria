@@ -12,7 +12,7 @@ Tienda web local para el POS de Gestión Librería/Kiosko. Usa la misma SQLite d
 ## Ejecutar en desarrollo
 
 1. Instalar dependencias del POS y configurar su `.env`/ajustes habituales.
-2. Iniciar el servidor del POS: `python api_server.py --server` (o el comando de servidor usado por la instalación).
+2. Iniciar el servidor del POS con el mecanismo habitual de la aplicación: `python main.py --server`.
 3. Desde `intrashop/`: `npm install` y `npm run dev`.
 4. Abrir `http://localhost:4321`. Para otros dispositivos, usar la IP LAN del equipo que ejecuta Astro y configurar en la tienda la dirección del POS `http://IP-DEL-SERVIDOR:8000` junto con su `API_KEY`.
 
