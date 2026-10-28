@@ -68,9 +68,7 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
                 ft.DataCell(ft.Row([
                     ft.IconButton(icon=ft.Icons.EDIT, icon_color=N.BLUE_400,
                                   tooltip="Editar", on_click=_h(producto)),
-                    ft.IconButton(icon=ft.Icons.HISTORY, icon_color=N.CYAN_400,
-                                  tooltip="Movimientos de stock", on_click=_hist(producto)),
-                ], spacing=0)),
+                    ft.IconButton(icon=ft.Icons.HISTORY, icon_color=N.CYAN_400,\n                                  tooltip="Movimientos de stock", on_click=_hist(producto)),\n                    ft.IconButton(icon=ft.Icons.STORE, icon_color=N.PURPLE_400,\n                                  tooltip="Disponible en IntraShop",\n                                  on_click=lambda _, p=producto: configurar_tienda(p)),\n                ], spacing=0)),
             ]))
         contador_text.value = f"{len(productos)} artículo(s)"
         page.update()
@@ -86,6 +84,11 @@ def GestionArticulosView(db_manager, on_volver, page, permisos=None,
 
     def nuevo_producto(e): _abrir_modal(None)
     def editar_producto(p): _abrir_modal(p)
+
+    def configurar_tienda(p):
+        from componente_tienda_producto import ProductoTiendaModal
+        abrir_dialogo(page, ProductoTiendaModal(db_manager, p, page,
+                                                on_guardado=lambda: cargar_productos()))
 
     def ver_historial(p):
         from componente_movimientos_stock import MovimientosStockModal
