@@ -30,21 +30,32 @@ jobs:
           pip install -r requirements.txt
           pip install flet
 
+      # Paso nuevo: Creamos el archivo de configuración requerido por Flet 1.0+
+      - name: Create flet.yaml configuration
+        shell: pwsh
+        run: |
+          $yaml = @"
+          app:
+            name: "Kiosmico"
+            org: "com.facundohernandez"
+            company: "Facundo Hernandez"
+            copyright: "Copyright (c) 2026 Facundo Hernandez"
+          build:
+            output_dir: "dist"
+            include:
+              - "assets"
+              - "img"
+              - "certificados"
+          "@
+          Set-Content -Path flet.yaml -Value $yaml
+
+      # Comando simplificado: Flet leerá automáticamente el flet.yaml creado arriba
       - name: Build Windows executable
-        run: >
-          flet build windows
-          --product-name "Kiosmico"
-          --org "com.facundohernandez"
-          --company-name "Facundo Hernandez"
-          --copyright "Copyright (c) 2026 Facundo Hernandez"
-          --output-dir dist
-          --include assets
-          --include img
-          --include certificados
+        run: flet build windows
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: kiosmico-windows
-          path: dist/**
+          path: dist/
           if-no-files-found: error
