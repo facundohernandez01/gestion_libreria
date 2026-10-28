@@ -3,7 +3,6 @@ import shutil
 from pathlib import Path
 
 import flet as ft
-from core.settings import settings
 from ui.paleta import N
 from ui.helpers import cerrar_dialogo, snack
 from utils.file_dialogs import pick_file
@@ -92,7 +91,7 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
     dialog = ft.AlertDialog(
         modal=True,
         title=ft.Row([
-            ft.Icon(ft.Icons.STORE, color=N.PURPLE_400),
+            ft.Icon(ft.Icons.STORE, color=N.PURPLE_300),
             ft.Text("PUBLICAR EN INTRASHOP", size=18, weight=ft.FontWeight.BOLD),
         ]),
         content=ft.Container(
