@@ -67,6 +67,17 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware
+from intrashop_api import router as intrashop_router
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_headers=["*", "x-api-key", "content-type"],
+)
+app.include_router(intrashop_router)
+
 
 def _connect() -> sqlite3.Connection:
     c = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
