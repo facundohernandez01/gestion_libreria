@@ -10,6 +10,7 @@ import sqlite3
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, Header, HTTPException
@@ -33,12 +34,16 @@ def _auth(x_api_key: str | None) -> None:
         raise HTTPException(status_code=401, detail="API key inválida")
 
 
+@contextmanager
 def _connect():
     conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
-    return conn
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 
 def _ensure_schema() -> None:
@@ -282,7 +287,7 @@ def iniciar_checkout(body: CheckoutIn):
     if not settings.mp_activo:
         raise HTTPException(503, "Mercado Pago está deshabilitado en la configuración del POS")
     with _jobs_lock:
-        active = any(j.get("status") in {"creating_order", "waiting_payment", "paid"} for j in _jobs.values())
+        active = any(j.get("status") in {"creating_order", "waiting_payment", "paid", "paid_sale_error"} for j in _jobs.values())
         if active:
             raise HTTPException(409, "Ya hay un cobro en curso. Esperá a que finalice.")
         job_id = uuid.uuid4().hex
