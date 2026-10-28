@@ -1,0 +1,193 @@
+---
+import "../styles/global.css";
+const title = "IntraShop · Tu tienda local";
+---
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#f7f8fc" />
+    <title>{title}</title>
+    <meta name="description" content="Tienda local conectada al stock del comercio." />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="IntraShop inicio">
+        <span class="brand-mark">I</span>
+        <span>Intra<span class="brand-accent">Shop</span><small>TIENDA LOCAL</small></span>
+      </a>
+      <div class="header-actions">
+        <span class="local-indicator"><i></i> Red local</span>
+        <button id="cart-toggle" class="cart-button" type="button" aria-label="Abrir carrito">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h2l2.1 10.1a2 2 0 0 0 2 1.6h7.8a2 2 0 0 0 1.9-1.4L21 8H6M10 20a1 1 0 1 0 0-2 1 1 0 0 0 0 2Zm8 0a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z"/></svg>
+          <span>Carrito</span><b id="cart-count">0</b>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-copy">
+          <span class="eyebrow"><span></span> COMPRÁ EN TU COMERCIO</span>
+          <h1>Lo que necesitás,<br /><em>a un paso.</em></h1>
+          <p>Explorá el catálogo disponible y prepará tu pedido desde tu dispositivo.</p>
+          <div class="hero-note"><span class="shield">✓</span> Stock sincronizado con el local</div>
+        </div>
+        <div class="hero-art" aria-hidden="true">
+          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+          <div class="bag"><div class="bag-handle"></div><div class="bag-star">✦</div><div class="bag-line"></div></div>
+          <div class="float-card float-card-one"><span class="float-icon">✓</span><span><b>Compra simple</b><small>En pocos pasos</small></span></div>
+          <div class="float-card float-card-two"><span class="float-icon purple">⌁</span><span><b>Pago por QR</b><small>Mercado Pago</small></span></div>
+        </div>
+      </section>
+
+      <section class="catalog-section">
+        <div class="section-heading">
+          <div><span class="section-kicker">CATÁLOGO</span><h2>Encontrá tus productos</h2><p>Disponibilidad actual del comercio.</p></div>
+          <label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" placeholder="Buscar productos..." autocomplete="off" /></label>
+        </div>
+        <div id="connection-message" class="notice">Conectando con el servidor del local…</div>
+        <div id="catalog" class="product-grid" aria-live="polite"></div>
+        <div id="empty-state" class="empty-state" hidden><div class="empty-symbol">⌕</div><h3>No encontramos productos</h3><p>Probá con otra búsqueda o volvé más tarde.</p></div>
+      </section>
+    </main>
+
+    <footer><span class="footer-brand">IntraShop</span><span>Compras dentro de la red local del comercio.</span><a href="/admin">Administración de tienda ↗</a></footer>
+
+    <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
+    <aside id="cart-drawer" class="cart-drawer" aria-label="Carrito de compras" aria-hidden="true">
+      <div class="drawer-heading"><div><span class="section-kicker">TU PEDIDO</span><h2>Carrito</h2></div><button id="cart-close" class="icon-button" type="button" aria-label="Cerrar carrito">×</button></div>
+      <div id="cart-items" class="cart-items"></div>
+      <div class="cart-bottom"><div class="total-row"><span>Total</span><strong id="cart-total">$0</strong></div><button id="checkout" class="primary-button" type="button" disabled>Continuar al pago <span>→</span></button><p class="secure-note">El pedido se registra una vez confirmado el pago.</p></div>
+    </aside>
+
+    <div id="payment-modal" class="modal-backdrop" hidden>
+      <section class="payment-modal" role="dialog" aria-modal="true" aria-labelledby="payment-title">
+        <button id="payment-close" class="icon-button modal-close" type="button" aria-label="Cerrar">×</button>
+        <div class="payment-icon">⌁</div><span class="section-kicker">PAGO SEGURO</span>
+        <h2 id="payment-title">Pagá con Mercado Pago</h2>
+        <p id="payment-message">Preparando tu cobro…</p>
+        <div id="qr-container" class="qr-container" hidden><img id="payment-qr" alt="Código QR de Mercado Pago" /><span>Escaneá el QR desde la app de Mercado Pago</span></div>
+        <div id="payment-spinner" class="spinner"></div>
+        <div id="payment-result" class="payment-result" hidden></div>
+        <button id="payment-done" class="primary-button" type="button" hidden>Volver a la tienda</button>
+      </section>
+    </div>
+
+    <script>
+      type Product = { id:number; codigo:string; descripcion:string; categoria:string; marca:string; precio_lista:number; stock_actual:number; imagen_url:string };
+      type CartItem = { product:Product; quantity:number };
+      const $ = <T extends HTMLElement>(id:string) => document.getElementById(id) as T;
+      const placeholder = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" rx="24" fill="#f0f2fa"/><rect x="142" y="80" width="116" height="130" rx="16" fill="#e2e5f5"/><path d="M170 80v-8a30 30 0 0 1 60 0v8" fill="none" stroke="#a6acd0" stroke-width="9" stroke-linecap="round"/><path d="M184 145l12 12 25-27" fill="none" stroke="#8d82d9" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>');
+      let products:Product[] = [];
+      let cart:CartItem[] = [];
+      let apiBase = localStorage.getItem("intrashop_api") || "http://localhost:8000";
+      let apiKey = localStorage.getItem("intrashop_key") || "libreria-lan";
+      let polling = false;
+      const money = (value:number) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(value);
+      const api = async (path:string, init:RequestInit={}) => {
+        const response = await fetch(apiBase.replace(/\/$/,"") + path,{...init,headers:{"x-api-key":apiKey,"Content-Type":"application/json",...(init.headers||{})}});
+        const body = await response.json().catch(()=>({detail:"Respuesta inválida del servidor"}));
+        if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación");
+        return body;
+      };
+      function renderProducts(list:Product[]) {
+        $("catalog").innerHTML = list.map(p => `
+          <article class="product-card">
+            <div class="product-image-wrap"><img class="product-image" src="${p.imagen_url ? apiBase.replace(/\/$/,"") + p.imagen_url : placeholder}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${placeholder}'" /><span class="stock-pill">Disponible</span></div>
+            <div class="product-info"><span class="product-category">${escapeHtml(p.categoria || p.marca || "Del comercio")}</span><h3>${escapeHtml(p.descripcion)}</h3><div class="product-bottom"><strong>${money(p.precio_lista)}</strong><button class="add-button" type="button" data-add="${p.id}" aria-label="Agregar ${escapeHtml(p.descripcion)}">+</button></div></div>
+          </article>`).join("");
+        $("empty-state").hidden = list.length > 0;
+      }
+      function escapeHtml(value:string) { return value.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c] || c)); }
+      async function loadProducts(term="") {
+        $("connection-message").textContent = "Conectando con el servidor del local…";
+        try {
+          products = await api("/tienda/productos?termino="+encodeURIComponent(term));
+          renderProducts(products);
+          $("connection-message").classList.add("success");
+          $("connection-message").textContent = "Catálogo sincronizado · "+products.length+" productos disponibles";
+        } catch (error) {
+          $("catalog").innerHTML = "";
+          $("connection-message").classList.remove("success");
+          $("connection-message").innerHTML = "No se pudo conectar con el POS. Revisá la dirección del servidor y la API key. <button id=\"connection-config\" class=\"text-button\">Configurar conexión</button>";
+          $("connection-config")?.addEventListener("click", configureConnection);
+          $("empty-state").hidden = true;
+        }
+      }
+      function configureConnection() {
+        const base = prompt("Dirección del servidor POS (por ejemplo http://192.168.1.10:8000)",apiBase);
+        if (base === null) return;
+        const key = prompt("API key configurada en el POS",apiKey);
+        if (key === null) return;
+        apiBase = base.trim().replace(/\/$/,""); apiKey = key.trim();
+        localStorage.setItem("intrashop_api",apiBase); localStorage.setItem("intrashop_key",apiKey);
+        loadProducts($("search").value.trim());
+      }
+      function updateCart() {
+        $("cart-count").textContent = String(cart.reduce((sum,item)=>sum+item.quantity,0));
+        $("cart-items").innerHTML = cart.length ? cart.map(({product:p,quantity:q})=>`
+          <div class="cart-item"><img src="${p.imagen_url ? apiBase.replace(/\/$/,"")+p.imagen_url : placeholder}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><strong>${money(p.precio_lista*q)}</strong></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
+        $("cart-total").textContent = money(cart.reduce((sum,item)=>sum+item.product.precio_lista*item.quantity,0));
+        $("checkout").toggleAttribute("disabled",cart.length===0);
+      }
+      function addProduct(id:number, delta=1) {
+        const product = products.find(p=>p.id===id) || cart.find(i=>i.product.id===id)?.product;
+        if (!product) return;
+        const existing = cart.find(i=>i.product.id===id);
+        if (existing) existing.quantity += delta;
+        else if (delta>0) cart.push({product,quantity:delta});
+        cart = cart.filter(i=>i.quantity>0);
+        updateCart();
+      }
+      function openCart(open:boolean) {
+        $("cart-drawer").classList.toggle("open",open);
+        $("cart-backdrop").hidden = !open;
+        $("cart-drawer").setAttribute("aria-hidden",String(!open));
+      }
+      function openPayment() { $("payment-modal").hidden = false; $("payment-spinner").hidden=false; $("payment-result").hidden=true; $("payment-done").hidden=true; $("qr-container").hidden=true; $("payment-message").textContent="Preparando tu cobro…"; }
+      async function startCheckout() {
+        openCart(false); openPayment();
+        $("payment-message").textContent = "Generando el cobro con Mercado Pago…";
+        try {
+          const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
+          $("payment-message").textContent = "Pedido por "+money(result.total)+". Esperando confirmación…";
+          pollCheckout(result.checkout_id);
+        } catch(error) {
+          showPaymentResult((error as Error).message,false);
+        }
+      }
+      async function pollCheckout(id:string) {
+        if (polling) return; polling=true;
+        try {
+          while (!$("payment-modal").hidden) {
+            const state = await api("/tienda/checkout/"+encodeURIComponent(id));
+            $("payment-message").textContent = state.message || "Procesando pago…";
+            if (state.qr_url) { $("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
+            if (["completed","error","expired","paid_sale_error"].includes(state.status)) {
+              if (state.status==="completed") { cart=[]; updateCart(); await loadProducts($("search").value.trim()); showPaymentResult("Pago confirmado. Tu venta quedó registrada en el comercio.",true); }
+              else showPaymentResult(state.message || "No se pudo completar el pago.",false);
+              break;
+            }
+            await new Promise(resolve=>setTimeout(resolve,2000));
+          }
+        } catch(error) { showPaymentResult((error as Error).message,false); }
+        finally { polling=false; }
+      }
+      function showPaymentResult(message:string,success:boolean) {
+        $("payment-spinner").hidden=true; $("payment-result").hidden=false; $("payment-result").className="payment-result "+(success?"success":"error"); $("payment-result").textContent=message; $("payment-done").hidden=false;
+      }
+      $("catalog").addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLElement>("[data-add]");if(button){addProduct(Number(button.dataset.add));openCart(true);}});
+      $("cart-items").addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLElement>("[data-qty]");if(button)addProduct(Number(button.dataset.qty),Number(button.dataset.delta));});
+      $("cart-toggle").addEventListener("click",()=>openCart(true));
+      $("cart-close").addEventListener("click",()=>openCart(false));
+      $("drawer-backdrop").addEventListener("click",()=>openCart(false));
+      $("checkout").addEventListener("click",startCheckout);
+      $("payment-close").addEventListener("click",()=>{if(!polling)$("payment-modal").hidden=true;});
+      $("payment-done").addEventListener("click",()=>{$("payment-modal").hidden=true;});
+      $("search").addEventListener("input",()=>{window.clearTimeout((window as any).__searchTimer);(window as any).__searchTimer=window.setTimeout(()=>loadProducts($("search").value.trim()),250);});
+      updateCart(); loadProducts();
+    </script>
+  </body>
+</html>
