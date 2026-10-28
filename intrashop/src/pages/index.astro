@@ -143,7 +143,7 @@ const title = "IntraShop · Tu tienda local";
       }
       function openCart(open:boolean) {
         $("cart-drawer").classList.toggle("open",open);
-        $("cart-backdrop").hidden = !open;
+        $("drawer-backdrop").hidden = !open;
         $("cart-drawer").setAttribute("aria-hidden",String(!open));
       }
       function openPayment() { $("payment-modal").hidden = false; $("payment-spinner").hidden=false; $("payment-result").hidden=true; $("payment-done").hidden=true; $("qr-container").hidden=true; $("payment-message").textContent="Preparando tu cobro…"; }
