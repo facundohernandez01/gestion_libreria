@@ -9,6 +9,12 @@ on:
 jobs:
   build-windows:
     runs-on: windows-latest
+
+    env:
+      PYTHONIOENCODING: utf-8
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PYTHONUTF8: "1"
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -21,20 +27,23 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.3"
+          flutter-version: "3.44.8"
           channel: "stable"
 
-      - name: Configure Flutter Path for Windows
+      - name: Configure Flutter env for Windows
         shell: pwsh
         run: |
+          $env:FLUTTER_BIN_PATH = "$env:FLUTTER_ROOT\bin"
+          $env:FLUTTER_SDK_PATH = "$env:FLUTTER_ROOT"
           "FLUTTER_BIN_PATH=$env:FLUTTER_ROOT\bin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "FLUTTER_SDK_PATH=$env:FLUTTER_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Install dependencies
+        shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-          pip install flet
+          python -m pip install -r requirements.txt
+          python -m pip install flet
 
       - name: Create flet.yaml configuration
         shell: pwsh
@@ -59,9 +68,18 @@ jobs:
       - name: Build Windows executable
         shell: pwsh
         run: |
-          $env:PYTHONIOENCODING = "utf-8"
           $env:PATH = "$env:FLUTTER_ROOT\bin;$env:PATH"
-          flet build windows
+
+          Write-Host "Flutter root: $env:FLUTTER_ROOT"
+          Write-Host "PATH now includes Flutter bin"
+
+          # Responde automáticamente si Flet pregunta si desea instalar Flutter.
+          # Esto evita el EOFError por input() en GitHub Actions.
+          echo y | flet build windows
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "flet build windows failed with exit code $LASTEXITCODE"
+          }
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
