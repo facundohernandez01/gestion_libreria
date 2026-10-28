@@ -10,7 +10,7 @@ jobs:
   build-windows:
     runs-on: windows-latest
     steps:
-      - name: Checkout
+      - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Setup Python
@@ -24,13 +24,18 @@ jobs:
           flutter-version: "3.24.0"
           channel: "stable"
 
+      - name: Configure Flutter Path for Windows
+        shell: pwsh
+        run: |
+          echo "FLUTTER_BIN_PATH=$env:FLUTTER_ROOT\bin" >> $env:GITHUB_ENV
+          echo "FLUTTER_SDK_PATH=$env:FLUTTER_ROOT" >> $env:GITHUB_ENV
+
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install flet
 
-      # Paso nuevo: Creamos el archivo de configuración requerido por Flet 1.0+
       - name: Create flet.yaml configuration
         shell: pwsh
         run: |
@@ -42,6 +47,7 @@ jobs:
             copyright: "Copyright (c) 2026 Facundo Hernandez"
           build:
             output_dir: "dist"
+            flutter_path: "${{ env.FLUTTER_SDK_PATH }}"
             include:
               - "assets"
               - "img"
@@ -49,10 +55,15 @@ jobs:
           "@
           Set-Content -Path flet.yaml -Value $yaml
 
-      # Comando simplificado: Flet leerá automáticamente el flet.yaml creado arriba
+      # Ejecutamos el build inyectando la variable de codificación para evitar errores de consola de Rich/Flet
       - name: Build Windows executable
-        run: flet build windows
+        shell: pwsh
+        run: |
+          $env:PYTHONIOENCODING = "utf-8"
+          $env:PATH = "${{ env.FLUTTER_BIN_PATH }};" + $env:PATH
+          flet build windows
 
+      # Sube toda la carpeta dist generada como un artefacto descargable
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
