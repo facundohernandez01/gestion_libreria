@@ -21,7 +21,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: "3.24.3" # Ajusta a una versión real de Flutter compatible (ej: 3.24.3)
+          flutter-version: "3.24.3"
           channel: "stable"
 
       - name: Configure Flutter Path for Windows
@@ -39,7 +39,7 @@ jobs:
       - name: Create flet.yaml configuration
         shell: pwsh
         run: |
-          $flutterPath = $env:FLUTTER_ROOT
+          $flutterPath = $env:FLUTTER_ROOT -replace '\\', '/'
           $yamlContent = @"
           app:
             name: "Kiosmico"
@@ -61,7 +61,7 @@ jobs:
         run: |
           $env:PYTHONIOENCODING = "utf-8"
           $env:PATH = "$env:FLUTTER_ROOT\bin;$env:PATH"
-          flet build windows
+          flet build windows --skip-flutter-check
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
