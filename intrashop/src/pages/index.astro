@@ -123,7 +123,7 @@ const title = "IntraShop · Tu tienda local";
         if (key === null) return;
         apiBase = base.trim().replace(/\/$/,""); apiKey = key.trim();
         localStorage.setItem("intrashop_api",apiBase); localStorage.setItem("intrashop_key",apiKey);
-        loadProducts($("search").value.trim());
+        loadProducts($<HTMLInputElement>("search").value.trim());
       }
       function updateCart() {
         $("cart-count").textContent = String(cart.reduce((sum,item)=>sum+item.quantity,0));
@@ -164,9 +164,9 @@ const title = "IntraShop · Tu tienda local";
           while (!$("payment-modal").hidden) {
             const state = await api("/tienda/checkout/"+encodeURIComponent(id));
             $("payment-message").textContent = state.message || "Procesando pago…";
-            if (state.qr_url) { $("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
+            if (state.qr_url) { $<HTMLImageElement>("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
             if (["completed","error","expired","paid_sale_error"].includes(state.status)) {
-              if (state.status==="completed") { cart=[]; updateCart(); await loadProducts($("search").value.trim()); showPaymentResult("Pago confirmado. Tu venta quedó registrada en el comercio.",true); }
+              if (state.status==="completed") { cart=[]; updateCart(); await loadProducts($<HTMLInputElement>("search").value.trim()); showPaymentResult("Pago confirmado. Tu venta quedó registrada en el comercio.",true); }
               else showPaymentResult(state.message || "No se pudo completar el pago.",false);
               break;
             }
@@ -186,7 +186,7 @@ const title = "IntraShop · Tu tienda local";
       $("checkout").addEventListener("click",startCheckout);
       $("payment-close").addEventListener("click",()=>{if(!polling)$("payment-modal").hidden=true;});
       $("payment-done").addEventListener("click",()=>{$("payment-modal").hidden=true;});
-      $("search").addEventListener("input",()=>{window.clearTimeout((window as any).__searchTimer);(window as any).__searchTimer=window.setTimeout(()=>loadProducts($("search").value.trim()),250);});
+      $<HTMLInputElement>("search").addEventListener("input",()=>{window.clearTimeout((window as any).__searchTimer);(window as any).__searchTimer=window.setTimeout(()=>loadProducts($<HTMLInputElement>("search").value.trim()),250);});
       updateCart(); loadProducts();
     </script>
   </body>
