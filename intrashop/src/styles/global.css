@@ -26,3 +26,26 @@
 .cancel-button:disabled{opacity:.55}
 .payment-modal .primary-button{width:100%;justify-content:center}
 @media(max-width:680px){.category-filters{gap:7px;margin-bottom:16px}.category-chip{padding:8px 12px;font-size:11px}.payment-modal{padding:24px 18px}.payment-order{padding:14px}.qr-container img{width:170px;height:170px}}
+
+/* Brand palette: midnight blue, electric cyan and violet */
+:root{--ink:#101b3c;--muted:#737f9d;--purple:#7653f6;--line:#e5eaf5;--surface:#fff}
+.topbar{background:#071638;border-bottom:1px solid #19366b;color:#fff}
+.brand{color:#fff;font-family:Inter,"Segoe UI",sans-serif}
+.brand-mark{background:linear-gradient(140deg,#08d9f5 0%,#1769ff 48%,#a72cff 100%);box-shadow:0 0 24px #1678ff55}
+.brand-accent{background:linear-gradient(100deg,#13d9f5,#a74bff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.brand small{color:#8ca2d5}
+.local-indicator{color:#b5c7eb}
+.cart-button{background:#0c204a;border-color:#24457e;color:#f5f8ff}
+.cart-button b{background:linear-gradient(135deg,#00d9f5,#a846ff);color:#fff}
+.hero{background:radial-gradient(ellipse at 78% 40%,#153d91 0%,transparent 43%),linear-gradient(115deg,#061538 0%,#09245a 57%,#10164a 100%);border:1px solid #1d4c99;box-shadow:0 24px 55px #06153820}
+.hero h1{color:#fff}.hero h1 em{background:linear-gradient(100deg,#0de1f5,#a74cff);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero-copy>p{color:#b7c7e8}.hero-note{color:#c8d8f5}.shield{background:#103d74;color:#1de1f4}
+.eyebrow,.section-kicker{color:#6f7bf5}.eyebrow span{background:#12d9f5;box-shadow:0 0 0 4px #12d9f526}
+.orbit-one{border-color:#167bd8}.orbit-two{border-color:#7047d4}
+.bag{background:linear-gradient(145deg,#08dff4 0%,#1268ff 48%,#b52aff 100%);box-shadow:0 28px 45px #060d2c88,0 0 40px #2d6bff66}
+.bag-handle{border-color:#13bff6}.float-card{background:#0c2351ed;border-color:#24539a;color:#fff;box-shadow:0 12px 32px #020b2466}.float-card small{color:#a9bee9}
+.float-icon{background:#0e4c71;color:#22e2f6}.float-icon.purple{background:#3c236e;color:#d0a1ff}
+.add-button{background:linear-gradient(120deg,#0878ff,#7152f5);box-shadow:0 5px 14px #275df526}
+.primary-button{background:linear-gradient(110deg,#0878ff,#6550f5);box-shadow:0 8px 22px #275df52c}
+.footer-brand{color:#5b54e9}
+@media(max-width:760px){.hero{background:radial-gradient(ellipse at 80% 80%,#153d91 0%,transparent 45%),linear-gradient(115deg,#061538,#10164a)}}
