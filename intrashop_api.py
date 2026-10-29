@@ -27,6 +27,7 @@ MEDIA_DIR = Path(DB_PATH).resolve().parent / "intrashop_media"
 _jobs: dict[str, dict] = {}
 _jobs_lock = threading.RLock()
 _checkout_lock = threading.Lock()
+_cancel_events: dict[str, threading.Event] = {}
 
 
 def _auth(x_api_key: str | None) -> None:
@@ -192,7 +193,16 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 _jobs[job_id]["status"] = "waiting_payment"
                 _jobs[job_id]["message"] = "Escaneá el QR del local para pagar"
                 _jobs[job_id]["qr_url"] = settings.mp_qr_url or ""
-            paid = mp_service.verificar_estado()
+            cancel_event = _cancel_events[job_id]
+            paid = mp_service.verificar_estado(cancelar=cancel_event.is_set)
+            if cancel_event.is_set():
+                try:
+                    mp_service.cancelar_orden()
+                except Exception:
+                    logger.exception("No se pudo cerrar la orden QR cancelada")
+                with _jobs_lock:
+                    _jobs[job_id].update(status="cancelled", message="Pedido cancelado. No se registró ninguna venta.")
+                return
             if not paid:
                 with _jobs_lock:
                     _jobs[job_id].update(status="expired", message="No se confirmó el pago. Verificá Mercado Pago antes de volver a intentar.")
@@ -203,7 +213,10 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
     except Exception as exc:
         logger.exception("Checkout IntraShop fallido")
         with _jobs_lock:
-            _jobs[job_id].update(status="error", message=str(exc))
+            if _cancel_events.get(job_id) and _cancel_events[job_id].is_set():
+                _jobs[job_id].update(status="cancelled", message="Pedido cancelado.")
+            else:
+                _jobs[job_id].update(status="error", message=str(exc))
 
 
 @router.get("/health")
@@ -292,9 +305,25 @@ def iniciar_checkout(body: CheckoutIn):
             raise HTTPException(409, "Ya hay un cobro en curso. Esperá a que finalice.")
         job_id = uuid.uuid4().hex
         _jobs[job_id] = {"status": "queued", "message": "Preparando el cobro", "total": total,
-                         "created_at": time.time(), "sale_done": False}
+                         "items": cart, "created_at": time.time(), "sale_done": False}
+        _cancel_events[job_id] = threading.Event()
     threading.Thread(target=_run_checkout, args=(job_id, cart, total), daemon=True).start()
     return {"checkout_id": job_id, "status": "queued", "total": total}
+
+
+@router.post("/checkout/{checkout_id}/cancel")
+def cancelar_checkout(checkout_id: str):
+    with _jobs_lock:
+        job = _jobs.get(checkout_id)
+        if not job:
+            raise HTTPException(404, "Checkout no encontrado o servidor reiniciado")
+        if job.get("status") in {"completed", "paid", "paid_sale_error"}:
+            raise HTTPException(409, "El pago ya fue confirmado; no se puede cancelar desde la tienda.")
+        if job.get("status") in {"cancelled", "expired", "error"}:
+            return {"ok": True, "status": job["status"]}
+        _cancel_events.setdefault(checkout_id, threading.Event()).set()
+        job.update(status="cancelling", message="Cancelando el pedido y cerrando el QR…")
+    return {"ok": True, "status": "cancelling"}
 
 
 @router.get("/checkout/{checkout_id}")
