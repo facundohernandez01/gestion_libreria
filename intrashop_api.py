@@ -308,7 +308,7 @@ def iniciar_checkout(body: CheckoutIn):
                          "items": cart, "created_at": time.time(), "sale_done": False}
         _cancel_events[job_id] = threading.Event()
     threading.Thread(target=_run_checkout, args=(job_id, cart, total), daemon=True).start()
-    return {"checkout_id": job_id, "status": "queued", "total": total}
+    return {"checkout_id": job_id, "status": "queued", "total": total, "items": cart}
 
 
 @router.post("/checkout/{checkout_id}/cancel")
