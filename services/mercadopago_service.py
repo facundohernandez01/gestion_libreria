@@ -171,6 +171,23 @@ class MercadoPagoService:
         self._log("⏰ Tiempo agotado. Orden sigue abierta.", cb)
         return False
 
+    def cancelar_orden(self) -> bool:
+        """Solicita a Mercado Pago cerrar la orden QR activa, si la API lo permite."""
+        token, uid, store_ext, pos_ext = self.credenciales()
+        if not (token and uid and store_ext and pos_ext):
+            return False
+        from core.settings import settings
+        url = f"{MP_BASE}/instore/qr/seller/collectors/{uid}/stores/{store_ext}/pos/{pos_ext}/orders"
+        try:
+            resp = requests.delete(url, headers=self._headers(token), timeout=settings.mp_timeout_seg)
+            if resp.status_code in (200, 202, 204, 404):
+                return True
+            self._log(f"⚠️ No se pudo cerrar la orden QR ({resp.status_code}): {resp.text[:200]}")
+            return False
+        except requests.RequestException as exc:
+            self._log(f"⚠️ Error de red al cerrar la orden QR: {exc}")
+            return False
+
     def consultar_ultimo_pago(self, cb: Optional[Callable[[str], None]] = None) -> bool:
         token, _, _, _ = self.credenciales()
         if not self._ultima_referencia:
