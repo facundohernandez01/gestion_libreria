@@ -119,10 +119,15 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
         job = _jobs.get(job_id)
         if not job or job.get("sale_done") or job.get("status") != "paid":
             return
-        job["sale_done"] = True
+        # El estado definitivo se escribe solo después del commit.
     try:
         with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
+            already = conn.execute("SELECT venta_id FROM intrashop_checkouts WHERE id=? AND venta_id IS NOT NULL", (job_id,)).fetchone()
+            if already:
+                with _jobs_lock:
+                    _jobs[job_id].update(status="completed", venta_id=already["venta_id"], sale_done=True)
+                return
             caja = conn.execute("SELECT id FROM cajas WHERE estado='abierta' ORDER BY id DESC LIMIT 1").fetchone()
             if not caja:
                 raise RuntimeError("No hay una caja abierta. Abrí la caja en el POS antes de cobrar.")
@@ -157,12 +162,17 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
             from intrashop_entregas import ensure_schema, register_paid_sale
             ensure_schema(conn)
             register_paid_sale(conn, venta_id, job_id, job.get("totem_id"), job.get("totem_nombre"))
+            checkout_store.set_status(conn, job_id, "completed", venta_id)
             conn.commit()
         _save_internal_receipt(venta_id, cart, total, job_id)
         with _jobs_lock:
-            _jobs[job_id].update(status="completed", venta_id=venta_id, total=total, message="Pago confirmado y venta registrada")
+            _jobs[job_id].update(status="completed", sale_done=True, venta_id=venta_id, total=total, message="Pago confirmado y venta registrada")
     except Exception as exc:
         logger.exception("No se pudo registrar la venta de IntraShop tras el pago")
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            checkout_store.set_status(conn, job_id, "uncertain")
+            conn.commit()
         with _jobs_lock:
             _jobs[job_id].update(status="paid_sale_error", message=str(exc))
 
