@@ -169,7 +169,7 @@ class MercadoPagoService:
                     time.sleep(intervalo)
                     continue
                 # Nunca atribuir el pago de otro checkout al QR actual.
-                if reference and data.get("external_reference") != reference:
+                if reference and data.get("external_reference") not in (None, reference):
                     self._log("Referencia de pago distinta; ignorando orden del QR.", cb)
                     time.sleep(intervalo)
                     continue
@@ -177,6 +177,10 @@ class MercadoPagoService:
                 pagado = float(data.get("paid_amount") or 0)
                 total = float(data.get("total_amount") or 0)
                 if estado == "paid" or (total > 0 and pagado >= total):
+                    if reference and not data.get("external_reference"):
+                        if not self.consultar_ultimo_pago(reference=reference):
+                            time.sleep(intervalo)
+                            continue
                     self._log("✅ ¡Pago recibido correctamente!", cb)
                     for p in data.get("payments", [])[:1]:
                         self._log(f"💳 Payment ID: {p.get('id')} | Estado: {p.get('status')}", cb)
