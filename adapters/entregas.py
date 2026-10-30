@@ -51,6 +51,18 @@ class EntregasAdapter:
             return list_orders(estado=estado, operador="POS local")
         return self._request("GET", "", params={"estado": estado})
 
+    def tomar(self, entrega_id, operador):
+        if self.modo == "local":
+            from intrashop_entregas import tomar_comanda
+            return tomar_comanda(int(entrega_id), operador=operador)
+        return self._request("POST", f"/{int(entrega_id)}/tomar")
+
+    def liberar(self, entrega_id, operador):
+        if self.modo == "local":
+            from intrashop_entregas import liberar_comanda
+            return liberar_comanda(int(entrega_id), operador=operador)
+        return self._request("POST", f"/{int(entrega_id)}/liberar")
+
     def cambiar(self, entrega_id, estado, operador):
         if self.modo == "local":
             from intrashop_entregas import update_order, EntregaUpdate
