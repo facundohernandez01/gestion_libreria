@@ -1062,7 +1062,9 @@ def ConfigModal(page: ft.Page):
 
     alto_pantalla = int(getattr(page, "height", 0) or
                         getattr(getattr(page, "window", None), "height", 0) or 900)
-    alto_tabs = max(200, min(460, alto_pantalla - 260))
+    # Adaptar el contenido a la pantalla; evitar el antiguo tope fijo de 460 px.
+    alto_dialogo = max(360, min(900, alto_pantalla - 64))
+    alto_tabs = max(220, alto_dialogo - 190)
     contenedor_tabs = ft.Container(
         content=ft.Column([contenidos[0]], expand=True),
         height=alto_tabs,
@@ -1076,8 +1078,12 @@ def ConfigModal(page: ft.Page):
             ft.Text("Ajustes", size=20, weight=ft.FontWeight.BOLD),
         ], spacing=8),
         content=ft.Container(
-            content=ft.Column([tabs_row, contenedor_tabs, seccion_resultado], spacing=10),
-            width=min(1040, max(360, int(getattr(page, "width", 0) or 1200) - 40)),
+            content=ft.Column(
+                [tabs_row, contenedor_tabs, seccion_resultado],
+                spacing=10, tight=True,
+            ),
+            height=alto_dialogo - 115,
+            width=min(1040, max(360, int(getattr(page, "width", 0) or 1200) - 64)),
         ),
         actions=[
             ft.TextButton("Cancelar", on_click=lambda _: cerrar_dialogo(page)),
