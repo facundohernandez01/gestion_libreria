@@ -342,6 +342,8 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         def cambiar_pestana(entregas):
             ventas_container.visible = not entregas
             tablero_entregas.visible = entregas
+            if not entregas:
+                actualizar_ventas()
             page.update()
         ventas_header.content.controls.append(
             ft.TextButton("Ventas de hoy", on_click=lambda e: cambiar_pestana(False)))
