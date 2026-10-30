@@ -63,6 +63,8 @@ def _product(row: sqlite3.Row) -> dict:
     p = dict(row)
     p["disponible_tienda"] = bool(p.get("disponible_tienda", 0))
     p["imagen_url"] = f"/tienda/productos/{p['id']}/imagen" if p.get("imagen_tienda") else ""
+    if p.get("imagen_tienda", "").startswith("https://"):
+        p["imagen_url"] = p["imagen_tienda"]
     p.pop("imagen_tienda", None)
     return p
 
@@ -71,6 +73,7 @@ class ProductStoreUpdate(BaseModel):
     disponible: bool
     imagen_base64: str | None = None
     imagen_nombre: str = "producto.jpg"
+    imagen_url: str | None = None
 
 
 class CartItem(BaseModel):
@@ -248,6 +251,8 @@ def imagen_producto(producto_id: int):
         row = conn.execute("SELECT imagen_tienda FROM productos WHERE id=? AND disponible_tienda=1", (producto_id,)).fetchone()
     if not row or not row["imagen_tienda"]:
         raise HTTPException(404, "El producto no tiene imagen")
+    if row["imagen_tienda"].startswith("https://"):
+        raise HTTPException(404, "La imagen se sirve desde su URL HTTPS externa")
     path = Path(row["imagen_tienda"]).resolve()
     if not path.is_file() or MEDIA_DIR.resolve() not in path.parents:
         raise HTTPException(404, "Imagen no encontrada")
@@ -259,6 +264,12 @@ def actualizar_producto_tienda(producto_id: int, body: ProductStoreUpdate, x_api
     _auth(x_api_key)
     _ensure_schema()
     image_path = ""
+    if body.imagen_url:
+        from urllib.parse import urlparse
+        parsed = urlparse(body.imagen_url.strip())
+        if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+            raise HTTPException(400, "Usá una URL pública HTTPS válida")
+        image_path = body.imagen_url.strip()
     if body.imagen_base64:
         try:
             raw = body.imagen_base64.split(",", 1)[-1]
