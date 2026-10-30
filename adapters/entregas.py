@@ -39,6 +39,12 @@ class EntregasAdapter:
         response.raise_for_status()
         return response.json()
 
+    def totems(self):
+        if self.modo == "local":
+            from intrashop_entregas import list_totems
+            return list_totems(operador="POS local")
+        return self._request("GET", "/totems")
+
     def listar(self, estado=""):
         if self.modo == "local":
             from intrashop_entregas import list_orders
