@@ -10,7 +10,7 @@ import time
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 from database_manager import DatabaseManager
-from core.permisos import tiene
+from core.permisos import tiene, normalizar
 
 router = APIRouter(prefix="/pos/auth", tags=["Sesiones POS"])
 _sessions = {}
@@ -57,7 +57,7 @@ def require_delivery(authorization: str | None = Header(default=None)):
         """, (session[0],)).fetchone()
     if not row or not row["activo"]:
         raise HTTPException(403, "Usuario inactivo o eliminado")
-    if not tiene(row["permisos"], "ENTREGAS_INTRASHOP", bool(row["es_admin"])):
+    if not tiene(normalizar(row["permisos"]), "ENTREGAS_INTRASHOP", bool(row["es_admin"])):
         raise HTTPException(403, "El rol no permite gestionar entregas")
     return session[0]
 
