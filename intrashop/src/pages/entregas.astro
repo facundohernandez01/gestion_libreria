@@ -36,7 +36,7 @@ $("#active-count").textContent=String(active.length);
 $("#connection").textContent="Conectado · actualizado "+new Date().toLocaleTimeString("es-AR");
 const visible=filter==="activos"?active:data.filter(o=>o.estado==="entregado");
 $("#orders").innerHTML=visible.length?visible.map(o=>{
-const nextState=o.estado==="pendiente"?"preparando":o.estado==="preparando"?"listo":o.estado==="listo"?"entregado":"";
+let nextState=o.estado==="pendiente"?"preparando":o.estado==="preparando"?"listo":o.estado==="listo"?"entregado":"";
 const action=o.estado==="pendiente"?"Iniciar preparación":o.estado==="preparando"?"Marcar listo":o.estado==="listo"?"Confirmar entrega":"";
 if(o.estado!=="entregado"&&!o.tomado_por){nextState="tomar";}
 if(o.tomado_por&&o.tomado_por!==authenticatedUser){nextState="";}
