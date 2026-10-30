@@ -1742,6 +1742,7 @@ class DatabaseManager:
         with self._connect() as conn:
             try:
                 conn.execute("BEGIN IMMEDIATE")
+                __import__("intrashop_checkout_store").ensure_schema(conn)
                 # validar caja abierta
                 cur = conn.execute("SELECT id FROM cajas WHERE id=? AND estado='abierta'", (caja_id,))
                 if not cur.fetchone():
