@@ -73,12 +73,14 @@ from intrashop_api import router as intrashop_router
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
     allow_headers=["*", "x-api-key", "content-type"],
 )
 app.include_router(intrashop_router)
 from intrashop_entregas import router as intrashop_entregas_router
 app.include_router(intrashop_entregas_router)
+from pos_auth import router as pos_auth_router
+app.include_router(pos_auth_router)
 
 
 def _connect() -> sqlite3.Connection:
