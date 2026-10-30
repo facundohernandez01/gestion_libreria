@@ -51,11 +51,12 @@ def panel_entregas(page, operador, puede_configurar=False):
         try:
             rows = adapter.listar()
             totems = adapter.totems()
+            checked = {cb.data: cb.value for cb in opciones_totems.controls}
             opciones_totems.controls.clear()
             for t in totems:
                 opciones_totems.controls.append(ft.Checkbox(
                     label=t["nombre"] + " · " + t["id"][:8],
-                    value=t["id"] in seleccion, data=t["id"], disabled=bool(todos.value)))
+                    value=checked.get(t["id"], t["id"] in seleccion), data=t["id"], disabled=bool(todos.value)))
             filtro_info.value = ("Todos los tótems" if not seleccion else
                 "Atendiendo: " + ", ".join(t["nombre"] for t in totems if t["id"] in seleccion))
             if seleccion:
