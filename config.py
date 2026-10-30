@@ -514,6 +514,8 @@ def ConfigModal(page: ft.Page):
                         fit=ft.BoxFit.CONTAIN)
     pos_dropdown = ft.Dropdown(width=350)
     pos_list: list = []
+    mp_loading = ft.ProgressRing(width=18, height=18, visible=False)
+    mp_load_status = ft.Text("Consultá los POS para restaurar la selección.", size=12)
 
     external_pos_id_saved = settings.mp_external_pos_id or cfg.get("EXTERNAL_POS_ID", "")
     external_store_id_saved = settings.mp_external_store_id or cfg.get("EXTERNAL_STORE_ID", "")
@@ -789,10 +791,12 @@ def ConfigModal(page: ft.Page):
             token_field,
             ft.Row([
                 ft.FilledButton("Obtener POS", icon=ft.Icons.SEARCH, on_click=obtener_pos),
+                mp_loading,
                 pos_dropdown,
                 ft.FilledButton("Seleccionar", icon=ft.Icons.CHECK, on_click=seleccionar_pos),
             ], spacing=8, wrap=True),
-            ft.Text("Los secretos definitivos van en el archivo .env (no en la DB).",
+            mp_load_status,
+            ft.Text("La configuración debe persistir en el servidor POS.",
                     size=11, italic=True, color=N.GREY_500),
             ft.Divider(height=8),
         ], spacing=8),
