@@ -69,6 +69,7 @@ def panel_entregas(page, operador, puede_configurar=False):
                 next_state = {"pendiente": "preparando", "preparando": "listo",
                               "listo": "entregado"}.get(state)
                 controls = [
+                    ft.Text("Origen: " + (order.get("totem_nombre") or "Tótem sin identificar"), size=12, color=N.BLUE_400),
                     ft.Row([
                         ft.Text(f"Pedido #{order['venta_id']}", weight=ft.FontWeight.BOLD, size=16),
                         ft.Text(label, color=N.GREEN_400 if state == "entregado" else N.AMBER_400),
