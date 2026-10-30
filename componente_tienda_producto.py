@@ -31,6 +31,7 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
         size=12, color=N.GREY_400,
     )
     ruta_seleccionada = {"path": ""}
+    url_imagen = ft.TextField(label="URL pública HTTPS (opcional)", hint_text="https://ejemplo.com/producto.jpg", value=row["imagen_tienda"] if row and str(row["imagen_tienda"]).startswith("https://") else "")
 
     async def seleccionar_imagen(e=None):
         ruta = await pick_file(
@@ -60,6 +61,14 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
                 destino_path = MEDIA_DIR / f"{producto_id}-{origen.name}"
                 shutil.copy2(origen, destino_path)
                 destino = str(destino_path.resolve())
+
+            if url_imagen.value and not destino:
+                from urllib.parse import urlparse
+                parsed = urlparse(url_imagen.value.strip())
+                if parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                    snack(page, "La imagen debe tener una URL pública HTTPS válida.", ok=False)
+                    return
+                destino = url_imagen.value.strip()
 
             conn = db_manager.get_connection()
             try:
@@ -105,6 +114,8 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
                 disponible,
                 ft.Text("Foto del catálogo", size=13, weight=ft.FontWeight.BOLD),
                 imagen_actual,
+                url_imagen,
+                ft.Text("Las imágenes por URL requieren Internet en la pantalla de la tienda. Para uso 100% LAN, cargá una foto local.", size=11, color=N.GREY_500),
                 ft.OutlinedButton(
                     "Elegir foto", icon=ft.Icons.UPLOAD_FILE,
                     on_click=seleccionar_imagen,
