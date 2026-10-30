@@ -152,6 +152,40 @@ def list_productos(termino: str = "", campo: str = "descripcion", x_api_key: str
     return [dict(r) for r in rows]
 
 
+@app.get("/cajas/historial")
+def historial_cajas(filtro: str = "", desde: str = "", hasta: str = "",
+                    x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _connect() as conn:
+        where = []
+        params = []
+        if filtro.strip():
+            where.append("(CAST(id AS TEXT) LIKE ? OR strftime('%Y-%m-%d', fecha_apertura) LIKE ?)")
+            params.extend([f"%{filtro.strip()}%", f"%{filtro.strip()}%"])
+        if desde.strip():
+            where.append("date(fecha_apertura) >= date(?)")
+            params.append(desde.strip())
+        if hasta.strip():
+            where.append("date(fecha_apertura) <= date(?)")
+            params.append(hasta.strip())
+        sql = "SELECT * FROM cajas"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY fecha_apertura DESC"
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+@app.get("/cajas/{caja_id}/ventas")
+def ventas_por_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _connect() as conn:
+        rows = conn.execute("""SELECT v.*, COUNT(vi.id) AS items_count FROM ventas v
+            LEFT JOIN venta_items vi ON v.id=vi.venta_id
+            WHERE v.caja_id=? AND v.estado='completada'
+            GROUP BY v.id ORDER BY v.fecha DESC""", (caja_id,)).fetchall()
+        return [dict(row) for row in rows]
+
+
 @app.get("/cajas/abierta")
 def caja_abierta(x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
