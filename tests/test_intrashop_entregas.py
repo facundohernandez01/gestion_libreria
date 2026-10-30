@@ -37,6 +37,10 @@ def test_fulfillment_transitions(database):
             orders = entregas.list_orders(operador="operador1")
             assert len(orders) == 1
             assert orders[0]["items"][0]["cantidad"] == 2
+            entregas.tomar_comanda(orders[0]["id"], operador="operador1")
+            with pytest.raises(HTTPException) as conflict:
+                entregas.tomar_comanda(orders[0]["id"], operador="operador2")
+            assert conflict.value.status_code == 409
             for state in ("preparando", "listo", "entregado"):
                 assert entregas.update_order(orders[0]["id"], entregas.EntregaUpdate(estado=state, operador="operador1"), operador="operador1")["estado"] == state
             with pytest.raises(HTTPException) as exc:
