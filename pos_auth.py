@@ -63,6 +63,17 @@ def require_delivery(authorization: str | None = Header(default=None)):
     return session[0]
 
 
+def require_config(authorization: str | None = Header(default=None)):
+    operador = require_delivery(authorization)
+    with DatabaseManager()._connect() as conn:
+        row = conn.execute("""SELECT r.es_admin, r.permisos FROM usuarios u
+            LEFT JOIN roles r ON r.id=u.rol_id WHERE u.usuario=? COLLATE NOCASE""",
+            (operador,)).fetchone()
+    if not row or not tiene(normalizar(row["permisos"]), "CONFIGURACION", bool(row["es_admin"])):
+        raise HTTPException(403, "Solo administración puede asignar terminales")
+    return operador
+
+
 @router.post("/logout")
 def logout(authorization: str | None = Header(default=None)):
     if authorization and authorization.startswith("Bearer "):
