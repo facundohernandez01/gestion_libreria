@@ -36,6 +36,11 @@ def panel_entregas(page, operador):
                     ], spacing=16),
                     ft.Text(" · ".join(f"{i['cantidad']} × {i['descripcion']}" for i in order["items"]), size=12),
                 ]
+                if state == "pendiente":
+                    controls.append(ft.FilledButton(
+                        "Entregar ahora", icon=ft.Icons.CHECK_CIRCLE,
+                        on_click=lambda e, oid=order["id"]: change(oid, "entregado"),
+                    ))
                 if next_state:
                     controls.append(ft.FilledButton(
                         {"preparando": "Preparar", "listo": "Marcar listo", "entregado": "Confirmar entrega"}[next_state],
