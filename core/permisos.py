@@ -9,6 +9,7 @@ from __future__ import annotations
 PERMISOS = [
     ("CAJA", "Abrir y cerrar caja"),
     ("VENTAS", "Vender / nueva venta"),
+    ("ENTREGAS_INTRASHOP", "Preparar y entregar pedidos IntraShop"),
     ("ARTICULOS", "Gestionar artículos"),
     ("STOCK", "Ingreso y movimientos de stock"),
     ("COMPRAS", "Órdenes de compra y recepción"),
@@ -36,6 +37,13 @@ def permisos_caja() -> dict:
     permisos = permisos_vacios()
     for clave in ("CAJA", "VENTAS", "ARTICULOS", "STOCK"):
         permisos[clave] = True
+    return permisos
+
+
+def permisos_entregas() -> dict:
+    """Perfil de mínimo privilegio para preparación y entrega de pedidos."""
+    permisos = permisos_vacios()
+    permisos["ENTREGAS_INTRASHOP"] = True
     return permisos
 
 
