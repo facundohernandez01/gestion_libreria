@@ -69,6 +69,17 @@ class MercadoPagoService:
                 pos_ext = pos_ext or db.get_config_value("EXTERNAL_POS_ID") or ""
             except Exception:
                 pass
+        # Caja física: resolver la asignación central si existe.
+        try:
+            from core.terminal_identity import terminal_id
+            from adapters.mp_bindings import listar
+            current = terminal_id()
+            assigned = next((x for x in listar() if x["terminal_id"] == current and x["terminal_type"] == "caja"), None)
+            if assigned:
+                pos_ext = assigned["pos_external_id"]
+                store_ext = assigned["store_external_id"]
+        except Exception:
+            pass
         return token, uid, store_ext, pos_ext
 
     def _headers(self, token: str) -> dict:
