@@ -663,6 +663,11 @@ def ConfigModal(page: ft.Page):
                        pos_dropdown.value or external_pos_id_saved,
                        external_store_id_saved or db.get_config_value("EXTERNAL_STORE_ID") or "",
                        qr_image.src or "")
+        try:
+            sincronizar_mp_servidor()
+        except Exception as exc:
+            snack(page, "No se guardó Mercado Pago en el servidor: " + str(exc), ok=False)
+            return
         _guardar_ventas_en_db()
         _guardar_afip_en_db()
         _guardar_red_en_db()
