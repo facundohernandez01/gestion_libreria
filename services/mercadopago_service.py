@@ -126,7 +126,7 @@ class MercadoPagoService:
 
     def verificar_estado(self, cb: Optional[Callable[[str], None]] = None,
                          cancelar: Optional[Callable[[], bool]] = None,
-                         pos_ext: str = "", timeout: int = 0, intervalo: int = 0) -> bool:
+                         pos_ext: str = "", timeout: int = 0, intervalo: int = 0, reference: str = "") -> bool:
         from core.settings import settings
 
         token, uid, _, pos_d = self.credenciales()
@@ -165,7 +165,7 @@ class MercadoPagoService:
                     return True
             elif resp.status_code == 404:
                 self._log("📭 Orden cerrada. Verificando último pago...", cb)
-                return self.consultar_ultimo_pago(cb)
+                return self.consultar_ultimo_pago(cb, reference=reference)
             elif resp.status_code >= 400:
                 self._log(f"⚠️ MP {resp.status_code}: {resp.text[:200]}", cb)
             time.sleep(intervalo)
