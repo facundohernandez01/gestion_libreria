@@ -12,8 +12,6 @@ from core.settings import settings
 
 def _modo_red() -> str:
     modo = os.getenv("MODO_RED", "").strip().lower()
-    if modo in ("servidor", "cliente", "local"):
-        return modo
     try:
         from database_manager import DatabaseManager
 
@@ -22,13 +20,11 @@ def _modo_red() -> str:
             return val.strip().lower()
     except Exception:
         pass
-    return "local"
+    return modo if modo in ("servidor", "cliente", "local") else "local"
 
 
 def _server_url() -> str:
     url = os.getenv("SERVER_URL", "").strip()
-    if url:
-        return url
     try:
         from database_manager import DatabaseManager
 
@@ -37,7 +33,7 @@ def _server_url() -> str:
             return val.strip()
     except Exception:
         pass
-    return settings.server_url or "http://127.0.0.1:8000"
+    return url or settings.server_url or "http://127.0.0.1:8000"
 
 
 def crear_acceso_datos():
