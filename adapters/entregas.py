@@ -9,7 +9,15 @@ from core.settings import settings
 
 class EntregasAdapter:
     def __init__(self, base_url=None, api_key=None, timeout=8):
-        self.base_url = (base_url or settings.server_url).rstrip("/")
+        from core.db_factory import modo_actual, _server_url
+        modo = modo_actual()
+        if base_url:
+            url = base_url
+        elif modo == "cliente":
+            url = _server_url()
+        else:
+            url = "http://127.0.0.1:" + str(settings.api_port)
+        self.base_url = url.rstrip("/")
         self.api_key = api_key if api_key is not None else settings.api_key
         self.timeout = timeout
 
