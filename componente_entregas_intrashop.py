@@ -77,12 +77,21 @@ def panel_entregas(page, operador, puede_configurar=False):
                     ], spacing=16),
                     ft.Text(" · ".join(f"{i['cantidad']} × {i['descripcion']}" for i in order["items"]), size=12),
                 ]
-                if state == "pendiente":
+                owner = order.get("tomado_por")
+                controls.append(ft.Text("Tomada por: " + owner if owner else "Disponible para tomar",
+                    color=N.AMBER_400 if owner and owner != operador else N.GREEN_400, size=12))
+                if not owner:
+                    controls.append(ft.FilledButton("Tomar comanda", icon=ft.Icons.LOCK_OPEN,
+                        on_click=lambda e, oid=order["id"]: claim(oid)))
+                elif owner == operador and state != "entregado":
+                    controls.append(ft.OutlinedButton("Liberar comanda",
+                        on_click=lambda e, oid=order["id"]: release(oid)))
+                if state == "pendiente" and owner == operador:
                     controls.append(ft.FilledButton(
                         "Entregar ahora", icon=ft.Icons.CHECK_CIRCLE,
                         on_click=lambda e, oid=order["id"]: change(oid, "entregado"),
                     ))
-                if next_state:
+                if next_state and owner == operador:
                     controls.append(ft.FilledButton(
                         {"preparando": "Preparar", "listo": "Marcar listo", "entregado": "Confirmar entrega"}[next_state],
                         on_click=lambda e, oid=order["id"], target=next_state: change(oid, target),
@@ -116,6 +125,22 @@ def panel_entregas(page, operador, puede_configurar=False):
         except Exception as exc:
             from ui.helpers import snack
             snack(page, str(exc), ok=False)
+
+    def claim(order_id):
+        try:
+            adapter.tomar(order_id, operador)
+        except Exception as exc:
+            from ui.helpers import snack
+            snack(page, "No se pudo tomar la comanda: " + str(exc), ok=False)
+        refresh()
+
+    def release(order_id):
+        try:
+            adapter.liberar(order_id, operador)
+        except Exception as exc:
+            from ui.helpers import snack
+            snack(page, str(exc), ok=False)
+        refresh()
 
     filtro.on_change = refresh
     def cambiar_todos(e):
