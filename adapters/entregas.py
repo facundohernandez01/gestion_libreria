@@ -31,9 +31,10 @@ class EntregasAdapter:
         self.timeout = timeout
 
     def _request(self, method, path, **kwargs):
+        from core.terminal_identity import terminal_id
         response = httpx.request(
             method, self.base_url + "/tienda/admin/entregas" + path,
-            headers={"Authorization": "Bearer " + (_session_token or "")},
+            headers={"Authorization": "Bearer " + (_session_token or ""), "X-Terminal-Id": terminal_id()},
             timeout=self.timeout, **kwargs,
         )
         response.raise_for_status()
@@ -54,18 +55,18 @@ class EntregasAdapter:
     def tomar(self, entrega_id, operador):
         if self.modo == "local":
             from intrashop_entregas import tomar_comanda
-            return tomar_comanda(int(entrega_id), operador=operador)
+            return tomar_comanda(int(entrega_id), operador=operador, x_terminal_id=__import__("core.terminal_identity", fromlist=["terminal_id"]).terminal_id())
         return self._request("POST", f"/{int(entrega_id)}/tomar")
 
     def liberar(self, entrega_id, operador):
         if self.modo == "local":
             from intrashop_entregas import liberar_comanda
-            return liberar_comanda(int(entrega_id), operador=operador)
+            return liberar_comanda(int(entrega_id), operador=operador, x_terminal_id=__import__("core.terminal_identity", fromlist=["terminal_id"]).terminal_id())
         return self._request("POST", f"/{int(entrega_id)}/liberar")
 
     def cambiar(self, entrega_id, estado, operador):
         if self.modo == "local":
             from intrashop_entregas import update_order, EntregaUpdate
-            return update_order(int(entrega_id), EntregaUpdate(estado=estado, operador=operador), operador=operador)
+            return update_order(int(entrega_id), EntregaUpdate(estado=estado, operador=operador), operador=operador, x_terminal_id=__import__("core.terminal_identity", fromlist=["terminal_id"]).terminal_id())
         return self._request("PATCH", f"/{int(entrega_id)}",
                              json={"estado": estado, "operador": operador})
