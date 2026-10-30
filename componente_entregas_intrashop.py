@@ -12,6 +12,10 @@ def panel_entregas(page, operador):
     adapter = EntregasAdapter()
     lista = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
     contador = ft.Text("Pedidos pendientes", size=17, weight=ft.FontWeight.BOLD)
+    conexion = ft.Container(
+        content=ft.Text("● Comprobando conexión con el servidor / tótem…", color=N.AMBER_400, size=12),
+        padding=12, border_radius=10, bgcolor=N.GREY_800,
+    )
     filtro = ft.Dropdown(label="Estado", value="activos", width=180, options=[
         ft.dropdown.Option("activos", "Activos"),
         ft.dropdown.Option("entregado", "Entregados"),
@@ -20,6 +24,8 @@ def panel_entregas(page, operador):
     def refresh(_=None):
         try:
             rows = adapter.listar()
+            conexion.content.value = "● Conectado al servidor POS · " + adapter.base_url
+            conexion.content.color = N.GREEN_400
             rows = [o for o in rows if (o["estado"] == "entregado") == (filtro.value == "entregado")]
             lista.controls.clear()
             for order in rows:
@@ -55,7 +61,17 @@ def panel_entregas(page, operador):
             if not rows:
                 lista.controls.append(ft.Text("No hay pedidos para mostrar.", size=14))
         except Exception as exc:
-            lista.controls = [ft.Text(f"No se pudieron consultar las comandas: {exc}", color=N.RED_400)]
+            import httpx
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404:
+                detalle = "El servidor no expone el endpoint de entregas. Reiniciá el servicio POS y verificá /openapi.json."
+            elif isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code in (401, 403):
+                detalle = "Acceso denegado. Revisá la API key y los permisos del usuario."
+            else:
+                detalle = "No hay conexión con el servidor POS / tótem. Revisá la URL, red LAN y servicio."
+            conexion.content.value = "● " + detalle
+            conexion.content.color = N.RED_400
+            lista.controls = [ft.Text(detalle, color=N.RED_400),
+                              ft.OutlinedButton("Reintentar conexión", icon=ft.Icons.REFRESH, on_click=refresh)]
         page.update()
 
     def change(order_id, target):
@@ -68,6 +84,7 @@ def panel_entregas(page, operador):
 
     filtro.on_change = refresh
     vista = ft.Column([
+        conexion,
         ft.Row([contador, filtro, ft.OutlinedButton("Actualizar", icon=ft.Icons.REFRESH, on_click=refresh)],
                alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         lista,
