@@ -94,10 +94,12 @@ class MercadoPagoService:
 
         from core.settings import settings
 
-        self._ultima_referencia = reference or f"ORDER_{uuid.uuid4().hex}"
+        checkout_reference = reference or f"ORDER_{uuid.uuid4().hex}"
+        if not reference:
+            self._ultima_referencia = checkout_reference
         url = f"{MP_BASE}/instore/qr/seller/collectors/{uid}/stores/{store_ext}/pos/{pos_ext}/orders"
         payload = {
-            "external_reference": self._ultima_referencia,
+            "external_reference": checkout_reference,
             "title": "Venta en local",
             "description": f"Cobro de ${monto_f:.2f}",
             "total_amount": monto_f,
