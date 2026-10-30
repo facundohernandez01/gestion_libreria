@@ -82,7 +82,7 @@ def set_status(conn, checkout_id, status, venta_id=None):
 
 
 def available(conn, producto_id):
-    row=conn.execute("""SELECT p.stock_actual-COALESCE(SUM(r.cantidad),0)
+    row=conn.execute("""SELECT p.stock_actual-COALESCE(SUM(CASE WHEN c.id IS NOT NULL THEN r.cantidad ELSE 0 END),0)
         FROM productos p LEFT JOIN intrashop_reservas r ON r.producto_id=p.id
         LEFT JOIN intrashop_checkouts c ON c.id=r.checkout_id
           AND c.estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
