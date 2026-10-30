@@ -221,6 +221,31 @@ def ConfigModal(page: ft.Page):
         label="Dirección del servidor", width=340,
         value=cfg.get("SERVER_URL") or settings.server_url or "http://127.0.0.1:8000")
     red_estado_text = ft.Text("", size=12, color=N.GREEN_400)
+    red_modo_activo = ft.Text("● Comprobando modo de conexión…", size=13, weight=ft.FontWeight.BOLD, color=N.AMBER_400)
+
+    def comprobar_modo_activo(e=None):
+        from core.db_factory import modo_actual, _server_url
+        import httpx
+        modo = modo_actual()
+        if modo == "local":
+            red_modo_activo.value = "● LOCAL ACTIVO · Base de datos de esta terminal"
+            red_modo_activo.color = N.GREEN_400
+        else:
+            url = _server_url() if modo == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
+            try:
+                respuesta = httpx.get(url.rstrip("/") + "/health", timeout=2.5)
+                if respuesta.status_code == 200:
+                    red_modo_activo.value = "● " + modo.upper() + " ACTIVO · " + url
+                    red_modo_activo.color = N.GREEN_400
+                else:
+                    raise RuntimeError("HTTP " + str(respuesta.status_code))
+            except Exception:
+                red_modo_activo.value = "● " + modo.upper() + " CONFIGURADO · Sin conexión a " + url
+                red_modo_activo.color = N.RED_400
+        if red_modo_dropdown.value != modo:
+            red_modo_activo.value += " · Cambios sin guardar"
+        page.update()
+
 
     def _escanear_red(e=None):
         red_estado_text.value = "🔍 Escaneando la red…"
@@ -645,7 +670,8 @@ def ConfigModal(page: ft.Page):
         if (red_modo_dropdown.value or "").lower() == "servidor":
             _encender_servidor()
         settings.reload()
-        snack(page, "✅ Configuración guardada con éxito", ok=True)
+        comprobar_modo_activo()
+        snack(page, "✅ Configuración guardada. Reiniciá el POS para aplicar el modo de conexión.", ok=True)
         dialog.open = False
         page.update()
 
@@ -760,6 +786,7 @@ def ConfigModal(page: ft.Page):
     btn_quitar = ft.TextButton("🗑️ Quitar servicio", icon=ft.Icons.DELETE_OUTLINE,
                                on_click=_quitar_servicio)
     _actualizar_controles_servidor()
+    comprobar_modo_activo()
 
     seccion_red = ft.Container(
         content=ft.Column([
@@ -767,6 +794,8 @@ def ConfigModal(page: ft.Page):
                     color=N.INDIGO_400),
             ft.Row([red_modo_dropdown], spacing=8, wrap=True),
             red_url_field,
+            red_modo_activo,
+            ft.OutlinedButton("Verificar conexión activa", icon=ft.Icons.WIFI, on_click=comprobar_modo_activo),
             ft.Row([
                 ft.FilledButton("🔍 Escanear red", icon=ft.Icons.WIFI_FIND,
                                 on_click=_escanear_red),
