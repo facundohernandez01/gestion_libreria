@@ -112,7 +112,7 @@ def _tx():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "db": DB_PATH}
+    return {"ok": True, "service": "pos-lan", "capabilities": ["intrashop-entregas-v1", "pos-operator-sessions-v1"]}
 
 
 @app.get("/config")
