@@ -12,7 +12,7 @@ from ui.helpers import abrir_dialogo, cerrar_dialogo, snack
 from utils.paths import base_dir
 from utils.licencia import obtener_device_id
 
-def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja, on_compras=None, on_historial_cajas=None, on_ingreso_stock=None, on_salir=None, permisos=None, es_admin=False, on_roles_usuarios=None, modo_cliente=False):
+def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja, on_compras=None, on_historial_cajas=None, on_ingreso_stock=None, on_salir=None, permisos=None, es_admin=False, on_roles_usuarios=None, modo_cliente=False, usuario_actual=""):
     """Ventana principal con lista de ventas y acciones"""
     permisos = permisos or {}
 
@@ -335,7 +335,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     if puede("ENTREGAS_INTRASHOP"):
         from componente_entregas_intrashop import panel_entregas
         tablero_entregas = ft.Container(
-            content=panel_entregas(page, getattr(db_manager, "usuario_actual", "") or "operador POS", puede_configurar=puede("CONFIGURACION")),
+            content=panel_entregas(page, usuario_actual or getattr(db_manager, "usuario_actual", "") or "operador POS", puede_configurar=puede("CONFIGURACION")),
             visible=False, expand=True, height=440,
         )
 
