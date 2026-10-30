@@ -1,6 +1,7 @@
 """Cola de entregas IntraShop: separa cobro confirmado de retiro físico."""
 import sqlite3
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Depends
+from pos_auth import require_delivery
 from pydantic import BaseModel, Field
 from core.settings import settings
 
@@ -45,8 +46,7 @@ class EntregaUpdate(BaseModel):
 
 
 @router.get("")
-def list_orders(estado: str = "", x_api_key: str | None = Header(default=None)):
-    authorize(x_api_key)
+def list_orders(estado: str = "", operador: str = Depends(require_delivery)):
     if estado and estado not in ("pendiente", "preparando", "listo", "entregado"):
         raise HTTPException(400, "Estado inválido")
     with connect() as conn:
@@ -69,8 +69,7 @@ def list_orders(estado: str = "", x_api_key: str | None = Header(default=None)):
 
 
 @router.patch("/{order_id}")
-def update_order(order_id: int, body: EntregaUpdate, x_api_key: str | None = Header(default=None)):
-    authorize(x_api_key)
+def update_order(order_id: int, body: EntregaUpdate, operador: str = Depends(require_delivery)):
     transitions = {"pendiente": {"preparando", "listo", "entregado"}, "preparando": {"listo"}, "listo": {"entregado"}, "entregado": set()}
     with connect() as conn:
         ensure_schema(conn)
@@ -85,6 +84,6 @@ def update_order(order_id: int, body: EntregaUpdate, x_api_key: str | None = Hea
             entregado_por=CASE WHEN ?='entregado' THEN ? ELSE entregado_por END,
             fecha_entrega=CASE WHEN ?='entregado' THEN CURRENT_TIMESTAMP ELSE fecha_entrega END
             WHERE id=?
-        """, (body.estado, body.estado, body.operador, body.estado, order_id))
+        """, (body.estado, body.estado, operador, body.estado, order_id))
         conn.commit()
     return {"ok": True, "id": order_id, "estado": body.estado}
