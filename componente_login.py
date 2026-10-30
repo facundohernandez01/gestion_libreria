@@ -158,6 +158,29 @@ def LoginView(db_manager, on_login, page: ft.Page):
     usuario_field.on_submit = lambda _e: ingresar()
     clave_field.on_submit = ingresar
 
+    def configurar_red(e=None):
+        from database_manager import DatabaseManager
+        from core.db_factory import modo_actual, _server_url
+        from ui.helpers import abrir_dialogo, cerrar_dialogo
+        db_local = DatabaseManager()
+        modo = ft.Dropdown(label="Modo de conexión", value=modo_actual(), width=290,
+            options=[ft.dropdown.Option("local", "Local"),
+                     ft.dropdown.Option("servidor", "Servidor"),
+                     ft.dropdown.Option("cliente", "Cliente LAN")])
+        url = ft.TextField(label="URL del servidor POS", value=_server_url(), width=290)
+        estado = ft.Text("Se guarda en esta terminal. Reiniciá el POS para aplicar el cambio.", size=12, color=N.AMBER_400)
+        def guardar(e):
+            db_local.set_config("MODO_RED", modo.value)
+            db_local.set_config("SERVER_URL", (url.value or "").strip())
+            cerrar_dialogo(page)
+            estado.value = "Configuración guardada. Reiniciá el POS."
+            page.update()
+        dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
+            content=ft.Column([modo, url, estado], tight=True, spacing=12),
+            actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
+                     ft.FilledButton("Guardar", on_click=guardar)])
+        abrir_dialogo(page, dlg)
+
     tarjeta = ft.Container(
         content=ft.Column([
             ft.Icon(ft.Icons.LOCK_PERSON, size=56, color=N.BLUE_300),
@@ -172,6 +195,7 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "INGRESAR", icon=ft.Icons.LOGIN, width=320, height=46,
                 style=BTN_PRIMARIO, on_click=ingresar),
             ayuda,
+            ft.TextButton("Configurar conexión LAN de esta terminal", icon=ft.Icons.SETTINGS_ETHERNET, on_click=configurar_red),
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
         padding=32, border_radius=14, width=400,
         bgcolor=ft.Colors.with_opacity(0.55, N.DEEP),
