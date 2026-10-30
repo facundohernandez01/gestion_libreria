@@ -77,6 +77,8 @@ app.add_middleware(
     allow_headers=["*", "x-api-key", "content-type"],
 )
 app.include_router(intrashop_router)
+from intrashop_entregas import router as intrashop_entregas_router
+app.include_router(intrashop_entregas_router)
 
 
 def _connect() -> sqlite3.Connection:
