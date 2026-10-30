@@ -82,6 +82,7 @@ class CartItem(BaseModel):
 
 
 class CheckoutIn(BaseModel):
+    totem_id: str | None = Field(default=None, max_length=64)
     items: list[CartItem] = Field(min_length=1, max_length=50)
 
 
@@ -152,7 +153,7 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
                 )
             from intrashop_entregas import ensure_schema, register_paid_sale
             ensure_schema(conn)
-            register_paid_sale(conn, venta_id, job_id)
+            register_paid_sale(conn, venta_id, job_id, job.get("totem_id"), job.get("totem_nombre"))
             conn.commit()
         _save_internal_receipt(venta_id, cart, total, job_id)
         with _jobs_lock:
@@ -321,6 +322,27 @@ def actualizar_producto_tienda(producto_id: int, body: ProductStoreUpdate, x_api
             "imagen_url": f"/tienda/productos/{producto_id}/imagen" if image_path or row["imagen_tienda"] else ""}
 
 
+class TotemRegisterIn(BaseModel):
+    id: str = Field(min_length=8, max_length=64)
+    nombre: str = Field(min_length=1, max_length=80)
+
+
+@router.post("/totems/register")
+def registrar_totem(body: TotemRegisterIn, x_api_key: str | None = Header(default=None)):
+    # La API key de instalación autoriza el alta, no los cambios de nombre de otros tótems.
+    if not settings.api_key or x_api_key != settings.api_key:
+        raise HTTPException(401, "Clave de instalación inválida")
+    from intrashop_entregas import ensure_schema
+    with _connect() as conn:
+        ensure_schema(conn)
+        conn.execute("""INSERT INTO intrashop_totems(id, nombre)
+            VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET
+            nombre=excluded.nombre, ultimo_contacto=CURRENT_TIMESTAMP""",
+            (body.id, body.nombre.strip()))
+        conn.commit()
+    return {"id": body.id, "nombre": body.nombre.strip(), "ok": True}
+
+
 @router.post("/checkout")
 def iniciar_checkout(body: CheckoutIn):
     _ensure_schema()
@@ -331,13 +353,23 @@ def iniciar_checkout(body: CheckoutIn):
         raise HTTPException(409, "El POS no tiene una caja abierta. Abrí la caja antes de habilitar compras.")
     if not settings.mp_activo:
         raise HTTPException(503, "Mercado Pago está deshabilitado en la configuración del POS")
+    totem_nombre = None
+    if body.totem_id:
+        from intrashop_entregas import ensure_schema
+        with _connect() as conn:
+            ensure_schema(conn)
+            row = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.totem_id,)).fetchone()
+            if not row:
+                raise HTTPException(400, "Tótem no registrado. Revisá la configuración del dispositivo.")
+            totem_nombre = row["nombre"]
     with _jobs_lock:
         active = any(j.get("status") in {"queued", "creating_order", "waiting_payment", "cancelling", "paid", "paid_sale_error", "cancel_error"} for j in _jobs.values())
         if active:
             raise HTTPException(409, "Ya hay un cobro en curso. Esperá a que finalice.")
         job_id = uuid.uuid4().hex
         _jobs[job_id] = {"status": "queued", "message": "Preparando el cobro", "total": total,
-                         "items": cart, "created_at": time.time(), "sale_done": False}
+                         "items": cart, "created_at": time.time(), "sale_done": False,
+                         "totem_id": body.totem_id, "totem_nombre": totem_nombre}
         _cancel_events[job_id] = threading.Event()
     threading.Thread(target=_run_checkout, args=(job_id, cart, total), daemon=True).start()
     return {"checkout_id": job_id, "status": "queued", "total": total, "items": cart}
