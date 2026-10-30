@@ -150,6 +150,9 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
                        VALUES (?, 'venta', ?, ?, ?, ?, ?)""",
                     (pid, qty, anterior, nuevo, venta_id, f"Venta IntraShop #{venta_id}"),
                 )
+            from intrashop_entregas import ensure_schema, register_paid_sale
+            ensure_schema(conn)
+            register_paid_sale(conn, venta_id, job_id)
             conn.commit()
         _save_internal_receipt(venta_id, cart, total, job_id)
         with _jobs_lock:
