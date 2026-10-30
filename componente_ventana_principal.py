@@ -128,7 +128,14 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     
     print(f"Ventas encontradas: {len(ventas)}")
     
-    pendientes_entrega = set()
+    def consultar_pendientes():
+        from adapters.entregas import EntregasAdapter
+        return {int(o["venta_id"]) for o in EntregasAdapter().listar() if o["estado"] != "entregado"}
+
+    try:
+        pendientes_entrega = consultar_pendientes()
+    except Exception:
+        pendientes_entrega = set()
     # Estado para controlar qué ventas están expandidas
     ventas_expandidas = set()
     
@@ -272,6 +279,11 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     def actualizar_ventas():
         
         """Actualiza la lista de ventas"""
+        nonlocal pendientes_entrega
+        try:
+            pendientes_entrega = consultar_pendientes()
+        except Exception:
+            pass
         ventas_column.controls = [crear_lista_ventas()]
         page.update()
     
