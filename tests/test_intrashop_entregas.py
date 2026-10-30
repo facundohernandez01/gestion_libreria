@@ -45,7 +45,7 @@ def test_fulfillment_transitions(database):
 
 
 def test_auth_required(database):
-    with patch.object(entregas.settings, "api_key", "test-key"):
-        with pytest.raises(HTTPException) as exc:
-            entregas.list_orders(operador="operador1")
-        assert exc.value.status_code == 401
+    from pos_auth import require_delivery
+    with pytest.raises(HTTPException) as exc:
+        require_delivery(authorization=None)
+    assert exc.value.status_code == 401
