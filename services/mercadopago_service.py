@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -75,7 +76,7 @@ class MercadoPagoService:
 
     # ---------- órdenes ----------
     def crear_orden(self, monto: float, cb: Optional[Callable[[str], None]] = None,
-                    pos_ext: str = "", store_ext: str = "") -> bool:
+                    pos_ext: str = "", store_ext: str = "", reference: str = "") -> bool:
         token, uid, store_d, pos_d = self.credenciales()
         pos_ext = pos_ext or pos_d
         store_ext = store_ext or store_d
@@ -93,7 +94,7 @@ class MercadoPagoService:
 
         from core.settings import settings
 
-        self._ultima_referencia = f"ORDER_{int(time.time())}"
+        self._ultima_referencia = reference or f"ORDER_{uuid.uuid4().hex}"
         url = f"{MP_BASE}/instore/qr/seller/collectors/{uid}/stores/{store_ext}/pos/{pos_ext}/orders"
         payload = {
             "external_reference": self._ultima_referencia,
@@ -171,9 +172,11 @@ class MercadoPagoService:
         self._log("⏰ Tiempo agotado. Orden sigue abierta.", cb)
         return False
 
-    def cancelar_orden(self) -> bool:
+    def cancelar_orden(self, pos_ext: str = "", store_ext: str = "") -> bool:
         """Solicita a Mercado Pago cerrar la orden QR activa, si la API lo permite."""
-        token, uid, store_ext, pos_ext = self.credenciales()
+        token, uid, store_d, pos_d = self.credenciales()
+        store_ext = store_ext or store_d
+        pos_ext = pos_ext or pos_d
         if not (token and uid and store_ext and pos_ext):
             return False
         from core.settings import settings
@@ -188,9 +191,10 @@ class MercadoPagoService:
             self._log(f"⚠️ Error de red al cerrar la orden QR: {exc}")
             return False
 
-    def consultar_ultimo_pago(self, cb: Optional[Callable[[str], None]] = None) -> bool:
+    def consultar_ultimo_pago(self, cb: Optional[Callable[[str], None]] = None, reference: str = "") -> bool:
         token, _, _, _ = self.credenciales()
-        if not self._ultima_referencia:
+        reference = reference or self._ultima_referencia
+        if not reference:
             self._log("⚠️ Sin referencia para buscar pago.", cb)
             return False
         from core.settings import settings
@@ -198,7 +202,7 @@ class MercadoPagoService:
         url = f"{MP_BASE}/v1/payments/search"
         try:
             resp = requests.get(url, headers=self._headers(token),
-                                params={"external_reference": self._ultima_referencia},
+                                params={"external_reference": reference},
                                 timeout=settings.mp_timeout_seg)
         except requests.RequestException as e:
             self._log(f"⚠️ Error consultando pagos: {e}", cb)
