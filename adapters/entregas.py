@@ -19,6 +19,7 @@ class EntregasAdapter:
     def __init__(self, base_url=None, api_key=None, timeout=8):
         from core.db_factory import modo_actual, _server_url
         modo = modo_actual()
+        self.modo = modo
         if base_url:
             url = base_url
         elif modo == "cliente":
@@ -39,8 +40,14 @@ class EntregasAdapter:
         return response.json()
 
     def listar(self, estado=""):
+        if self.modo == "local":
+            from intrashop_entregas import list_orders
+            return list_orders(estado=estado, operador="POS local")
         return self._request("GET", "", params={"estado": estado})
 
     def cambiar(self, entrega_id, estado, operador):
+        if self.modo == "local":
+            from intrashop_entregas import update_order, EntregaUpdate
+            return update_order(int(entrega_id), EntregaUpdate(estado=estado, operador=operador), operador=operador)
         return self._request("PATCH", f"/{int(entrega_id)}",
                              json={"estado": estado, "operador": operador})
