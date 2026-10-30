@@ -1,0 +1,77 @@
+---
+import "../styles/global.css";
+---
+<!doctype html>
+<html lang="es">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Administración · IntraShop</title></head>
+<body>
+<header class="topbar"><a class="brand" href="/"><img src="/intrashop-logo.svg" width="43" height="43" alt=""/><span>Intra<span class="brand-accent">Shop</span><small>ADMINISTRACIÓN</small></span></a><div style="display:flex;gap:18px"><a class="admin-back" href="/entregas">Comandas y entregas</a><a class="admin-back" href="/">← Volver a la tienda</a></div></header>
+<main class="admin-main">
+<section class="admin-heading"><span class="section-kicker">CONFIGURACIÓN LOCAL</span><h1>Administración de tienda</h1><p>Configurá la conexión con el POS. Estos datos se guardan en este dispositivo, sin servicios externos.</p></section>
+<div class="admin-layout">
+<section class="admin-panel"><h2>Conexión al servidor</h2><p>Usá la dirección IP del equipo que ejecuta el POS. Evitá <code>localhost</code> en tablets o TV.</p>
+<form id="connection-form"><label for="totem-name">Nombre de este tótem</label><input id="totem-name" type="text" maxlength="80" required placeholder="Tótem Entrada 1"/><p class="admin-hint">Identifica este dispositivo en las comandas y permite asignarlo a cajas específicas.</p>
+<label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="http://192.168.1.100:8000" autocomplete="url"/>
+<button id="discover-server" type="button" class="admin-test-button">Detectar servidor cercano</button><div id="discover-results" role="status"></div>
+<label for="api-key">API key del POS</label><div class="admin-password"><input id="api-key" type="password" required autocomplete="off" spellcheck="false"/><button id="toggle-key" type="button">Mostrar</button></div>
+<p class="admin-hint">La clave se guarda localmente en el navegador. No uses esta configuración en dispositivos públicos sin control de acceso.</p>
+<div class="admin-actions"><button class="primary-button" type="submit">Guardar configuración</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
+</form><div id="admin-status" role="status" class="admin-status"></div></section>
+<section class="admin-panel"><h2>Valores iniciales</h2><p>Para una instalación nueva, podés definir los valores de fábrica al compilar la tienda.</p>
+<div class="admin-tip"><strong>Variables de entorno de Astro</strong><code>PUBLIC_POS_URL=http://192.168.1.100:8000</code><code>PUBLIC_POS_API_KEY=</code></div>
+<p class="admin-hint">No incrustes claves privadas en una compilación pública. Para producción, preferí un proxy local autenticado y dispositivos administrados.</p>
+<h2>Estado del servidor</h2><div id="server-state" class="admin-server-state">Sin comprobar</div>
+</section></div></main>
+<footer><span class="footer-brand">IntraShop</span><span>Panel local de configuración</span><a href="/">Ir al catálogo</a></footer>
+<script>
+const baseDefault = import.meta.env.PUBLIC_POS_URL || new URL(window.location.href).hostname.replace(/^localhost$/,"127.0.0.1");
+const defaultUrl = baseDefault.startsWith("http") ? baseDefault : "http://"+baseDefault+":8000";
+const keyDefault = import.meta.env.PUBLIC_POS_API_KEY || "";
+const url = document.querySelector<HTMLInputElement>("#server-url")!;
+const key = document.querySelector<HTMLInputElement>("#api-key")!;
+const totemName = document.querySelector<HTMLInputElement>("#totem-name")!;
+let totemId = localStorage.getItem("intrashop_totem_id");
+if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
+totemName.value=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
+document.querySelector<HTMLButtonElement>("#discover-server")!.addEventListener("click",async()=>{
+const box=document.querySelector<HTMLElement>("#discover-results")!;
+box.textContent="Comprobando servidor en el mismo equipo y host de IntraShop…";
+const candidates=[url.value.trim(),"http://"+location.hostname+":8000","http://127.0.0.1:8000"];
+const found:string[]=[];
+await Promise.all([...new Set(candidates.filter(Boolean))].map(async candidate=>{
+try{const ctrl=new AbortController();const timeout=setTimeout(()=>ctrl.abort(),1800);
+const response=await fetch(candidate.replace(/\/$/,"")+"/health",{signal:ctrl.signal});
+clearTimeout(timeout);
+if(response.ok){const data=await response.json();if(data.service==="pos-lan")found.push(candidate);}
+}catch{}
+}));
+box.replaceChildren();
+if(!found.length){box.textContent="No se detectó el servidor. Ingresá su IP LAN manualmente.";return;}
+for(const address of found){const btn=document.createElement("button");btn.type="button";btn.textContent="Usar "+address;btn.addEventListener("click",()=>{url.value=address;box.textContent="Servidor seleccionado: "+address;});box.append(btn);}
+});
+const status = document.querySelector<HTMLElement>("#admin-status")!;
+const state = document.querySelector<HTMLElement>("#server-state")!;
+url.value = localStorage.getItem("intrashop_api") || defaultUrl;
+key.value = localStorage.getItem("intrashop_key") || keyDefault;
+function message(text:string,ok:boolean){status.textContent=text;status.className="admin-status "+(ok?"success":"error");}
+document.querySelector<HTMLFormElement>("#connection-form")!.addEventListener("submit",async e=>{
+e.preventDefault();const value=url.value.trim().replace(/\/$/,"");
+if(!/^https?:\/\//i.test(value)){message("La URL debe empezar con http:// o https://",false);return;}
+localStorage.setItem("intrashop_api",value);localStorage.setItem("intrashop_key",key.value.trim());
+localStorage.setItem("intrashop_totem_name",totemName.value.trim());
+try{
+const response=await fetch(value+"/tienda/totems/register",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key.value.trim()},
+body:JSON.stringify({id:totemId,nombre:totemName.value.trim()})});
+if(!response.ok)throw Error("HTTP "+response.status);
+message("Tótem registrado en el servidor y configuración guardada.",true);
+}catch(err){message("Configuración guardada localmente, pero no se pudo registrar el tótem: "+(err as Error).message,false);}
+});
+document.querySelector<HTMLButtonElement>("#toggle-key")!.addEventListener("click",()=>{
+key.type=key.type==="password"?"text":"password";
+document.querySelector<HTMLButtonElement>("#toggle-key")!.textContent=key.type==="password"?"Mostrar":"Ocultar";
+});
+document.querySelector<HTMLButtonElement>("#test-connection")!.addEventListener("click",async()=>{
+state.textContent="Conectando…";try{const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),5000);
+try{const response=await fetch(url.value.trim().replace(/\/$/,"")+"/tienda/health",{signal:controller.signal});if(!response.ok)throw Error("HTTP "+response.status);const data=await response.json();if(!data.ok)throw Error("Servidor sin respuesta válida");state.textContent="Conectado · "+(data.service||"POS");message("El servidor responde correctamente.",true);}finally{clearTimeout(timeout);}
+}catch(error){state.textContent="Sin conexión";message("No se pudo conectar: "+(error as Error).message,false);}});
+</script></body></html>

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -68,6 +69,17 @@ class MercadoPagoService:
                 pos_ext = pos_ext or db.get_config_value("EXTERNAL_POS_ID") or ""
             except Exception:
                 pass
+        # Caja física: resolver la asignación central si existe.
+        try:
+            from core.terminal_identity import terminal_id
+            from adapters.mp_bindings import listar
+            current = terminal_id()
+            assigned = next((x for x in listar() if x["terminal_id"] == current and x["terminal_type"] == "caja"), None)
+            if assigned:
+                pos_ext = assigned["pos_external_id"]
+                store_ext = assigned["store_external_id"]
+        except Exception:
+            pass
         return token, uid, store_ext, pos_ext
 
     def _headers(self, token: str) -> dict:
@@ -75,7 +87,7 @@ class MercadoPagoService:
 
     # ---------- órdenes ----------
     def crear_orden(self, monto: float, cb: Optional[Callable[[str], None]] = None,
-                    pos_ext: str = "", store_ext: str = "") -> bool:
+                    pos_ext: str = "", store_ext: str = "", reference: str = "") -> bool:
         token, uid, store_d, pos_d = self.credenciales()
         pos_ext = pos_ext or pos_d
         store_ext = store_ext or store_d
@@ -93,10 +105,12 @@ class MercadoPagoService:
 
         from core.settings import settings
 
-        self._ultima_referencia = f"ORDER_{int(time.time())}"
+        checkout_reference = reference or f"ORDER_{uuid.uuid4().hex}"
+        if not reference:
+            self._ultima_referencia = checkout_reference
         url = f"{MP_BASE}/instore/qr/seller/collectors/{uid}/stores/{store_ext}/pos/{pos_ext}/orders"
         payload = {
-            "external_reference": self._ultima_referencia,
+            "external_reference": checkout_reference,
             "title": "Venta en local",
             "description": f"Cobro de ${monto_f:.2f}",
             "total_amount": monto_f,
@@ -125,7 +139,7 @@ class MercadoPagoService:
 
     def verificar_estado(self, cb: Optional[Callable[[str], None]] = None,
                          cancelar: Optional[Callable[[], bool]] = None,
-                         pos_ext: str = "", timeout: int = 0, intervalo: int = 0) -> bool:
+                         pos_ext: str = "", timeout: int = 0, intervalo: int = 0, reference: str = "") -> bool:
         from core.settings import settings
 
         token, uid, _, pos_d = self.credenciales()
@@ -154,26 +168,55 @@ class MercadoPagoService:
                 except Exception:
                     time.sleep(intervalo)
                     continue
+                # Nunca atribuir el pago de otro checkout al QR actual.
+                if reference and data.get("external_reference") not in (None, reference):
+                    self._log("Referencia de pago distinta; ignorando orden del QR.", cb)
+                    time.sleep(intervalo)
+                    continue
                 estado = data.get("order_status", "unknown")
                 pagado = float(data.get("paid_amount") or 0)
                 total = float(data.get("total_amount") or 0)
                 if estado == "paid" or (total > 0 and pagado >= total):
+                    if reference and not data.get("external_reference"):
+                        if not self.consultar_ultimo_pago(reference=reference):
+                            time.sleep(intervalo)
+                            continue
                     self._log("✅ ¡Pago recibido correctamente!", cb)
                     for p in data.get("payments", [])[:1]:
                         self._log(f"💳 Payment ID: {p.get('id')} | Estado: {p.get('status')}", cb)
                     return True
             elif resp.status_code == 404:
                 self._log("📭 Orden cerrada. Verificando último pago...", cb)
-                return self.consultar_ultimo_pago(cb)
+                return self.consultar_ultimo_pago(cb, reference=reference)
             elif resp.status_code >= 400:
                 self._log(f"⚠️ MP {resp.status_code}: {resp.text[:200]}", cb)
             time.sleep(intervalo)
         self._log("⏰ Tiempo agotado. Orden sigue abierta.", cb)
         return False
 
-    def consultar_ultimo_pago(self, cb: Optional[Callable[[str], None]] = None) -> bool:
+    def cancelar_orden(self, pos_ext: str = "", store_ext: str = "") -> bool:
+        """Solicita a Mercado Pago cerrar la orden QR activa, si la API lo permite."""
+        token, uid, store_d, pos_d = self.credenciales()
+        store_ext = store_ext or store_d
+        pos_ext = pos_ext or pos_d
+        if not (token and uid and store_ext and pos_ext):
+            return False
+        from core.settings import settings
+        url = f"{MP_BASE}/instore/qr/seller/collectors/{uid}/stores/{store_ext}/pos/{pos_ext}/orders"
+        try:
+            resp = requests.delete(url, headers=self._headers(token), timeout=settings.mp_timeout_seg)
+            if resp.status_code in (200, 202, 204, 404):
+                return True
+            self._log(f"⚠️ No se pudo cerrar la orden QR ({resp.status_code}): {resp.text[:200]}")
+            return False
+        except requests.RequestException as exc:
+            self._log(f"⚠️ Error de red al cerrar la orden QR: {exc}")
+            return False
+
+    def consultar_ultimo_pago(self, cb: Optional[Callable[[str], None]] = None, reference: str = "") -> bool:
         token, _, _, _ = self.credenciales()
-        if not self._ultima_referencia:
+        reference = reference or self._ultima_referencia
+        if not reference:
             self._log("⚠️ Sin referencia para buscar pago.", cb)
             return False
         from core.settings import settings
@@ -181,7 +224,7 @@ class MercadoPagoService:
         url = f"{MP_BASE}/v1/payments/search"
         try:
             resp = requests.get(url, headers=self._headers(token),
-                                params={"external_reference": self._ultima_referencia},
+                                params={"external_reference": reference},
                                 timeout=settings.mp_timeout_seg)
         except requests.RequestException as e:
             self._log(f"⚠️ Error consultando pagos: {e}", cb)
@@ -260,7 +303,7 @@ class MercadoPagoService:
             store_ext = r.json().get("external_id", "")
             store_id = r.json().get("id")
             r2 = requests.post(f"{MP_BASE}/pos", headers=headers, json={
-                "name": "Caja Principal", "external_id": f"POS{ts}",
+                "name": "Caja Principal", "external_id": f"POS{ts}{uuid.uuid4().hex[:6]}",
                 "store_id": store_id, "fixed_amount": True, "category": 621102,
             }, timeout=settings.mp_timeout_seg)
             if r2.status_code not in (200, 201):

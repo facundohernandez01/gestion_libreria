@@ -450,6 +450,7 @@ class LibreriaApp:
             es_admin=self.es_admin,
             on_roles_usuarios=self.mostrar_roles_usuarios,
             modo_cliente=self.modo_web in ("cliente", "stock"),
+            usuario_actual=self.usuario.get("usuario") or "",
         ))
 
     def mostrar_nueva_venta(self, filter_mode="descripcion"):
