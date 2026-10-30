@@ -361,6 +361,40 @@ def actualizar_producto_tienda(producto_id: int, body: ProductStoreUpdate, x_api
             "imagen_url": f"/tienda/productos/{producto_id}/imagen" if image_path or row["imagen_tienda"] else ""}
 
 
+class MercadoPagoServerConfig(BaseModel):
+    access_token: str = Field(min_length=10)
+    user_id: str = Field(min_length=1)
+    enabled: bool = True
+
+
+@router.put("/admin/mp-credentials")
+def configurar_mp_servidor(body: MercadoPagoServerConfig,
+                           operador: str = Depends(require_config)):
+    """Guardar credenciales en la DB del servidor, nunca en el navegador del tótem."""
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        for key, value in (
+            ("ACCESS_TOKEN", body.access_token.strip()),
+            ("USER_ID", body.user_id.strip()),
+            ("MP_ACTIVO", "1" if body.enabled else "0"),
+        ):
+            conn.execute("""INSERT INTO config(clave, valor) VALUES (?,?)
+                ON CONFLICT(clave) DO UPDATE SET valor=excluded.valor""", (key,value))
+        conn.commit()
+    settings.reload()
+    return {"ok":True}
+
+
+@router.get("/admin/mp-status")
+def estado_mp_servidor(operador: str = Depends(require_config)):
+    from services.mercadopago_service import mp_service
+    token, uid, _, _ = mp_service.credenciales()
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        count=conn.execute("SELECT COUNT(*) FROM intrashop_mp_bindings").fetchone()[0]
+    return {"configured":bool(token and uid),"assigned_terminals":count}
+
+
 class BindingIn(BaseModel):
     terminal_id: str = Field(min_length=3, max_length=64)
     terminal_type: str
