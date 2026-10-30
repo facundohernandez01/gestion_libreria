@@ -1,11 +1,4 @@
-"""Ejecuta la API LAN sin iniciar la interfaz Flet del POS.
-
-Uso: python pos_server.py
-     python pos_server.py --host 0.0.0.0 --port 8000
-
-Para instalarlo como servicio se recomienda usar systemd (Linux)
-o el Administrador de servicios de Windows con un wrapper como NSSM.
-"""
+"""Servidor POS autónomo: GUI por defecto, CLI con --headless/--service."""
 import argparse
 import logging
 import os
@@ -14,14 +7,21 @@ from core.settings import settings
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Servidor API independiente del POS")
-    parser.add_argument("--host", default=settings.api_host)
+    parser = argparse.ArgumentParser(description="Servidor POS independiente")
+    parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=settings.api_port)
+    parser.add_argument("--headless", "--service", action="store_true",
+                        help="Ejecutar sin interfaz gráfica (servicio/terminal)")
     args = parser.parse_args()
-    logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO))
     os.environ["POS_API_ONLY"] = "1"
+    logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO))
+    if not args.headless:
+        from pos_server_gui import ServerConsole
+        ServerConsole(host=args.host, port=args.port).run()
+        return
     import uvicorn
-    uvicorn.run("api_server:app", host=args.host, port=args.port, log_level="info")
+    from api_server import app
+    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
 
 
 if __name__ == "__main__":
