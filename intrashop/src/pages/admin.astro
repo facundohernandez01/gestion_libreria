@@ -10,7 +10,7 @@ import "../styles/global.css";
 <section class="admin-heading"><span class="section-kicker">CONFIGURACIÓN LOCAL</span><h1>Administración de tienda</h1><p>Configurá la conexión con el POS. Estos datos se guardan en este dispositivo, sin servicios externos.</p></section>
 <div class="admin-layout">
 <section class="admin-panel"><h2>Conexión al servidor</h2><p>Usá la dirección IP del equipo que ejecuta el POS. Evitá <code>localhost</code> en tablets o TV.</p>
-<form id="connection-form">
+<form id="connection-form"><label for="totem-name">Nombre de este tótem</label><input id="totem-name" type="text" maxlength="80" required placeholder="Tótem Entrada 1"/><p class="admin-hint">Identifica este dispositivo en las comandas y permite asignarlo a cajas específicas.</p>
 <label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="http://192.168.1.100:8000" autocomplete="url"/>
 <label for="api-key">API key del POS</label><div class="admin-password"><input id="api-key" type="password" required autocomplete="off" spellcheck="false"/><button id="toggle-key" type="button">Mostrar</button></div>
 <p class="admin-hint">La clave se guarda localmente en el navegador. No uses esta configuración en dispositivos públicos sin control de acceso.</p>
@@ -28,15 +28,26 @@ const defaultUrl = baseDefault.startsWith("http") ? baseDefault : "http://"+base
 const keyDefault = import.meta.env.PUBLIC_POS_API_KEY || "";
 const url = document.querySelector<HTMLInputElement>("#server-url")!;
 const key = document.querySelector<HTMLInputElement>("#api-key")!;
+const totemName = document.querySelector<HTMLInputElement>("#totem-name")!;
+let totemId = localStorage.getItem("intrashop_totem_id");
+if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
+totemName.value=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
 const status = document.querySelector<HTMLElement>("#admin-status")!;
 const state = document.querySelector<HTMLElement>("#server-state")!;
 url.value = localStorage.getItem("intrashop_api") || defaultUrl;
 key.value = localStorage.getItem("intrashop_key") || keyDefault;
 function message(text:string,ok:boolean){status.textContent=text;status.className="admin-status "+(ok?"success":"error");}
-document.querySelector<HTMLFormElement>("#connection-form")!.addEventListener("submit",e=>{
+document.querySelector<HTMLFormElement>("#connection-form")!.addEventListener("submit",async e=>{
 e.preventDefault();const value=url.value.trim().replace(/\/$/,"");
 if(!/^https?:\/\//i.test(value)){message("La URL debe empezar con http:// o https://",false);return;}
-localStorage.setItem("intrashop_api",value);localStorage.setItem("intrashop_key",key.value.trim());message("Configuración guardada en este dispositivo.",true);
+localStorage.setItem("intrashop_api",value);localStorage.setItem("intrashop_key",key.value.trim());
+localStorage.setItem("intrashop_totem_name",totemName.value.trim());
+try{
+const response=await fetch(value+"/tienda/totems/register",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key.value.trim()},
+body:JSON.stringify({id:totemId,nombre:totemName.value.trim()})});
+if(!response.ok)throw Error("HTTP "+response.status);
+message("Tótem registrado en el servidor y configuración guardada.",true);
+}catch(err){message("Configuración guardada localmente, pero no se pudo registrar el tótem: "+(err as Error).message,false);}
 });
 document.querySelector<HTMLButtonElement>("#toggle-key")!.addEventListener("click",()=>{
 key.type=key.type==="password"?"text":"password";
