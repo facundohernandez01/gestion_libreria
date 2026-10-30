@@ -163,4 +163,14 @@ def panel_entregas(page, operador, puede_configurar=False):
         lista,
     ], expand=True)
     refresh()
+    # Sondeo compartido: al tomar una comanda en otra caja, esta vista se actualiza.
+    if hasattr(page, "run_task"):
+        import asyncio
+        async def auto_refresh():
+            while True:
+                await asyncio.sleep(5)
+                if vista.page is None:
+                    break
+                refresh()
+        page.run_task(auto_refresh)
     return vista
