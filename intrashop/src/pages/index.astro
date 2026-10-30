@@ -100,6 +100,12 @@ const title = "IntraShop · Tu tienda local";
         if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación");
         return body;
       };
+      async function reportPresence(){
+        try{await api("/tienda/totems/register",{method:"POST",
+          body:JSON.stringify({id:totemId,nombre:totemName})});}catch{}
+      }
+      void reportPresence();
+      setInterval(reportPresence,30000);
       function renderProducts(list:Product[]) {
         const categories = [...new Set(products.map(p => (p.categoria || "").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es"));
         $("category-filters").innerHTML = ["<button type=\"button\" class=\"category-chip "+(selectedCategory===""?"active":"")+"\" data-category=\"\">Todas</button>", ...categories.map(cat=>"<button type=\"button\" class=\"category-chip "+(selectedCategory===cat?"active":"")+"\" data-category=\""+escapeHtml(cat)+"\">"+escapeHtml(cat)+"</button>")].join("");
