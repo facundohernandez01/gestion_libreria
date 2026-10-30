@@ -34,18 +34,18 @@ def test_order_persists(database):
 def test_fulfillment_transitions(database):
     with patch.object(entregas.settings, "db_path", database):
         with patch.object(entregas.settings, "api_key", "test-key"):
-            orders = entregas.list_orders(x_api_key="test-key")
+            orders = entregas.list_orders(operador="operador1")
             assert len(orders) == 1
             assert orders[0]["items"][0]["cantidad"] == 2
             for state in ("preparando", "listo", "entregado"):
-                assert entregas.update_order(orders[0]["id"], entregas.EntregaUpdate(estado=state, operador="operador1"), x_api_key="test-key")["estado"] == state
+                assert entregas.update_order(orders[0]["id"], entregas.EntregaUpdate(estado=state, operador="operador1"), operador="operador1")["estado"] == state
             with pytest.raises(HTTPException) as exc:
-                entregas.update_order(orders[0]["id"], entregas.EntregaUpdate(estado="preparando", operador="operador1"), x_api_key="test-key")
+                entregas.update_order(orders[0]["id"], entregas.EntregaUpdate(estado="preparando", operador="operador1"), operador="operador1")
             assert exc.value.status_code == 409
 
 
 def test_auth_required(database):
     with patch.object(entregas.settings, "api_key", "test-key"):
         with pytest.raises(HTTPException) as exc:
-            entregas.list_orders(x_api_key="wrong")
+            entregas.list_orders(operador="operador1")
         assert exc.value.status_code == 401
