@@ -438,6 +438,33 @@ def reconcile_checkout(checkout_id: str, operador: str = Depends(require_config)
             "message":result.get("message","")}
 
 
+class ReleaseRequest(BaseModel):
+    confirmacion: str
+
+
+@router.post("/admin/checkouts/{checkout_id}/release")
+def release_checkout(checkout_id: str, body: ReleaseRequest, operador: str = Depends(require_config)):
+    """Liberación excepcional, auditada; requiere verificar pago manualmente en MP."""
+    if body.confirmacion != "VERIFIQUE EN MERCADO PAGO QUE NO EXISTE COBRO":
+        raise HTTPException(400, "Confirmación de conciliación requerida")
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute("SELECT estado FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Checkout inexistente")
+        if row["estado"] != "uncertain":
+            raise HTTPException(409, "Solo se pueden liberar reservas pendientes de conciliación")
+        conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_auditoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, checkout_id TEXT NOT NULL,
+            operador TEXT NOT NULL, accion TEXT NOT NULL,
+            fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+        conn.execute("INSERT INTO intrashop_auditoria(checkout_id,operador,accion) VALUES (?,?,?)",
+                     (checkout_id,operador,"LIBERACION_MANUAL_SIN_PAGO_CONFIRMADO"))
+        checkout_store.set_status(conn,checkout_id,"cancelled")
+        conn.commit()
+    return {"ok":True,"estado":"cancelled"}
+
+
 class TotemRegisterIn(BaseModel):
     id: str = Field(min_length=8, max_length=64)
     nombre: str = Field(min_length=1, max_length=80)
