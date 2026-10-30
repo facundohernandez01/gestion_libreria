@@ -40,6 +40,8 @@ class ServerConsole:
         self.clients.heading("operador",text="Operador")
         self.clients.heading("expira",text="Sesión hasta")
         self.clients.pack(fill="x")
+        self.pending=tk.StringVar(value="Reservas pendientes: —")
+        ttk.Label(outer,textvariable=self.pending).pack(anchor="w")
         self.sessions=tk.StringVar(value="Sesiones POS: 0")
         ttk.Label(outer,textvariable=self.sessions).pack(anchor="w",pady=8)
         self.root.protocol("WM_DELETE_WINDOW",self.close)
@@ -74,6 +76,8 @@ class ServerConsole:
         try:
             with sqlite3.connect(settings.db_path,timeout=1) as conn:
                 rows=conn.execute("SELECT nombre,id,ultimo_contacto FROM intrashop_totems ORDER BY nombre").fetchall()
+                pending=conn.execute("SELECT COUNT(*) FROM intrashop_checkouts WHERE estado='uncertain'").fetchone()[0]
+            self.pending.set("Reservas que requieren conciliación: "+str(pending))
             for key in self.totems.get_children():
                 self.totems.delete(key)
             for row in rows:
