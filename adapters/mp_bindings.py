@@ -14,7 +14,7 @@ def _remote(method, path, data=None):
 
 
 def listar():
-    if modo_actual()!="local":
+    if modo_actual()=="cliente":
         return _remote("GET","")
     import intrashop_checkout_store as store
     from intrashop_api import _connect
