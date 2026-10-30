@@ -13,7 +13,9 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Depends
+from pos_auth import require_config
+import intrashop_checkout_store as checkout_store
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -56,6 +58,7 @@ def _ensure_schema() -> None:
         if "imagen_tienda" not in cols:
             conn.execute("ALTER TABLE productos ADD COLUMN imagen_tienda TEXT NOT NULL DEFAULT ''")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_productos_tienda ON productos(disponible_tienda, stock_actual)")
+        checkout_store.ensure_schema(conn)
         conn.commit()
 
 
@@ -263,7 +266,14 @@ def listar_productos(termino: str = ""):
                ORDER BY descripcion LIMIT 200""",
             (f"%{termino}%", f"%{termino}%", f"%{termino}%"),
         ).fetchall()
-    return [_product(r) for r in rows]
+    with _connect() as conn:
+        products = []
+        for row in rows:
+            p = _product(row)
+            p["stock_actual"] = checkout_store.available(conn, p["id"])
+            if p["stock_actual"] > 0:
+                products.append(p)
+        return products
 
 
 @router.get("/productos/{producto_id}/imagen")
@@ -320,6 +330,49 @@ def actualizar_producto_tienda(producto_id: int, body: ProductStoreUpdate, x_api
         conn.commit()
     return {"ok": True, "producto_id": producto_id, "disponible": body.disponible,
             "imagen_url": f"/tienda/productos/{producto_id}/imagen" if image_path or row["imagen_tienda"] else ""}
+
+
+class BindingIn(BaseModel):
+    terminal_id: str = Field(min_length=3, max_length=64)
+    terminal_type: str
+    pos_external_id: str = Field(min_length=1, max_length=100)
+    store_external_id: str = Field(min_length=1, max_length=100)
+    qr_url: str = ""
+    nombre: str = ""
+
+
+@router.get("/admin/mp-bindings")
+def listar_bindings(operador: str = Depends(require_config)):
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        return [dict(x) for x in conn.execute("SELECT * FROM intrashop_mp_bindings ORDER BY terminal_type,nombre")]
+
+
+@router.put("/admin/mp-bindings")
+def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
+    if body.terminal_type not in ("totem", "caja"):
+        raise HTTPException(400, "Tipo de terminal inválido")
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        checkout_store.ensure_schema(conn)
+        busy = conn.execute("""SELECT id FROM intrashop_checkouts WHERE
+            pos_external_id IN (?,(SELECT pos_external_id FROM intrashop_mp_bindings WHERE terminal_id=?))
+            AND estado IN ('reserved','creating','waiting','verifying','uncertain','paid') LIMIT 1""",
+            (body.pos_external_id,body.terminal_id)).fetchone()
+        if busy:
+            raise HTTPException(409, "No se puede reasignar un QR con cobros activos")
+        try:
+            conn.execute("""INSERT INTO intrashop_mp_bindings
+                (terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre)
+                VALUES (?,?,?,?,?,?) ON CONFLICT(terminal_id) DO UPDATE SET
+                terminal_type=excluded.terminal_type,pos_external_id=excluded.pos_external_id,
+                store_external_id=excluded.store_external_id,qr_url=excluded.qr_url,nombre=excluded.nombre""",
+                (body.terminal_id,body.terminal_type,body.pos_external_id,
+                 body.store_external_id,body.qr_url,body.nombre))
+            conn.commit()
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "Este POS Mercado Pago ya está asignado a otra terminal")
+    return {"ok": True}
 
 
 class TotemRegisterIn(BaseModel):
