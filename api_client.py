@@ -70,6 +70,13 @@ class ApiClient:
     def buscar_productos(self, termino: str = "", campo: str = "descripcion", limit: int = 200):
         return self._get("/productos", params={"termino": termino, "campo": campo})[:limit]
 
+    def listar_cajas(self, filtro: str = "", desde: str = "", hasta: str = ""):
+        return self._get("/cajas/historial",
+                         params={"filtro": filtro, "desde": desde, "hasta": hasta})
+
+    def obtener_ventas_por_caja(self, caja_id: int):
+        return self._get(f"/cajas/{int(caja_id)}/ventas")
+
     def obtener_caja_abierta(self):
         return self._get("/cajas/abierta")
 
