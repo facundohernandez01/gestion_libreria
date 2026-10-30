@@ -548,5 +548,11 @@ def estado_checkout(checkout_id: str):
     with _jobs_lock:
         job = _jobs.get(checkout_id)
         if not job:
-            raise HTTPException(404, "Checkout no encontrado o servidor reiniciado")
+            with _connect() as conn:
+                row = conn.execute("SELECT estado,total,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
+            if not row:
+                raise HTTPException(404, "Checkout inexistente")
+            return {"status": "completed" if row["estado"]=="completed" else "paid_sale_error",
+                    "total":row["total"],"venta_id":row["venta_id"],
+                    "message":"El servidor se reinició. El pago requiere conciliación del administrador." if row["estado"]!="completed" else "Venta registrada"}
         return {k: v for k, v in job.items() if k not in {"sale_done", "created_at"}}
