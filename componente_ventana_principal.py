@@ -335,7 +335,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     if puede("ENTREGAS_INTRASHOP"):
         from componente_entregas_intrashop import panel_entregas
         tablero_entregas = ft.Container(
-            content=panel_entregas(page, getattr(db_manager, "usuario_actual", "") or "operador POS"),
+            content=panel_entregas(page, getattr(db_manager, "usuario_actual", "") or "operador POS", puede_configurar=puede("CONFIGURACION")),
             visible=False, expand=True, height=440,
         )
 
