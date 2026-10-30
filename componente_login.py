@@ -121,6 +121,22 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "permisos": permisos_todos(),
             }
         if usuario:
+            # Obtener una sesión de operador del servidor; el rol se verifica allí.
+            try:
+                import httpx
+                from adapters.entregas import EntregasAdapter, set_session
+                from core.db_factory import _server_url, modo_actual
+                from core.settings import settings
+                base = _server_url() if modo_actual() == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
+                response = httpx.post(base.rstrip("/") + "/pos/auth/login",
+                    json={"usuario": usuario_field.value, "clave": clave_field.value}, timeout=4)
+                if response.status_code == 200:
+                    set_session(response.json()["access_token"])
+                else:
+                    set_session(None)
+            except Exception:
+                from adapters.entregas import set_session
+                set_session(None)
             if recordar_cb.value:
                 _guardar_recordado(usuario_field.value or "", clave_field.value or "")
             else:
