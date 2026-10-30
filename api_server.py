@@ -203,8 +203,10 @@ def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None)):
             if cant <= 0 or precio < 0:
                 raise HTTPException(400, "item inválido")
             row = conn.execute("SELECT stock_actual FROM productos WHERE id=?", (pid,)).fetchone()
-            if not row or int(row["stock_actual"]) < cant:
-                raise HTTPException(400, f"stock insuficiente prod={pid}")
+            import intrashop_checkout_store as reservation_store
+            reservation_store.ensure_schema(conn)
+            if not row or reservation_store.available(conn, pid) < cant:
+                raise HTTPException(409, f"stock disponible insuficiente prod={pid} (reservas IntraShop)")
             stocks[pid] = int(row["stock_actual"])
             total += precio * cant
         cur = conn.execute(
