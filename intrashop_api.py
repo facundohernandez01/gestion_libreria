@@ -270,7 +270,7 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
         with _jobs_lock:
             current = _jobs.get(job_id, {}).get("status")
         if current != "completed":
-            persisted = "cancelled" if current in ("cancelled", "expired") else "uncertain"
+            persisted = "uncertain"  # El cierre de QR no demuestra ausencia definitiva de pago.
             with _connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 checkout_store.set_status(conn, job_id, persisted)
