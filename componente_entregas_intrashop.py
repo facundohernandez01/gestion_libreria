@@ -12,6 +12,8 @@ from ui.paleta import N
 
 def panel_entregas(page, operador, puede_configurar=False):
     adapter = EntregasAdapter()
+    from core.terminal_identity import terminal_id
+    this_terminal = terminal_id()
     prefs = DatabaseManager()
     try:
         seleccion = set(json.loads(prefs.get_config_value("INTRASHOP_TOTEMS_FILTRO") or "[]"))
@@ -78,20 +80,21 @@ def panel_entregas(page, operador, puede_configurar=False):
                     ft.Text(" · ".join(f"{i['cantidad']} × {i['descripcion']}" for i in order["items"]), size=12),
                 ]
                 owner = order.get("tomado_por")
+                mine = owner == operador and order.get("tomado_terminal") == this_terminal
                 controls.append(ft.Text("Tomada por: " + owner if owner else "Disponible para tomar",
-                    color=N.AMBER_400 if owner and owner != operador else N.GREEN_400, size=12))
+                    color=N.AMBER_400 if owner and not mine else N.GREEN_400, size=12))
                 if not owner:
                     controls.append(ft.FilledButton("Tomar comanda", icon=ft.Icons.LOCK_OPEN,
                         on_click=lambda e, oid=order["id"]: claim(oid)))
-                elif owner == operador and state != "entregado":
+                elif mine and state != "entregado":
                     controls.append(ft.OutlinedButton("Liberar comanda",
                         on_click=lambda e, oid=order["id"]: release(oid)))
-                if state == "pendiente" and owner == operador:
+                if state == "pendiente" and mine:
                     controls.append(ft.FilledButton(
                         "Entregar ahora", icon=ft.Icons.CHECK_CIRCLE,
                         on_click=lambda e, oid=order["id"]: change(oid, "entregado"),
                     ))
-                if next_state and owner == operador:
+                if next_state and mine:
                     controls.append(ft.FilledButton(
                         {"preparando": "Preparar", "listo": "Marcar listo", "entregado": "Confirmar entrega"}[next_state],
                         on_click=lambda e, oid=order["id"], target=next_state: change(oid, target),
