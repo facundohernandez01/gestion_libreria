@@ -415,14 +415,25 @@ def iniciar_checkout(body: CheckoutIn):
             if not row:
                 raise HTTPException(400, "Tótem no registrado. Revisá la configuración del dispositivo.")
             totem_nombre = row["nombre"]
+    if not body.totem_id:
+        raise HTTPException(400, "El checkout requiere un tótem registrado")
+    job_id = uuid.uuid4().hex
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            checkout_store.ensure_schema(conn)
+            binding = checkout_store.reserve(conn, job_id, body.totem_id, cart, total)
+            conn.commit()
+        except ValueError as exc:
+            raise HTTPException(409, str(exc))
     with _jobs_lock:
-        active = any(j.get("status") in {"queued", "creating_order", "waiting_payment", "cancelling", "paid", "paid_sale_error", "cancel_error"} for j in _jobs.values())
-        if active:
-            raise HTTPException(409, "Ya hay un cobro en curso. Esperá a que finalice.")
-        job_id = uuid.uuid4().hex
-        _jobs[job_id] = {"status": "queued", "message": "Preparando el cobro", "total": total,
-                         "items": cart, "created_at": time.time(), "sale_done": False,
-                         "totem_id": body.totem_id, "totem_nombre": totem_nombre}
+        _jobs[job_id] = {"status": "queued", "message": "Stock reservado; preparando cobro",
+                         "total": total, "items": cart, "created_at": time.time(),
+                         "sale_done": False, "totem_id": body.totem_id,
+                         "totem_nombre": totem_nombre,
+                         "pos_ext": binding["pos_external_id"],
+                         "store_ext": binding["store_external_id"],
+                         "qr_url": binding["qr_url"]}
         _cancel_events[job_id] = threading.Event()
     threading.Thread(target=_run_checkout, args=(job_id, cart, total), daemon=True).start()
     return {"checkout_id": job_id, "status": "queued", "total": total, "items": cart}
