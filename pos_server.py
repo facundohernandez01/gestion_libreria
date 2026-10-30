@@ -8,6 +8,7 @@ o el Administrador de servicios de Windows con un wrapper como NSSM.
 """
 import argparse
 import logging
+import os
 
 from core.settings import settings
 
@@ -18,6 +19,7 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=settings.api_port)
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO))
+    os.environ["POS_API_ONLY"] = "1"
     import uvicorn
     uvicorn.run("api_server:app", host=args.host, port=args.port, log_level="info")
 
