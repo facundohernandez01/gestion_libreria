@@ -1741,6 +1741,7 @@ class DatabaseManager:
             return 0, False
         with self._connect() as conn:
             try:
+                conn.execute("BEGIN IMMEDIATE")
                 # validar caja abierta
                 cur = conn.execute("SELECT id FROM cajas WHERE id=? AND estado='abierta'", (caja_id,))
                 if not cur.fetchone():
@@ -1757,7 +1758,7 @@ class DatabaseManager:
                         return 0, False
                     cur = conn.execute("SELECT stock_actual FROM productos WHERE id=?", (pid,))
                     row = cur.fetchone()
-                    if not row or int(row["stock_actual"]) < cant:
+                    if not row or __import__("intrashop_checkout_store").available(conn, pid) < cant:
                         logger.warning("stock insuficiente prod=%s", pid)
                         return 0, False
                     stocks[pid] = int(row["stock_actual"])
