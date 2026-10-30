@@ -283,7 +283,7 @@ class MercadoPagoService:
             store_ext = r.json().get("external_id", "")
             store_id = r.json().get("id")
             r2 = requests.post(f"{MP_BASE}/pos", headers=headers, json={
-                "name": "Caja Principal", "external_id": f"POS{ts}",
+                "name": "Caja Principal", "external_id": f"POS{ts}{uuid.uuid4().hex[:6]}",
                 "store_id": store_id, "fixed_amount": True, "category": 621102,
             }, timeout=settings.mp_timeout_seg)
             if r2.status_code not in (200, 201):
