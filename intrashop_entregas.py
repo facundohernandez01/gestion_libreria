@@ -71,7 +71,7 @@ def list_orders(estado: str = "", x_api_key: str | None = Header(default=None)):
 @router.patch("/{order_id}")
 def update_order(order_id: int, body: EntregaUpdate, x_api_key: str | None = Header(default=None)):
     authorize(x_api_key)
-    transitions = {"pendiente": {"preparando", "listo"}, "preparando": {"listo"}, "listo": {"entregado"}, "entregado": set()}
+    transitions = {"pendiente": {"preparando", "listo", "entregado"}, "preparando": {"listo"}, "listo": {"entregado"}, "entregado": set()}
     with connect() as conn:
         ensure_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
