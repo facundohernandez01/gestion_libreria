@@ -203,24 +203,34 @@ def _save_internal_receipt(venta_id: int, cart: list[dict], total: float, job_id
 def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
     from services.mercadopago_service import mp_service
     try:
-        with _checkout_lock:
+        if True:
             with _jobs_lock:
                 _jobs[job_id]["status"] = "creating_order"
-            ok = mp_service.crear_orden(total)
+            with _connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                checkout_store.set_status(conn, job_id, "creating")
+                conn.commit()
+            pos_ext = _jobs[job_id]["pos_ext"]
+            store_ext = _jobs[job_id]["store_ext"]
+            ok = mp_service.crear_orden(total, pos_ext=pos_ext, store_ext=store_ext, reference=job_id)
             if not ok:
                 raise RuntimeError("Mercado Pago no pudo crear la orden. Revisá la configuración del QR.")
+            with _connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                checkout_store.set_status(conn, job_id, "waiting")
+                conn.commit()
             with _jobs_lock:
                 _jobs[job_id]["status"] = "waiting_payment"
                 _jobs[job_id]["message"] = "Escaneá el QR del local para pagar"
-                _jobs[job_id]["qr_url"] = settings.mp_qr_url or ""
+                _jobs[job_id]["qr_url"] = _jobs[job_id]["qr_url"] or ""
             cancel_event = _cancel_events[job_id]
-            paid = mp_service.verificar_estado(cancelar=cancel_event.is_set)
+            paid = mp_service.verificar_estado(cancelar=cancel_event.is_set, pos_ext=pos_ext, reference=job_id)
             if cancel_event.is_set():
                 # Cancelar la visualización no implica que Mercado Pago haya anulado el cobro.
                 # Consultar la referencia del pago después de cerrar la orden evita
                 # perder una venta aprobada justo durante la cancelación.
-                closed = mp_service.cancelar_orden()
-                confirmed = paid or mp_service.consultar_ultimo_pago()
+                closed = mp_service.cancelar_orden(pos_ext=pos_ext, store_ext=store_ext)
+                confirmed = paid or mp_service.consultar_ultimo_pago(reference=job_id)
                 if confirmed:
                     with _jobs_lock:
                         _jobs[job_id].update(status="paid", message="Pago confirmado durante la cancelación; registrando venta")
@@ -234,8 +244,8 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 return
             if not paid:
                 # El timeout de polling no cierra automáticamente el QR en Mercado Pago.
-                closed = mp_service.cancelar_orden()
-                confirmed = mp_service.consultar_ultimo_pago()
+                closed = mp_service.cancelar_orden(pos_ext=pos_ext, store_ext=store_ext)
+                confirmed = mp_service.consultar_ultimo_pago(reference=job_id)
                 if confirmed:
                     with _jobs_lock:
                         _jobs[job_id].update(status="paid", message="Pago confirmado; registrando venta")
