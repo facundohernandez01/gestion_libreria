@@ -690,8 +690,9 @@ def ConfigModal(page: ft.Page):
                 ft.dropdown.Option(key="totem:" + t["id"], text="Tótem · " + t["nombre"])
                 for t in registrados
             ]
-            # Caja física: identificación local, independiente del tótem.
-            mp_terminal.options.append(ft.dropdown.Option(key="caja:principal", text="Caja POS principal"))
+            from core.terminal_identity import terminal_id
+            mp_terminal.options.append(ft.dropdown.Option(
+                key="caja:" + terminal_id(), text="Esta caja POS · " + terminal_id()[:14]))
             bindings = listar()
             mp_bindings_list.controls = [
                 ft.Text(x["nombre"] + " → " + x["pos_external_id"], size=12)
