@@ -12,7 +12,7 @@ import "../styles/global.css";
 </main>
 <script>
 type Item={descripcion:string;cantidad:number;subtotal:number};
-type Order={id:number;venta_id:number;estado:string;fecha_creacion:string;total:number;items:Item[]};
+type Order={id:number;venta_id:number;estado:string;fecha_creacion:string;total:number;items:Item[];entregado_por:string|null};
 const $=(s:string)=>document.querySelector<HTMLElement>(s)!;
 const base=(localStorage.getItem("intrashop_api")||import.meta.env.PUBLIC_POS_URL||("http://"+location.hostname+":8000")).replace(/\/$/,"");
 const key=localStorage.getItem("intrashop_key")||import.meta.env.PUBLIC_POS_API_KEY||"";
