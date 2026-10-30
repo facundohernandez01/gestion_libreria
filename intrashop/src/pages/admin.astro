@@ -12,6 +12,7 @@ import "../styles/global.css";
 <section class="admin-panel"><h2>Conexión al servidor</h2><p>Usá la dirección IP del equipo que ejecuta el POS. Evitá <code>localhost</code> en tablets o TV.</p>
 <form id="connection-form"><label for="totem-name">Nombre de este tótem</label><input id="totem-name" type="text" maxlength="80" required placeholder="Tótem Entrada 1"/><p class="admin-hint">Identifica este dispositivo en las comandas y permite asignarlo a cajas específicas.</p>
 <label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="http://192.168.1.100:8000" autocomplete="url"/>
+<button id="discover-server" type="button" class="admin-test-button">Detectar servidor cercano</button><div id="discover-results" role="status"></div>
 <label for="api-key">API key del POS</label><div class="admin-password"><input id="api-key" type="password" required autocomplete="off" spellcheck="false"/><button id="toggle-key" type="button">Mostrar</button></div>
 <p class="admin-hint">La clave se guarda localmente en el navegador. No uses esta configuración en dispositivos públicos sin control de acceso.</p>
 <div class="admin-actions"><button class="primary-button" type="submit">Guardar configuración</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
@@ -32,6 +33,22 @@ const totemName = document.querySelector<HTMLInputElement>("#totem-name")!;
 let totemId = localStorage.getItem("intrashop_totem_id");
 if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
 totemName.value=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
+document.querySelector<HTMLButtonElement>("#discover-server")!.addEventListener("click",async()=>{
+const box=document.querySelector<HTMLElement>("#discover-results")!;
+box.textContent="Comprobando servidor en el mismo equipo y host de IntraShop…";
+const candidates=[url.value.trim(),"http://"+location.hostname+":8000","http://127.0.0.1:8000"];
+const found:string[]=[];
+await Promise.all([...new Set(candidates.filter(Boolean))].map(async candidate=>{
+try{const ctrl=new AbortController();const timeout=setTimeout(()=>ctrl.abort(),1800);
+const response=await fetch(candidate.replace(/\\/$/,"")+"/health",{signal:ctrl.signal});
+clearTimeout(timeout);
+if(response.ok){const data=await response.json();if(data.service==="pos-lan")found.push(candidate);}
+}catch{}
+}));
+box.replaceChildren();
+if(!found.length){box.textContent="No se detectó el servidor. Ingresá su IP LAN manualmente.";return;}
+for(const address of found){const btn=document.createElement("button");btn.type="button";btn.textContent="Usar "+address;btn.addEventListener("click",()=>{url.value=address;box.textContent="Servidor seleccionado: "+address;});box.append(btn);}
+});
 const status = document.querySelector<HTMLElement>("#admin-status")!;
 const state = document.querySelector<HTMLElement>("#server-state")!;
 url.value = localStorage.getItem("intrashop_api") || defaultUrl;
