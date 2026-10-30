@@ -46,7 +46,7 @@ def crear_acceso_datos():
     if modo == "cliente":
         from api_client import ApiClient
 
-        return ApiClient(_server_url(), os.getenv("API_KEY", "libreria-lan")), "cliente"
+        return ApiClient(_server_url(), settings.api_key), "cliente"
     from database_manager import DatabaseManager
 
     return DatabaseManager(), modo
