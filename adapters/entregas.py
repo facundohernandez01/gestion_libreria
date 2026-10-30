@@ -7,6 +7,14 @@ import httpx
 from core.settings import settings
 
 
+_session_token = None
+
+
+def set_session(token):
+    global _session_token
+    _session_token = token
+
+
 class EntregasAdapter:
     def __init__(self, base_url=None, api_key=None, timeout=8):
         from core.db_factory import modo_actual, _server_url
@@ -24,7 +32,7 @@ class EntregasAdapter:
     def _request(self, method, path, **kwargs):
         response = httpx.request(
             method, self.base_url + "/tienda/admin/entregas" + path,
-            headers={"X-API-Key": self.api_key},
+            headers={"Authorization": "Bearer " + (_session_token or "")},
             timeout=self.timeout, **kwargs,
         )
         response.raise_for_status()
