@@ -323,34 +323,37 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         padding=ft.Padding.symmetric(horizontal=8, vertical=1)
     )
     
-    # Sección de ventas de hoy
+    # Navegación de pestañas táctiles, con selección visual inequívoca.
+    tab_ventas = ft.FilledButton("Ventas de hoy", icon=ft.Icons.RECEIPT_LONG)
+    tab_entregas = ft.OutlinedButton("Comandas IntraShop", icon=ft.Icons.LOCAL_SHIPPING)
     ventas_header = ft.Container(
-        content=ft.Row([
-            ft.Icon(ft.Icons.HISTORY, color=N.BLUE_400, size=28),
-            ft.Text("VENTAS DE HOY", size=22, weight=ft.FontWeight.BOLD)
-        ], spacing=1),
-        padding=ft.Padding.only(left=1, bottom=1)
+        content=ft.Row([tab_ventas, tab_entregas], spacing=8, wrap=True),
+        padding=ft.Padding.symmetric(horizontal=10, vertical=10),
+        border_radius=12, bgcolor=N.GREY_800,
     )
-    
-    # Comandas: acceso independiente de la caja, protegido por permiso del rol.
+
     if puede("ENTREGAS_INTRASHOP"):
         from componente_entregas_intrashop import panel_entregas
         tablero_entregas = ft.Container(
             content=panel_entregas(page, getattr(db_manager, "usuario_actual", "") or "operador POS"),
             visible=False, expand=True, height=440,
         )
+
         def cambiar_pestana(entregas):
             ventas_container.visible = not entregas
             tablero_entregas.visible = entregas
+            tab_ventas.bgcolor = N.GREY_700 if entregas else N.BLUE
+            tab_entregas.bgcolor = N.BLUE if entregas else N.GREY_700
             if not entregas:
                 actualizar_ventas()
             page.update()
-        ventas_header.content.controls.append(
-            ft.TextButton("Ventas de hoy", on_click=lambda e: cambiar_pestana(False)))
-        ventas_header.content.controls.append(
-            ft.TextButton("Comandas IntraShop", icon=ft.Icons.RECEIPT_LONG,
-                          on_click=lambda e: cambiar_pestana(True)))
+
+        tab_ventas.on_click = lambda e: cambiar_pestana(False)
+        tab_entregas.on_click = lambda e: cambiar_pestana(True)
+        tab_ventas.bgcolor = N.BLUE
+        tab_entregas.bgcolor = N.GREY_700
     else:
+        tab_entregas.visible = False
         tablero_entregas = ft.Container(visible=False)
 
     # Panel derecho con total y botones
