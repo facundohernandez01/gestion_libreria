@@ -660,7 +660,9 @@ def ConfigModal(page: ft.Page):
     def guardar_config(e=None):
         _guardar_en_db(token_field.value.strip(), user_field.value.strip(),
                        nombre_negocio_field.value.strip(),
-                       pos_dropdown.value or external_pos_id_saved,
+                       (pos_list[int(pos_dropdown.value)].get("external_id", "")
+                        if pos_dropdown.value is not None and pos_list
+                        else external_pos_id_saved),
                        external_store_id_saved or db.get_config_value("EXTERNAL_STORE_ID") or "",
                        qr_image.src or "")
         try:
