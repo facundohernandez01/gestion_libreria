@@ -35,6 +35,11 @@ class ServerConsole:
             self.totems.heading(col,text=title)
             self.totems.column(col,width=width)
         self.totems.pack(fill="both",expand=True)
+        ttk.Label(outer,text="Operadores POS conectados").pack(anchor="w")
+        self.clients=ttk.Treeview(outer,columns=("operador","expira"),show="headings",height=3)
+        self.clients.heading("operador",text="Operador")
+        self.clients.heading("expira",text="Sesión hasta")
+        self.clients.pack(fill="x")
         self.sessions=tk.StringVar(value="Sesiones POS: 0")
         ttk.Label(outer,textvariable=self.sessions).pack(anchor="w",pady=8)
         self.root.protocol("WM_DELETE_WINDOW",self.close)
@@ -58,7 +63,12 @@ class ServerConsole:
         try:
             from pos_auth import _sessions
             import time
-            self.sessions.set("Sesiones POS activas: "+str(sum(exp>time.time() for _,exp in _sessions.values())))
+            active=[(user,exp) for user,exp in list(_sessions.values()) if exp>time.time()]
+            self.sessions.set("Sesiones POS activas: "+str(len(active)))
+            for key in self.clients.get_children():
+                self.clients.delete(key)
+            for user,exp in active:
+                self.clients.insert("","end",values=(user,time.strftime("%H:%M:%S",time.localtime(exp))))
         except Exception:
             pass
         try:
