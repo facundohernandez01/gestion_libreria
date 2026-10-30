@@ -49,3 +49,23 @@ La consola gráfica muestra estado del servidor, tótems y último contacto, ope
 - El descubrimiento de la web es por candidatos conocidos, no mDNS/UDP broadcast.
 - La API key de registro de tótems sigue siendo compartida. Pendiente identidad de dispositivo y protección contra suplantación.
 - Para múltiples procesos del servidor o escalado PostgreSQL/MSSQL se requiere adaptar transacciones, bloqueos y migraciones; no compartir SQLite por red.
+
+## Pruebas mínimas antes de habilitar ventas
+
+```bash
+python -m pytest -q tests/test_intrashop_reservas.py tests/test_intrashop_entregas.py
+cd intrashop && npm run build
+```
+
+En entorno de pruebas con credenciales Mercado Pago válidas:
+
+1. Crear dos POS MP distintos y asignarlos a dos tótems; confirmar que no se puede asignar el mismo QR a ambos.
+2. Stock 1 unidad: iniciar checkout desde ambos tótems a la vez. Solo uno debe obtener reserva.
+3. Stock 2 unidades: iniciar dos checkouts simultáneos con QR diferentes; comprobar referencias únicas y registro de dos ventas sin duplicación.
+4. Abrir la misma comanda en dos cajas y tomarla simultáneamente; solo una debe quedar asignada. Repetir con el mismo usuario conectado en ambas cajas.
+5. Desconectar un tótem y reiniciar el servidor mientras MP tiene un cobro abierto. El stock debe permanecer retenido y el checkout aparecer en `checkouts-pending`.
+6. Conciliar un pago aprobado y verificar que existe una sola venta y un solo descuento de stock.
+7. Conciliar un checkout sin pago confirmado en MP y liberar la reserva manualmente con auditoría.
+8. Verificar que la pantalla QR de cada caja muestra la imagen de su propio POS de Mercado Pago.
+
+No se han ejecutado estas pruebas automáticamente en el repositorio desde esta sesión.
