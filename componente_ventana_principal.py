@@ -128,6 +128,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     
     print(f"Ventas encontradas: {len(ventas)}")
     
+    pendientes_entrega = set()
     # Estado para controlar qué ventas están expandidas
     ventas_expandidas = set()
     
@@ -136,6 +137,8 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         lista = ft.Column(spacing=5)
         
         for venta in ventas:
+            if venta.get("comprobante", "").startswith("IntraShop") and venta["id"] in pendientes_entrega:
+                continue
             venta_id = venta['id']
             expandido = venta_id in ventas_expandidas
             
