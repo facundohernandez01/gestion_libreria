@@ -4,12 +4,23 @@ Los permisos se validan en la navegación principal; la base SQLite es
 la fuente de verdad de los estados y del operador que entrega.
 """
 import flet as ft
+import json
+from database_manager import DatabaseManager
 from adapters.entregas import EntregasAdapter
 from ui.paleta import N
 
 
-def panel_entregas(page, operador):
+def panel_entregas(page, operador, puede_configurar=False):
     adapter = EntregasAdapter()
+    prefs = DatabaseManager()
+    try:
+        seleccion = set(json.loads(prefs.get_config_value("INTRASHOP_TOTEMS_FILTRO") or "[]"))
+    except (ValueError, TypeError):
+        seleccion = set()
+    totems = []
+    filtro_info = ft.Text("Todos los tótems", color=N.BLUE_400, size=12)
+    opciones_totems = ft.Column(spacing=4)
+    todos = ft.Checkbox(label="Todos los tótems (incluye futuros)", value=not bool(seleccion))
     lista = ft.Column(spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
     contador = ft.Text("Pedidos pendientes", size=17, weight=ft.FontWeight.BOLD)
     conexion = ft.Container(
@@ -21,9 +32,32 @@ def panel_entregas(page, operador):
         ft.dropdown.Option("entregado", "Entregados"),
     ])
 
+    def guardar_filtro(e=None):
+        nonlocal seleccion
+        nuevos = set() if todos.value else {cb.data for cb in opciones_totems.controls if cb.value}
+        if not todos.value and not nuevos:
+            filtro_info.value = "Seleccioná un tótem o activá Todos."
+            filtro_info.color = N.RED_400
+            page.update()
+            return
+        seleccion = nuevos
+        prefs.set_config("INTRASHOP_TOTEMS_FILTRO", json.dumps(sorted(seleccion)))
+        filtro_info.color = N.GREEN_400
+        refresh()
+
     def refresh(_=None):
         try:
             rows = adapter.listar()
+            totems = adapter.totems()
+            opciones_totems.controls.clear()
+            for t in totems:
+                opciones_totems.controls.append(ft.Checkbox(
+                    label=t["nombre"] + " · " + t["id"][:8],
+                    value=t["id"] in seleccion, data=t["id"], disabled=bool(todos.value)))
+            filtro_info.value = ("Todos los tótems" if not seleccion else
+                "Atendiendo: " + ", ".join(t["nombre"] for t in totems if t["id"] in seleccion))
+            if seleccion:
+                rows = [o for o in rows if o.get("totem_id") in seleccion]
             conexion.content.value = "● Conectado al servidor POS · " + adapter.base_url
             conexion.content.color = N.GREEN_400
             rows = [o for o in rows if (o["estado"] == "entregado") == (filtro.value == "entregado")]
@@ -83,8 +117,18 @@ def panel_entregas(page, operador):
             snack(page, str(exc), ok=False)
 
     filtro.on_change = refresh
+    def cambiar_todos(e):
+        for cb in opciones_totems.controls:
+            cb.disabled = bool(todos.value)
+        page.update()
+    todos.on_change = cambiar_todos
+    selector = ft.Column([ft.Text("Tótems asignados a esta caja", weight=ft.FontWeight.BOLD), filtro_info])
+    if puede_configurar:
+        selector.controls.extend([todos, opciones_totems,
+            ft.FilledButton("Guardar filtro de esta caja", icon=ft.Icons.SAVE, on_click=guardar_filtro)])
     vista = ft.Column([
         conexion,
+        selector,
         ft.Row([contador, filtro, ft.OutlinedButton("Actualizar", icon=ft.Icons.REFRESH, on_click=refresh)],
                alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         lista,
