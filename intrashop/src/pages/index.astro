@@ -103,7 +103,7 @@ const title = "IntraShop · Tu tienda local";
         const visible = selectedCategory ? list.filter(p => (p.categoria || "") === selectedCategory) : list;
         $("catalog").innerHTML = visible.map(p => `
           <article class="product-card">
-            <div class="product-image-wrap"><img class="product-image" src="${p.imagen_url ? apiBase.replace(/\/$/,"") + p.imagen_url : placeholder}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${placeholder}'" /><span class="stock-pill">Disponible</span></div>
+            <div class="product-image-wrap"><img class="product-image" src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"") + p.imagen_url) : placeholder}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${placeholder}'" /><span class="stock-pill">Disponible</span></div>
             <div class="product-info"><span class="product-category">${escapeHtml(p.categoria || p.marca || "Del comercio")}</span><h3>${escapeHtml(p.descripcion)}</h3><div class="product-bottom"><strong>${money(p.precio_lista)}</strong><button class="add-button" type="button" data-add="${p.id}" aria-label="Agregar ${escapeHtml(p.descripcion)}">+</button></div></div>
           </article>`).join("");
         $("empty-state").hidden = list.length > 0;
@@ -136,7 +136,7 @@ const title = "IntraShop · Tu tienda local";
       function updateCart() {
         $("cart-count").textContent = String(cart.reduce((sum,item)=>sum+item.quantity,0));
         $("cart-items").innerHTML = cart.length ? cart.map(({product:p,quantity:q})=>`
-          <div class="cart-item"><img src="${p.imagen_url ? apiBase.replace(/\/$/,"")+p.imagen_url : placeholder}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><strong>${money(p.precio_lista*q)}</strong></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
+          <div class="cart-item"><img src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"")+p.imagen_url) : placeholder}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><strong>${money(p.precio_lista*q)}</strong></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
         $("cart-total").textContent = money(cart.reduce((sum,item)=>sum+item.product.precio_lista*item.quantity,0));
         $("checkout").toggleAttribute("disabled",cart.length===0);
       }
