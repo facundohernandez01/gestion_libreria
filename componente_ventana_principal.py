@@ -317,6 +317,25 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         padding=ft.Padding.only(left=1, bottom=1)
     )
     
+    # Comandas: acceso independiente de la caja, protegido por permiso del rol.
+    if puede("ENTREGAS_INTRASHOP") and not modo_cliente:
+        from componente_entregas_intrashop import panel_entregas
+        tablero_entregas = ft.Container(
+            content=panel_entregas(page, getattr(db_manager, "usuario_actual", "") or "operador POS"),
+            visible=False, expand=True, height=440,
+        )
+        def cambiar_pestana(entregas):
+            ventas_container.visible = not entregas
+            tablero_entregas.visible = entregas
+            page.update()
+        ventas_header.content.controls.append(
+            ft.TextButton("Ventas de hoy", on_click=lambda e: cambiar_pestana(False)))
+        ventas_header.content.controls.append(
+            ft.TextButton("Comandas IntraShop", icon=ft.Icons.RECEIPT_LONG,
+                          on_click=lambda e: cambiar_pestana(True)))
+    else:
+        tablero_entregas = ft.Container(visible=False)
+
     # Panel derecho con total y botones
     panel_derecho = ft.Container(
         content=ft.Column([
@@ -503,6 +522,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         ft.Column([
             ventas_header,
             ventas_container,
+            tablero_entregas,
             ft.Container(height=20),
 
             ft.Row(botones_accion,
