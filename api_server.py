@@ -336,4 +336,5 @@ def _montar_flet_web() -> None:
         logging.getLogger(__name__).warning("No se pudo montar la UI web: %s", ex)
 
 
-_montar_flet_web()
+if os.getenv("POS_API_ONLY", "").lower() not in ("1", "true", "yes"):
+    _montar_flet_web()
