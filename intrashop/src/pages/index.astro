@@ -106,7 +106,7 @@ const title = "IntraShop · Tu tienda local";
             <div class="product-image-wrap"><img class="product-image" src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"") + p.imagen_url) : placeholder}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${placeholder}'" /><span class="stock-pill">Disponible</span></div>
             <div class="product-info"><span class="product-category">${escapeHtml(p.categoria || p.marca || "Del comercio")}</span><h3>${escapeHtml(p.descripcion)}</h3><div class="product-bottom"><strong>${money(p.precio_lista)}</strong><button class="add-button" type="button" data-add="${p.id}" aria-label="Agregar ${escapeHtml(p.descripcion)}">+</button></div></div>
           </article>`).join("");
-        $("empty-state").hidden = list.length > 0;
+        $("empty-state").hidden = visible.length > 0;
       }
       function escapeHtml(value:string) { return value.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c] || c)); }
       async function loadProducts(term="") {
@@ -144,8 +144,8 @@ const title = "IntraShop · Tu tienda local";
         const product = products.find(p=>p.id===id) || cart.find(i=>i.product.id===id)?.product;
         if (!product) return;
         const existing = cart.find(i=>i.product.id===id);
-        if (existing) existing.quantity += delta;
-        else if (delta>0) cart.push({product,quantity:delta});
+        if (existing) existing.quantity = Math.min(existing.product.stock_actual,existing.quantity + delta);
+        else if (delta>0 && product.stock_actual>0) cart.push({product,quantity:Math.min(product.stock_actual,delta)});
         cart = cart.filter(i=>i.quantity>0);
         updateCart();
       }
@@ -158,6 +158,7 @@ const title = "IntraShop · Tu tienda local";
       async function startCheckout() {
         openCart(false); openPayment();
         $("payment-message").textContent = "Generando el cobro con Mercado Pago…";
+        $("payment-order").hidden=true; $("payment-cancel").hidden=true; activeCheckoutId="";
         try {
           const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
           activeCheckoutId = result.checkout_id;
@@ -192,7 +193,7 @@ const title = "IntraShop · Tu tienda local";
             const state = await api("/tienda/checkout/"+encodeURIComponent(id));
             $("payment-message").textContent = state.message || "Procesando pago…";
             if (state.qr_url) { $<HTMLImageElement>("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
-            if (["completed","error","expired","paid_sale_error","cancelled"].includes(state.status)) {
+            if (["completed","error","expired","paid_sale_error","cancelled","cancel_error"].includes(state.status)) {
               $("payment-cancel").hidden = true;
               $("payment-cancel").disabled = false;
               if (state.status==="completed") { cart=[]; updateCart(); await loadProducts($<HTMLInputElement>("search").value.trim()); showPaymentResult("Pago confirmado. Tu venta quedó registrada en el comercio.",true); }
