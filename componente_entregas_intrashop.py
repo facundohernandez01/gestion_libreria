@@ -194,7 +194,6 @@ def panel_entregas(page, operador, puede_configurar=False):
                      estado_conexion])
     vista = ft.Column([
         ft.Row(cabecera, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True),
-               alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         lista,
     ], expand=True)
     refresh()
