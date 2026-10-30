@@ -27,6 +27,21 @@ class ApiClient:
         r.raise_for_status()
         return r.json()
 
+    def autenticar_usuario(self, usuario: str, clave: str):
+        try:
+            response = httpx.post(self.base_url + "/pos/auth/login",
+                json={"usuario": usuario, "clave": clave}, timeout=8)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            from adapters.entregas import set_session
+            set_session(data["access_token"])
+            return {"usuario": data["usuario"], "nombre": data["usuario"],
+                    "rol": "OPERADOR", "es_admin": False,
+                    "permisos": data.get("permisos", {}), "activo": True}
+        except Exception:
+            return None
+
     def health(self) -> bool:
         try:
             return httpx.get(self.base_url + "/health", timeout=5).status_code == 200
