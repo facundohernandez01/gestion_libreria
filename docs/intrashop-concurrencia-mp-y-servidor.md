@@ -9,7 +9,7 @@
 - La disponibilidad de tienda y las ventas POS locales/API descuentan las reservas activas.
 - Cada cobro tiene su propia referencia externa, su POS MP y su operación de polling/cancelación.
 - La venta pagada, el descuento definitivo de stock y el estado `completed` se confirman en una misma transacción.
-- Comandas: `POST /tienda/admin/entregas/{id}/tomar` y `/liberar`, con usuario autenticado y exclusión por transacción. Solo el dueño puede avanzar o entregar.
+- Comandas: `POST /tienda/admin/entregas/{id}/tomar` y `/liberar`, con usuario autenticado, `X-Terminal-Id` y exclusión por transacción. Solo el dueño en la misma terminal puede avanzar o entregar.
 
 ## Configuración
 
@@ -17,7 +17,7 @@
 2. En POS → Ajustes → Mercado Pago → «Asignación de QR por dispositivo», obtener POS, detectar tótems y vincularlos.
 3. El servidor almacena las asignaciones; cada tótem debe estar registrado y tener QR antes de cobrar.
 4. En IntraShop → /admin se configura URL/IP y nombre del tótem. «Detectar servidor cercano» comprueba URL guardada, host web y localhost. **No** hace descubrimiento completo de subred: los navegadores limitan el escaneo LAN.
-5. La caja POS dispone de un identificador estable `POS_TERMINAL_ID`. El mapeo para cobros propios de caja todavía requiere integrar el flujo QR del mostrador; la asignación administrativa ya se persiste.
+5. La caja POS dispone de un identificador estable `POS_TERMINAL_ID`. El servicio MP intenta resolver la asignación de esta caja antes de usar el POS predeterminado. La pantalla QR muestra la imagen asignada y deshabilita la impresión del archivo QR local antiguo para evitar imprimir el QR de otra caja.
 
 ## Recuperación y conciliación
 
@@ -44,7 +44,7 @@ La consola gráfica muestra estado del servidor, tótems y último contacto, ope
 - No se ejecutaron pruebas de extremo a extremo con Mercado Pago real ni 2+ tótems y 2+ cajas. No habilitar producción hasta probar concurrencia y recuperación.
 - Los checkouts activos todavía se reflejan en memoria para polling HTTP; tras reiniciar el servidor, se recuperan desde administración, no automáticamente en el navegador.
 - El checkout MP QR fixed_amount debe validarse contra la respuesta real de Mercado Pago para evitar falsos positivos de pagos antiguos.
-- Los cobros QR propios del POS/caja todavía utilizan el flujo heredado; falta consumir la asignación del dispositivo en ese flujo.
+- El flujo de cobro de caja conserva la implementación heredada y no tiene reserva persistente de pago como IntraShop; se debe validar la integración completa en cada caja.
 - Otros cambios de stock administrativos o integraciones externas pueden no consultar reservas. Deben centralizarse antes de asegurar inventario global.
 - El descubrimiento de la web es por candidatos conocidos, no mDNS/UDP broadcast.
 - La API key de registro de tótems sigue siendo compartida. Pendiente identidad de dispositivo y protección contra suplantación.
