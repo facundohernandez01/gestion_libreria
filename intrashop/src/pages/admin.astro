@@ -40,7 +40,7 @@ const candidates=[url.value.trim(),"http://"+location.hostname+":8000","http://1
 const found:string[]=[];
 await Promise.all([...new Set(candidates.filter(Boolean))].map(async candidate=>{
 try{const ctrl=new AbortController();const timeout=setTimeout(()=>ctrl.abort(),1800);
-const response=await fetch(candidate.replace(/\\/$/,"")+"/health",{signal:ctrl.signal});
+const response=await fetch(candidate.replace(/\/$/,"")+"/health",{signal:ctrl.signal});
 clearTimeout(timeout);
 if(response.ok){const data=await response.json();if(data.service==="pos-lan")found.push(candidate);}
 }catch{}
