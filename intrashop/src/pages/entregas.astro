@@ -6,6 +6,7 @@ import "../styles/global.css";
 <header class="topbar"><a href="/" class="brand"><img src="/intrashop-logo.svg" width="40" height="40" alt=""/> IntraShop</a><a href="/admin" class="admin-back">Configuración</a></header>
 <main class="admin-main">
 <div class="admin-heading"><span class="section-kicker">OPERACIÓN EN TIEMPO REAL · LAN</span><h1>Comandas y entregas</h1><p>Pedidos cobrados que esperan preparación o retiro. El cobro y la entrega son estados independientes.</p></div>
+<div class="delivery-toolbar"><label>Usuario POS <input id="login-user" autocomplete="username"/></label><label>Clave <input id="login-pass" type="password" autocomplete="current-password"/></label><button id="login-button" type="button" class="primary-button">Iniciar sesión</button></div>
 <div class="delivery-toolbar"><label>Operador <input id="operator" placeholder="Nombre o identificador" autocomplete="off"/></label><button id="notifications" type="button" class="cancel-button">Activar alertas</button><span id="connection" role="status">Conectando…</span></div>
 <div class="delivery-tabs" role="tablist"><button data-filter="activos" class="active">Activos <b id="active-count">0</b></button><button data-filter="entregado">Entregados</button></div>
 <div id="orders" class="delivery-grid" aria-live="polite"></div>
@@ -15,14 +16,15 @@ type Item={descripcion:string;cantidad:number;subtotal:number};
 type Order={id:number;venta_id:number;estado:string;fecha_creacion:string;total:number;items:Item[];entregado_por:string|null};
 const $=(s:string)=>document.querySelector<HTMLElement>(s)!;
 const base=(localStorage.getItem("intrashop_api")||import.meta.env.PUBLIC_POS_URL||("http://"+location.hostname+":8000")).replace(/\/$/,"");
-const key=localStorage.getItem("intrashop_key")||import.meta.env.PUBLIC_POS_API_KEY||"";
+let token="";
 let filter="activos",first=true,seen=new Set<number>(),busy=false;
 const labels:Record<string,string>={pendiente:"Pendiente de preparación",preparando:"Preparando",listo:"Listo para retirar",entregado:"Entregado"};
 const money=(n:number)=>new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(n);
 const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]||c));
-async function api(path:string,options:RequestInit={}){const response=await fetch(base+path,{...options,headers:{"x-api-key":key,"Content-Type":"application/json",...(options.headers||{})}});if(!response.ok)throw Error((await response.text()).slice(0,160));return response.json();}
+async function api(path:string,options:RequestInit={}){const response=await fetch(base+path,{...options,headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json",...(options.headers||{})}});if(!response.ok)throw Error((await response.text()).slice(0,160));return response.json();}
 function alertNew(n:number){if(n<1)return;try{if(Notification.permission==="granted")new Notification("IntraShop · Pedido nuevo",{body:n+" comanda(s) para preparar"});}catch{}}
 async function load(){
+if(!token){$("#connection").textContent="Iniciá sesión con tu usuario POS para ver las comandas.";return;}
 if(busy)return;busy=true;
 try{
 const data=await api("/tienda/admin/entregas") as Order[];
@@ -40,6 +42,17 @@ return '<article class="delivery-card '+o.estado+'"><div class="delivery-head"><
 }).join(""):'<div class="empty-state"><h3>No hay pedidos en esta vista</h3><p>Las comandas aparecen cuando Mercado Pago confirma un cobro.</p></div>';
 }catch(e){$("#connection").textContent="Sin conexión · "+(e as Error).message;}finally{busy=false;}
 }
+$("#login-button").addEventListener("click",async()=>{
+try{
+const response=await fetch(base+"/pos/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},
+body:JSON.stringify({usuario:(document.querySelector<HTMLInputElement>("#login-user")!).value,clave:(document.querySelector<HTMLInputElement>("#login-pass")!).value})});
+if(!response.ok)throw Error("Usuario o contraseña incorrectos");
+const data=await response.json();token=data.access_token;
+(document.querySelector<HTMLInputElement>("#operator")!).value=data.usuario;
+(document.querySelector<HTMLInputElement>("#login-pass")!).value="";
+await load();
+}catch(e){$("#connection").textContent=(e as Error).message;}
+});
 $("#orders").addEventListener("click",async e=>{
 const btn=(e.target as HTMLElement).closest<HTMLButtonElement>("button[data-id]");if(!btn)return;
 const operator=(document.querySelector<HTMLInputElement>("#operator")!).value.trim();
