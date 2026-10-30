@@ -87,6 +87,9 @@ const title = "IntraShop · Tu tienda local";
       let cart:CartItem[] = [];
       let apiBase = localStorage.getItem("intrashop_api") || import.meta.env.PUBLIC_POS_URL || ("http://" + window.location.hostname + ":8000");
       let apiKey = localStorage.getItem("intrashop_key") || import.meta.env.PUBLIC_POS_API_KEY || "";
+      let totemId = localStorage.getItem("intrashop_totem_id");
+      if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
+      const totemName=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
       let polling = false;
       let activeCheckoutId = "";
       let selectedCategory = "";
@@ -156,11 +159,14 @@ const title = "IntraShop · Tu tienda local";
       }
       function openPayment() { $("payment-modal").hidden = false; $("payment-spinner").hidden=false; $("payment-result").hidden=true; $("payment-done").hidden=true; $("qr-container").hidden=true; $("payment-message").textContent="Preparando tu cobro…"; }
       async function startCheckout() {
+        // Registrar el origen antes de cobrar: nunca generar ventas sin tótem.
+        await api("/tienda/totems/register",{method:"POST",
+          body:JSON.stringify({id:totemId,nombre:totemName})});
         openCart(false); openPayment();
         $("payment-message").textContent = "Generando el cobro con Mercado Pago…";
         $("payment-order").hidden=true; $("payment-cancel").hidden=true; activeCheckoutId="";
         try {
-          const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
+          const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({totem_id:totemId,items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
           activeCheckoutId = result.checkout_id;
           const orderItems = result.items || cart.map(i=>({descripcion:i.product.descripcion,cantidad:i.quantity,precio_unitario:i.product.precio_lista}));
           $("payment-order-items").innerHTML = orderItems.map((item:any)=>"<div class=\"payment-order-item\"><span>"+escapeHtml(item.descripcion)+" <b>× "+item.cantidad+"</b></span><strong>"+money(item.precio_unitario*item.cantidad)+"</strong></div>").join("");
