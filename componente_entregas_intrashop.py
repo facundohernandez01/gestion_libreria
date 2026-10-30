@@ -45,7 +45,17 @@ def panel_entregas(page, operador, puede_configurar=False):
         seleccion = nuevos
         prefs.set_config("INTRASHOP_TOTEMS_FILTRO", json.dumps(sorted(seleccion)))
         filtro_info.color = N.GREEN_400
+        cerrar_filtro()
         refresh()
+
+    def cerrar_filtro(e=None):
+        dialogo_filtro.open = False
+        page.update()
+
+    def abrir_filtro(e=None):
+        refresh()
+        dialogo_filtro.open = True
+        page.update()
 
     def refresh(_=None):
         try:
@@ -63,6 +73,8 @@ def panel_entregas(page, operador, puede_configurar=False):
                 rows = [o for o in rows if o.get("totem_id") in seleccion]
             conexion.content.value = "● Conectado al servidor POS · " + adapter.base_url
             conexion.content.color = N.GREEN_400
+            estado_conexion.color = N.GREEN_400
+            estado_conexion.tooltip = conexion.content.value
             rows = [o for o in rows if (o["estado"] == "entregado") == (filtro.value == "entregado")]
             lista.controls.clear()
             for order in rows:
@@ -118,6 +130,8 @@ def panel_entregas(page, operador, puede_configurar=False):
                 detalle = "No hay conexión con el servidor POS / tótem. Revisá la URL, red LAN y servicio."
             conexion.content.value = "● " + detalle
             conexion.content.color = N.RED_400
+            estado_conexion.color = N.RED_400
+            estado_conexion.tooltip = conexion.content.value
             lista.controls = [ft.Text(detalle, color=N.RED_400),
                               ft.OutlinedButton("Reintentar conexión", icon=ft.Icons.REFRESH, on_click=refresh)]
         page.update()
@@ -152,14 +166,34 @@ def panel_entregas(page, operador, puede_configurar=False):
             cb.disabled = bool(todos.value)
         page.update()
     todos.on_change = cambiar_todos
-    selector = ft.Column([ft.Text("Tótems asignados a esta caja", weight=ft.FontWeight.BOLD), filtro_info])
+    dialogo_filtro = ft.AlertDialog(
+        modal=True,
+        title=ft.Text("Tótems atendidos por esta caja"),
+        content=ft.Container(
+            content=ft.Column([
+                ft.Text("Seleccioná qué tótems reciben atención en este POS.", size=12),
+                todos,
+                ft.Container(content=ft.Column([opciones_totems], scroll=ft.ScrollMode.AUTO),
+                             height=260, width=420),
+            ], spacing=12, tight=True),
+            width=440,
+        ),
+        actions=[
+            ft.TextButton("Cancelar", on_click=cerrar_filtro),
+            ft.FilledButton("Guardar", icon=ft.Icons.SAVE, on_click=guardar_filtro),
+        ],
+        actions_alignment=ft.MainAxisAlignment.END,
+    )
+    page.overlay.append(dialogo_filtro)
+    estado_conexion = ft.Icon(ft.Icons.CIRCLE, size=10, color=N.AMBER_400,
+                              tooltip="Comprobando conexión")
+    cabecera = [contador, filtro]
     if puede_configurar:
-        selector.controls.extend([todos, opciones_totems,
-            ft.FilledButton("Guardar filtro de esta caja", icon=ft.Icons.SAVE, on_click=guardar_filtro)])
+        cabecera.append(ft.OutlinedButton("Tótems", icon=ft.Icons.TUNE, on_click=abrir_filtro))
+    cabecera.extend([ft.IconButton(icon=ft.Icons.REFRESH, tooltip="Actualizar", on_click=refresh),
+                     estado_conexion])
     vista = ft.Column([
-        conexion,
-        selector,
-        ft.Row([contador, filtro, ft.OutlinedButton("Actualizar", icon=ft.Icons.REFRESH, on_click=refresh)],
+        ft.Row(cabecera, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True),
                alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
         lista,
     ], expand=True)
