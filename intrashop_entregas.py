@@ -27,7 +27,6 @@ def ensure_schema(conn):
         fecha_entrega TEXT
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_intrashop_entregas_estado ON intrashop_entregas(estado, fecha_creacion)")
-    conn.commit()
 
 
 def authorize(key):
