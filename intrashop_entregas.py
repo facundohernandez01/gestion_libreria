@@ -28,10 +28,12 @@ def ensure_schema(conn):
         entregado_por TEXT,
         fecha_entrega TEXT,
         totem_id TEXT,
-        totem_nombre TEXT
+        totem_nombre TEXT,
+        tomado_por TEXT,
+        tomado_en TEXT
     )""")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_entregas)")}
-    for name in ("totem_id", "totem_nombre"):
+    for name in ("totem_id", "totem_nombre", "tomado_por", "tomado_en"):
         if name not in columns:
             conn.execute("ALTER TABLE intrashop_entregas ADD COLUMN " + name + " TEXT")
     conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_totems (
