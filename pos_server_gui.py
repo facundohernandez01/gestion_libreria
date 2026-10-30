@@ -13,13 +13,15 @@ from server_manager import server_manager, ip_lan
 
 
 class ServerConsole:
-    def __init__(self):
+    def __init__(self, host="0.0.0.0", port=None):
+        self.host = host
+        self.port = port or settings.api_port
         self.root=tk.Tk()
         self.root.title("IntraShop · Servidor LAN")
         self.root.geometry("650x470")
         self.root.minsize(520,350)
         self.status=tk.StringVar(value="Servidor detenido")
-        self.url=tk.StringVar(value="http://"+ip_lan()+":"+str(settings.api_port))
+        self.url=tk.StringVar(value="http://"+ip_lan()+":"+str(self.port))
         outer=ttk.Frame(self.root,padding=18)
         outer.pack(fill="both",expand=True)
         ttk.Label(outer,text="Servidor IntraShop",font=("Arial",18,"bold")).pack(anchor="w")
@@ -46,11 +48,12 @@ class ServerConsole:
         ttk.Label(outer,textvariable=self.sessions).pack(anchor="w",pady=8)
         self.root.protocol("WM_DELETE_WINDOW",self.close)
         self.refresh()
+        self.start()
 
     def start(self):
         def run():
             try:
-                server_manager.iniciar(host="0.0.0.0",port=settings.api_port)
+                server_manager.iniciar(host=self.host,port=self.port)
             except Exception as exc:
                 self.root.after(0,lambda:messagebox.showerror("Servidor",str(exc)))
         threading.Thread(target=run,daemon=True).start()
