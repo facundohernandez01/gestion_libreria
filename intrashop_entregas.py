@@ -3,6 +3,7 @@ import sqlite3
 from fastapi import APIRouter, Header, HTTPException, Depends
 from pos_auth import require_delivery
 from pydantic import BaseModel, Field
+import re
 from core.settings import settings
 
 router = APIRouter(prefix="/tienda/admin/entregas", tags=["Entregas IntraShop"])
@@ -25,7 +26,18 @@ def ensure_schema(conn):
         fecha_creacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         fecha_actualizacion TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         entregado_por TEXT,
-        fecha_entrega TEXT
+        fecha_entrega TEXT,
+        totem_id TEXT,
+        totem_nombre TEXT
+    )""")
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_entregas)")}
+    for name in ("totem_id", "totem_nombre"):
+        if name not in columns:
+            conn.execute("ALTER TABLE intrashop_entregas ADD COLUMN " + name + " TEXT")
+    conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_totems (
+        id TEXT PRIMARY KEY, nombre TEXT NOT NULL,
+        ultimo_contacto TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        fecha_registro TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_intrashop_entregas_estado ON intrashop_entregas(estado, fecha_creacion)")
 
@@ -35,9 +47,23 @@ def authorize(key):
         raise HTTPException(401, "API key inválida")
 
 
-def register_paid_sale(conn, venta_id, checkout_id):
+def register_paid_sale(conn, venta_id, checkout_id, totem_id=None, totem_nombre=None):
     """Invocar en la MISMA transacción que registra la venta y descuenta stock."""
-    conn.execute("INSERT INTO intrashop_entregas (venta_id, checkout_id) VALUES (?,?)", (venta_id, checkout_id))
+    conn.execute("INSERT INTO intrashop_entregas (venta_id, checkout_id, totem_id, totem_nombre) VALUES (?,?,?,?)", (venta_id, checkout_id, totem_id, totem_nombre))
+
+
+class TotemRegister(BaseModel):
+    id: str = Field(min_length=8, max_length=64)
+    nombre: str = Field(min_length=1, max_length=80)
+
+
+@router.get("/totems")
+def list_totems(operador: str = Depends(require_delivery)):
+    with connect() as conn:
+        ensure_schema(conn)
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM intrashop_totems ORDER BY nombre COLLATE NOCASE"
+        ).fetchall()]
 
 
 class EntregaUpdate(BaseModel):
