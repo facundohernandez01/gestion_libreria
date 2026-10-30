@@ -30,10 +30,11 @@ def ensure_schema(conn):
         totem_id TEXT,
         totem_nombre TEXT,
         tomado_por TEXT,
-        tomado_en TEXT
+        tomado_en TEXT,
+        tomado_terminal TEXT
     )""")
     columns = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_entregas)")}
-    for name in ("totem_id", "totem_nombre", "tomado_por", "tomado_en"):
+    for name in ("totem_id", "totem_nombre", "tomado_por", "tomado_en", "tomado_terminal"):
         if name not in columns:
             conn.execute("ALTER TABLE intrashop_entregas ADD COLUMN " + name + " TEXT")
     conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_totems (
@@ -69,33 +70,33 @@ def list_totems(operador: str = Depends(require_delivery)):
 
 
 @router.post("/{order_id}/tomar")
-def tomar_comanda(order_id: int, operador: str = Depends(require_delivery)):
+def tomar_comanda(order_id: int, operador: str = Depends(require_delivery), x_terminal_id: str = Header(default="")):
     with connect() as conn:
         ensure_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT estado, tomado_por FROM intrashop_entregas WHERE id=?", (order_id,)).fetchone()
+        row = conn.execute("SELECT estado, tomado_por, tomado_terminal FROM intrashop_entregas WHERE id=?", (order_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Comanda inexistente")
         if row["estado"] == "entregado":
             raise HTTPException(409, "Comanda ya entregada")
-        if row["tomado_por"] and row["tomado_por"] != operador:
+        if row["tomado_por"] and (row["tomado_por"] != operador or row["tomado_terminal"] != x_terminal_id):
             raise HTTPException(409, "Comanda tomada por " + row["tomado_por"])
-        conn.execute("UPDATE intrashop_entregas SET tomado_por=?, tomado_en=COALESCE(tomado_en,CURRENT_TIMESTAMP) WHERE id=?", (operador, order_id))
+        conn.execute("UPDATE intrashop_entregas SET tomado_por=?, tomado_terminal=?, tomado_en=COALESCE(tomado_en,CURRENT_TIMESTAMP) WHERE id=?", (operador, x_terminal_id, order_id))
         conn.commit()
     return {"ok": True, "tomado_por": operador}
 
 
 @router.post("/{order_id}/liberar")
-def liberar_comanda(order_id: int, operador: str = Depends(require_delivery)):
+def liberar_comanda(order_id: int, operador: str = Depends(require_delivery), x_terminal_id: str = Header(default="")):
     with connect() as conn:
         ensure_schema(conn)
         conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT tomado_por, estado FROM intrashop_entregas WHERE id=?", (order_id,)).fetchone()
+        row = conn.execute("SELECT tomado_por, tomado_terminal, estado FROM intrashop_entregas WHERE id=?", (order_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Comanda inexistente")
-        if row["tomado_por"] != operador or row["estado"] == "entregado":
+        if row["tomado_por"] != operador or row["tomado_terminal"] != x_terminal_id or row["estado"] == "entregado":
             raise HTTPException(409, "No podés liberar esta comanda")
-        conn.execute("UPDATE intrashop_entregas SET tomado_por=NULL, tomado_en=NULL WHERE id=?", (order_id,))
+        conn.execute("UPDATE intrashop_entregas SET tomado_por=NULL, tomado_en=NULL, tomado_terminal=NULL WHERE id=?", (order_id,))
         conn.commit()
     return {"ok": True}
 
@@ -129,7 +130,7 @@ def list_orders(estado: str = "", operador: str = Depends(require_delivery)):
 
 
 @router.patch("/{order_id}")
-def update_order(order_id: int, body: EntregaUpdate, operador: str = Depends(require_delivery)):
+def update_order(order_id: int, body: EntregaUpdate, operador: str = Depends(require_delivery), x_terminal_id: str = Header(default="")):
     transitions = {"pendiente": {"preparando", "listo", "entregado"}, "preparando": {"listo"}, "listo": {"entregado"}, "entregado": set()}
     with connect() as conn:
         ensure_schema(conn)
@@ -137,7 +138,7 @@ def update_order(order_id: int, body: EntregaUpdate, operador: str = Depends(req
         row = conn.execute("SELECT estado, tomado_por FROM intrashop_entregas WHERE id=?", (order_id,)).fetchone()
         if not row:
             raise HTTPException(404, "Pedido no encontrado")
-        if row["tomado_por"] != operador:
+        if row["tomado_por"] != operador or row["tomado_terminal"] != x_terminal_id:
             raise HTTPException(409, "La comanda debe estar tomada por tu usuario")
         if body.estado not in transitions[row["estado"]]:
             raise HTTPException(409, "Transición no permitida")
