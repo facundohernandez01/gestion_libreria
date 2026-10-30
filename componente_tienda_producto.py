@@ -31,6 +31,7 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
         size=12, color=N.GREY_400,
     )
     ruta_seleccionada = {"path": ""}
+    vista_previa = ft.Image(src=row["imagen_tienda"] if row and str(row["imagen_tienda"]).startswith("https://") else "", width=120, height=120, fit=ft.BoxFit.CONTAIN)
     url_imagen = ft.TextField(label="URL pública HTTPS (opcional)", hint_text="https://ejemplo.com/producto.jpg", value=row["imagen_tienda"] if row and str(row["imagen_tienda"]).startswith("https://") else "")
 
     async def seleccionar_imagen(e=None):
@@ -49,6 +50,7 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
             return
         ruta_seleccionada["path"] = ruta
         imagen_actual.value = f"Foto seleccionada: {Path(ruta).name}"
+        vista_previa.src = ruta
         page.update()
 
     def guardar(e=None):
@@ -104,7 +106,8 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
             ft.Text("PUBLICAR EN INTRASHOP", size=18, weight=ft.FontWeight.BOLD),
         ]),
         content=ft.Container(
-            width=460,
+            width=420,
+            height=410,
             content=ft.Column([
                 ft.Text(producto.get("descripcion", "Producto"), size=15,
                         weight=ft.FontWeight.BOLD),
@@ -114,8 +117,9 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
                 disponible,
                 ft.Text("Foto del catálogo", size=13, weight=ft.FontWeight.BOLD),
                 imagen_actual,
+                ft.Container(content=vista_previa, height=125, alignment=ft.Alignment.CENTER),
                 url_imagen,
-                ft.Text("Las imágenes por URL requieren Internet en la pantalla de la tienda. Para uso 100% LAN, cargá una foto local.", size=11, color=N.GREY_500),
+                ft.Text("URL externa: requiere Internet. Foto cargada: funciona en la LAN.", size=11, color=N.GREY_500),
                 ft.OutlinedButton(
                     "Elegir foto", icon=ft.Icons.UPLOAD_FILE,
                     on_click=seleccionar_imagen,
