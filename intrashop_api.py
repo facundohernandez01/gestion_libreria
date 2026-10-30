@@ -265,6 +265,16 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 _jobs[job_id].update(status="cancel_error", message="No se pudo verificar la cancelación. Revisá Mercado Pago.")
             else:
                 _jobs[job_id].update(status="error", message=str(exc))
+    finally:
+        # No liberar stock cuando el resultado de MP es incierto.
+        with _jobs_lock:
+            current = _jobs.get(job_id, {}).get("status")
+        if current != "completed":
+            persisted = "cancelled" if current in ("cancelled", "expired") else "uncertain"
+            with _connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                checkout_store.set_status(conn, job_id, persisted)
+                conn.commit()
 
 
 @router.get("/health")
