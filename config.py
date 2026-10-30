@@ -709,12 +709,31 @@ def ConfigModal(page: ft.Page):
             mp_bindings_info.color = N.RED_400
         page.update()
 
+    def sincronizar_mp_servidor():
+        """En modo cliente, las credenciales deben vivir en el servidor autónomo."""
+        from core.db_factory import modo_actual, _server_url
+        if modo_actual() != "cliente":
+            return
+        from adapters.entregas import _session_token
+        import httpx
+        if not _session_token:
+            raise ValueError("Iniciá sesión en el servidor antes de configurar Mercado Pago.")
+        response = httpx.put(
+            _server_url().rstrip("/") + "/tienda/admin/mp-credentials",
+            json={"access_token":token_field.value.strip(),
+                  "user_id":user_field.value.strip(),
+                  "enabled":bool(mp_activo_switch.value)},
+            headers={"Authorization":"Bearer "+_session_token},
+            timeout=12)
+        response.raise_for_status()
+
     def guardar_asignacion(e=None):
         if not mp_terminal.value or mp_asignado.value is None:
             mp_bindings_info.value = "Seleccioná un dispositivo y un POS Mercado Pago."
             page.update()
             return
         try:
+            sincronizar_mp_servidor()
             from adapters.mp_bindings import asignar
             tipo, tid = mp_terminal.value.split(":",1)
             pos = pos_list[int(mp_asignado.value)]
