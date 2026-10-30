@@ -168,6 +168,11 @@ class MercadoPagoService:
                 except Exception:
                     time.sleep(intervalo)
                     continue
+                # Nunca atribuir el pago de otro checkout al QR actual.
+                if reference and data.get("external_reference") != reference:
+                    self._log("Referencia de pago distinta; ignorando orden del QR.", cb)
+                    time.sleep(intervalo)
+                    continue
                 estado = data.get("order_status", "unknown")
                 pagado = float(data.get("paid_amount") or 0)
                 total = float(data.get("total_amount") or 0)
