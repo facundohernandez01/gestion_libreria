@@ -405,6 +405,39 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
     return {"ok": True}
 
 
+@router.get("/admin/checkouts-pending")
+def pending_checkouts(operador: str = Depends(require_config)):
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        return [dict(row) for row in conn.execute("""SELECT id,totem_id,pos_external_id,
+            estado,total,created_at,updated_at FROM intrashop_checkouts
+            WHERE estado NOT IN ('completed','cancelled','failed')
+            ORDER BY created_at DESC LIMIT 100""")]
+
+
+@router.post("/admin/checkouts/{checkout_id}/reconcile")
+def reconcile_checkout(checkout_id: str, operador: str = Depends(require_config)):
+    """Reconciliar pagos aprobados tras reinicio, sin liberar reservas por ausencia de respuesta."""
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Checkout inexistente")
+    if row["estado"] == "completed":
+        return {"estado":"completed","venta_id":row["venta_id"]}
+    from services.mercadopago_service import mp_service
+    if not mp_service.consultar_ultimo_pago(reference=checkout_id):
+        return {"estado":"uncertain","message":"No se confirmó pago aprobado. Reserva retenida para conciliación."}
+    cart = json.loads(row["items_json"])
+    with _jobs_lock:
+        _jobs[checkout_id] = {"status":"paid","sale_done":False,"totem_id":row["totem_id"],
+            "totem_nombre":None,"items":cart,"total":row["total"]}
+    _finalize_sale(checkout_id,cart,row["total"])
+    with _jobs_lock:
+        result = _jobs[checkout_id]
+    return {"estado":result["status"],"venta_id":result.get("venta_id"),
+            "message":result.get("message","")}
+
+
 class TotemRegisterIn(BaseModel):
     id: str = Field(min_length=8, max_length=64)
     nombre: str = Field(min_length=1, max_length=80)
