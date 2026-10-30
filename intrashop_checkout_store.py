@@ -50,6 +50,8 @@ def reserve(conn, checkout_id, totem_id, items, total):
     assigned = binding(conn, totem_id)
     if not assigned:
         raise ValueError("Asigná un POS Mercado Pago exclusivo a este tótem desde Ajustes.")
+    if not assigned["qr_url"]:
+        raise ValueError("El POS asignado no tiene URL de QR. Revisá la asignación.")
     occupied = conn.execute("""SELECT id FROM intrashop_checkouts
         WHERE pos_external_id=? AND estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
         LIMIT 1""", (assigned["pos_external_id"],)).fetchone()
