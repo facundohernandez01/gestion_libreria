@@ -1099,7 +1099,7 @@ def ConfigModal(page: ft.Page):
 
     contenidos = [
         tienda_tab,
-        _tab_content([seccion_mp, seccion_crear_pos, qr_panel]),
+        _tab_content([seccion_mp, seccion_mp_terminales, seccion_crear_pos, qr_panel]),
         _tab_content([seccion_facturacion]),
         backup_tab,
     ]
