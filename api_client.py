@@ -37,7 +37,7 @@ class ApiClient:
             from adapters.entregas import set_session
             set_session(data["access_token"])
             return {"usuario": data["usuario"], "nombre": data["usuario"],
-                    "rol": "OPERADOR", "es_admin": False,
+                    "rol": data.get("rol", "OPERADOR"), "es_admin": data.get("es_admin", False),
                     "permisos": data.get("permisos", {}), "activo": True}
         except Exception:
             return None
