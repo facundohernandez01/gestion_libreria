@@ -675,6 +675,73 @@ def ConfigModal(page: ft.Page):
         dialog.open = False
         page.update()
 
+    # Asignaciones exclusivas: un QR MP por tótem o caja física.
+    mp_terminal = ft.Dropdown(label="Dispositivo IntraShop / Caja", width=340)
+    mp_asignado = ft.Dropdown(label="POS de Mercado Pago asignado", width=340)
+    mp_bindings_info = ft.Text("Consultá dispositivos y POS disponibles.", size=12, color=N.GREY_500)
+    mp_bindings_list = ft.Column(spacing=4)
+
+    def cargar_asignaciones(e=None):
+        try:
+            from adapters.entregas import EntregasAdapter
+            from adapters.mp_bindings import listar
+            registrados = EntregasAdapter().totems()
+            mp_terminal.options = [
+                ft.dropdown.Option(key="totem:" + t["id"], text="Tótem · " + t["nombre"])
+                for t in registrados
+            ]
+            # Caja física: identificación local, independiente del tótem.
+            mp_terminal.options.append(ft.dropdown.Option(key="caja:principal", text="Caja POS principal"))
+            bindings = listar()
+            mp_bindings_list.controls = [
+                ft.Text(x["nombre"] + " → " + x["pos_external_id"], size=12)
+                for x in bindings
+            ]
+            mp_asignado.options = [
+                ft.dropdown.Option(key=str(i), text=p.get("name","POS") + " · " + p.get("external_id",""))
+                for i,p in enumerate(pos_list) if p.get("external_id")
+            ]
+            mp_bindings_info.value = str(len(registrados)) + " tótem(s) registrados · " + str(len(bindings)) + " asignaciones"
+            mp_bindings_info.color = N.GREEN_400
+        except Exception as exc:
+            mp_bindings_info.value = "No se pudo consultar la configuración central: " + str(exc)
+            mp_bindings_info.color = N.RED_400
+        page.update()
+
+    def guardar_asignacion(e=None):
+        if not mp_terminal.value or mp_asignado.value is None:
+            mp_bindings_info.value = "Seleccioná un dispositivo y un POS Mercado Pago."
+            page.update()
+            return
+        try:
+            from adapters.mp_bindings import asignar
+            tipo, tid = mp_terminal.value.split(":",1)
+            pos = pos_list[int(mp_asignado.value)]
+            store_ext = settings.mp_external_store_id or db.get_config_value("EXTERNAL_STORE_ID") or ""
+            if not store_ext:
+                raise ValueError("Configurá el Store de Mercado Pago antes de asignar.")
+            asignar(tid,tipo,pos["external_id"],store_ext,
+                    (pos.get("qr") or {}).get("image",""),pos.get("name",""))
+            cargar_asignaciones()
+        except Exception as exc:
+            mp_bindings_info.value = "No se pudo asignar: " + str(exc)
+            mp_bindings_info.color = N.RED_400
+            page.update()
+
+    seccion_mp_terminales = ft.Container(
+        content=ft.Column([
+            ft.Text("Asignación de QR por dispositivo", size=14, weight=ft.FontWeight.BOLD, color=N.BLUE_400),
+            ft.Text("Cada tótem debe tener un POS Mercado Pago distinto. Una misma asignación no se puede reutilizar.", size=12),
+            ft.Row([ft.OutlinedButton("Detectar tótems y POS", icon=ft.Icons.SEARCH,
+                on_click=lambda e: (obtener_pos(), cargar_asignaciones()))], wrap=True),
+            mp_terminal, mp_asignado,
+            ft.FilledButton("Asignar QR al dispositivo", icon=ft.Icons.CHECK, on_click=guardar_asignacion),
+            mp_bindings_info, mp_bindings_list,
+        ], spacing=8),
+        padding=12, border_radius=8,
+        bgcolor=ft.Colors.with_opacity(0.05,N.BLUE_GREY_800),
+    )
+
     # ---------- secciones (layout del build) ----------
     seccion_negocio = ft.Container(
         content=ft.Column([
