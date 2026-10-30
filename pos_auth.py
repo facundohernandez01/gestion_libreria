@@ -37,7 +37,8 @@ def login(body: LoginRequest):
                 if expiry < now:
                     _sessions.pop(key, None)
     return {"access_token": token, "token_type": "bearer", "expires_in": TTL,
-            "usuario": usuario["usuario"], "permisos": usuario.get("permisos", {})}
+            "usuario": usuario["usuario"], "permisos": usuario.get("permisos", {}),
+            "es_admin": bool(usuario.get("es_admin")), "rol": usuario.get("rol", "OPERADOR")}
 
 
 def require_delivery(authorization: str | None = Header(default=None)):
