@@ -42,6 +42,8 @@ class ServerConsole:
         self.clients.heading("operador",text="Operador")
         self.clients.heading("expira",text="Sesión hasta")
         self.clients.pack(fill="x")
+        self.bindings=tk.StringVar(value="QR asignados: —")
+        ttk.Label(outer,textvariable=self.bindings).pack(anchor="w")
         self.pending=tk.StringVar(value="Reservas pendientes: —")
         ttk.Label(outer,textvariable=self.pending).pack(anchor="w")
         self.sessions=tk.StringVar(value="Sesiones POS: 0")
@@ -81,6 +83,9 @@ class ServerConsole:
                 rows=conn.execute("SELECT nombre,id,ultimo_contacto FROM intrashop_totems ORDER BY nombre").fetchall()
                 pending=conn.execute("SELECT COUNT(*) FROM intrashop_checkouts WHERE estado='uncertain'").fetchone()[0]
             self.pending.set("Reservas que requieren conciliación: "+str(pending))
+            with sqlite3.connect(settings.db_path,timeout=1) as conn:
+                n=conn.execute("SELECT COUNT(*) FROM intrashop_mp_bindings").fetchone()[0]
+            self.bindings.set("QR persistidos en servidor: "+str(n))
             for key in self.totems.get_children():
                 self.totems.delete(key)
             for row in rows:
