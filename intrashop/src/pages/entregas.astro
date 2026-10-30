@@ -13,15 +13,17 @@ import "../styles/global.css";
 </main>
 <script>
 type Item={descripcion:string;cantidad:number;subtotal:number};
-type Order={id:number;venta_id:number;estado:string;fecha_creacion:string;total:number;items:Item[];entregado_por:string|null;tomado_por:string|null};
+type Order={id:number;venta_id:number;estado:string;fecha_creacion:string;total:number;items:Item[];entregado_por:string|null;tomado_por:string|null;tomado_terminal:string|null};
 const $=(s:string)=>document.querySelector<HTMLElement>(s)!;
 const base=(localStorage.getItem("intrashop_api")||import.meta.env.PUBLIC_POS_URL||("http://"+location.hostname+":8000")).replace(/\/$/,"");
 let token="";let authenticatedUser="";
+let terminalId=localStorage.getItem("intrashop_delivery_terminal_id");
+if(!terminalId){terminalId=crypto.randomUUID();localStorage.setItem("intrashop_delivery_terminal_id",terminalId);}
 let filter="activos",first=true,seen=new Set<number>(),busy=false;
 const labels:Record<string,string>={pendiente:"Pendiente de preparación",preparando:"Preparando",listo:"Listo para retirar",entregado:"Entregado"};
 const money=(n:number)=>new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(n);
 const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]||c));
-async function api(path:string,options:RequestInit={}){const response=await fetch(base+path,{...options,headers:{"Authorization":"Bearer "+token,"Content-Type":"application/json",...(options.headers||{})}});if(!response.ok)throw Error((await response.text()).slice(0,160));return response.json();}
+async function api(path:string,options:RequestInit={}){const response=await fetch(base+path,{...options,headers:{"Authorization":"Bearer "+token,"X-Terminal-Id":terminalId,"Content-Type":"application/json",...(options.headers||{})}});if(!response.ok)throw Error((await response.text()).slice(0,160));return response.json();}
 function alertNew(n:number){if(n<1)return;try{if(Notification.permission==="granted")new Notification("IntraShop · Pedido nuevo",{body:n+" comanda(s) para preparar"});}catch{}}
 async function load(){
 if(!token){$("#connection").textContent="Iniciá sesión con tu usuario POS para ver las comandas.";return;}
@@ -39,7 +41,7 @@ $("#orders").innerHTML=visible.length?visible.map(o=>{
 let nextState=o.estado==="pendiente"?"preparando":o.estado==="preparando"?"listo":o.estado==="listo"?"entregado":"";
 const action=o.estado==="pendiente"?"Iniciar preparación":o.estado==="preparando"?"Marcar listo":o.estado==="listo"?"Confirmar entrega":"";
 if(o.estado!=="entregado"&&!o.tomado_por){nextState="tomar";}
-if(o.tomado_por&&o.tomado_por!==authenticatedUser){nextState="";}
+if(o.tomado_por&&(o.tomado_por!==authenticatedUser||o.tomado_terminal!==terminalId)){nextState="";}
 return '<article class="delivery-card '+o.estado+'"><div class="delivery-head"><div><small>COMANDA #'+o.venta_id+'</small><h2>'+labels[o.estado]+'</h2></div><strong>'+money(o.total)+'</strong></div><div class="delivery-items">'+o.items.map(i=>'<div><span><b>'+i.cantidad+' ×</b> '+escape(i.descripcion)+'</span><strong>'+money(i.subtotal)+'</strong></div>').join("")+'</div><div class="delivery-foot"><small>'+escape(o.fecha_creacion)+'</small>'+(nextState?'<button class="primary-button" data-id="'+o.id+'" data-next="'+nextState+'">'+(nextState==='tomar'?'Tomar comanda':action)+'</button>':'<span>Retirado por '+escape(o.entregado_por||"operador")+'</span>')+'</div></article>';
 }).join(""):'<div class="empty-state"><h3>No hay pedidos en esta vista</h3><p>Las comandas aparecen cuando Mercado Pago confirma un cobro.</p></div>';
 }catch(e){$("#connection").textContent="Sin conexión · "+(e as Error).message;}finally{busy=false;}
