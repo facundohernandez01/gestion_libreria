@@ -572,11 +572,15 @@ def ConfigModal(page: ft.Page):
             page.update()
             return
         resultado_text.value = "⏳ Consultando POS…"
+        mp_loading.visible = True
+        mp_load_status.value = "Consultando Mercado Pago…"
         page.update()
         _aplicar_credenciales()
         nonlocal pos_list
         pos_list = mp_service.listar_pos()
         if not pos_list:
+            mp_loading.visible = False
+            mp_load_status.value = "No se encontraron puntos de venta."
             resultado_text.value = "⚠️ Sin POS o error de credenciales"
             page.update()
             return
@@ -586,6 +590,8 @@ def ConfigModal(page: ft.Page):
         ]
         pos_dropdown.value = next((str(i) for i, p in enumerate(pos_list) if p.get("external_id") == (db.get_config_value("EXTERNAL_POS_ID") or external_pos_id_saved)), None)
         cargar_asignaciones()
+        mp_loading.visible = False
+        mp_load_status.value = f"{len(pos_list)} POS cargados; selección restaurada."
         resultado_text.value = f"✅ {len(pos_list)} POS. Seleccione uno."
         page.update()
 
