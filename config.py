@@ -584,6 +584,8 @@ def ConfigModal(page: ft.Page):
             ft.dropdown.Option(key=str(i), text=f"{p.get('name')} ({p.get('external_id', 'N/A')})")
             for i, p in enumerate(pos_list)
         ]
+        pos_dropdown.value = next((str(i) for i, p in enumerate(pos_list) if p.get("external_id") == (db.get_config_value("EXTERNAL_POS_ID") or external_pos_id_saved)), None)
+        cargar_asignaciones()
         resultado_text.value = f"✅ {len(pos_list)} POS. Seleccione uno."
         page.update()
 
