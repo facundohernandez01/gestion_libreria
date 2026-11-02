@@ -27,7 +27,7 @@ def asignar(terminal_id, terminal_type, pos_external_id, store_external_id, qr_u
     data={"terminal_id":terminal_id,"terminal_type":terminal_type,
           "pos_external_id":pos_external_id,"store_external_id":store_external_id,
           "qr_url":qr_url,"nombre":nombre}
-    if modo_actual()!="local":
+    if modo_actual()=="cliente":
         return _remote("PUT","",data)
     import intrashop_checkout_store as store
     from intrashop_api import _connect
