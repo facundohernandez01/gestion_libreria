@@ -691,8 +691,10 @@ def ConfigModal(page: ft.Page):
     mp_asignado = ft.Dropdown(label="POS de Mercado Pago asignado", width=340)
     mp_bindings_info = ft.Text("Consultá dispositivos y POS disponibles.", size=12, color=N.GREY_500)
     mp_bindings_list = ft.Column(spacing=4)
+    mp_saved_bindings = []
 
     def cargar_asignaciones(e=None):
+        nonlocal mp_saved_bindings
         try:
             from adapters.entregas import EntregasAdapter
             from adapters.mp_bindings import listar
@@ -705,6 +707,7 @@ def ConfigModal(page: ft.Page):
             mp_terminal.options.append(ft.dropdown.Option(
                 key="caja:" + terminal_id(), text="Esta caja POS · " + terminal_id()[:14]))
             bindings = listar()
+            mp_saved_bindings = bindings
             mp_bindings_list.controls = [
                 ft.Text(x["nombre"] + " → " + x["pos_external_id"], size=12)
                 for x in bindings
@@ -713,12 +716,28 @@ def ConfigModal(page: ft.Page):
                 ft.dropdown.Option(key=str(i), text=p.get("name","POS") + " · " + p.get("external_id",""))
                 for i,p in enumerate(pos_list) if p.get("external_id")
             ]
+            restaurar_qr_dispositivo()
             mp_bindings_info.value = str(len(registrados)) + " tótem(s) registrados · " + str(len(bindings)) + " asignaciones"
             mp_bindings_info.color = N.GREEN_400
         except Exception as exc:
             mp_bindings_info.value = "No se pudo consultar la configuración central: " + str(exc)
             mp_bindings_info.color = N.RED_400
         page.update()
+
+    def restaurar_qr_dispositivo(e=None):
+        selected = (mp_terminal.value or "").split(":", 1)
+        binding = next((x for x in mp_saved_bindings
+                        if len(selected) == 2 and x["terminal_type"] == selected[0]
+                        and x["terminal_id"] == selected[1]), None)
+        if binding:
+            mp_asignado.value = next((str(i) for i, p in enumerate(pos_list)
+                                      if p.get("external_id") == binding["pos_external_id"]), None)
+            mp_bindings_info.value = "QR guardado: " + binding["pos_external_id"]
+        else:
+            mp_asignado.value = None
+        page.update()
+
+    mp_terminal.on_change = restaurar_qr_dispositivo
 
     def sincronizar_mp_servidor():
         """En modo cliente, las credenciales deben vivir en el servidor autónomo."""
