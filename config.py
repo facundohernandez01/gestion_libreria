@@ -620,22 +620,26 @@ def ConfigModal(page: ft.Page):
         page.update()
 
     def crear_pos_adicional(e=None):
-        if not external_store_id_saved and not db.get_config_value("STORE_ID"):
-            resultado_text.value = "❌ Faltan datos para crear el POS"
+        if not token_field.value.strip() or not user_field.value.strip():
+            resultado_text.value = "Ingresá credenciales de Mercado Pago."
             page.update()
             return
-        resultado_text.value = "⏳ Creando POS adicional…"
+        resultado_text.value = "Creando nuevo POS en la sucursal existente…"
+        mp_loading.visible = True
         page.update()
 
         def worker():
-            _aplicar_credenciales()
-            p_ext, qr_url, error = mp_service.crear_pos_adicional()
-            if error:
-                resultado_text.value = f"❌ {error}"
-            else:
-                resultado_text.value = f"✅ POS adicional: {p_ext}"
-                qr_image.src = qr_url or qr_image.src
-            page.update()
+            try:
+                _aplicar_credenciales()
+                p_ext, qr_url, error = mp_service.crear_pos_adicional()
+                if error:
+                    resultado_text.value = error
+                else:
+                    resultado_text.value = "POS creado: " + p_ext + ". Asignalo a una caja o tótem."
+                    obtener_pos()
+            finally:
+                mp_loading.visible = False
+                page.update()
 
         threading.Thread(target=worker, daemon=True).start()
 
