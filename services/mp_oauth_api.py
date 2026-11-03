@@ -76,3 +76,17 @@ def list_pos(operador: str = Depends(require_config)):
         raise
     except Exception as error:
         _failure(error)
+
+class CreatePosIn(BaseModel):
+    nombre: str = Field(default="POS Nuevo", min_length=1, max_length=80)
+
+
+@router.post("/pos/create")
+def create_pos(body: CreatePosIn, operador: str = Depends(require_config)):
+    """Crea el POS con OAuth del servidor. No expone el token a la caja cliente."""
+    if not bridge.connected():
+        raise HTTPException(status_code=409, detail="Conectá Mercado Pago primero.")
+    pos_external_id, qr_url, error = mp_service.crear_pos_adicional(body.nombre)
+    if error:
+        raise HTTPException(status_code=502, detail=error)
+    return {"pos_external_id": pos_external_id, "qr_url": qr_url}
