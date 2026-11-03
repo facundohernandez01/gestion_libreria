@@ -73,6 +73,8 @@ class MercadoPagoService:
         from services import mp_oauth_bridge
         if mp_oauth_bridge.connected():
             token, uid = mp_oauth_bridge.credentials()
+            # Nunca reutilizar por accidente el Store/POS de otra cuenta manual.
+            store_ext, pos_ext = "", ""
 
         # Caja física: resolver la asignación central si existe.
         try:
@@ -348,42 +350,72 @@ class MercadoPagoService:
         except requests.RequestException as e:
             return "", "", "", f"Error de red: {e}"
 
-    def crear_pos_adicional(self, nombre: str = "POS Adicional") -> tuple[str, str, str]:
-        """Crear un POS sin cambiar el POS predeterminado de ninguna caja."""
+    def crear_pos_adicional(self, nombre: str = "POS Adicional",
+                            requested_store_id: str = "") -> tuple[str, str, str]:
+        """Crear POS para una sucursal de la cuenta autenticada, sin cambiar la caja actual."""
         from core.settings import settings
-        token, uid, store_ext, _ = self.credenciales()
+        from services import mp_oauth_bridge
+
+        token, uid, legacy_store_ext, _ = self.credenciales()
         if not token or not uid:
-            return "", "", "Configurá las credenciales de Mercado Pago."
+            return "", "", "Conectá Mercado Pago mediante OAuth o configurá credenciales manuales."
+
         db = self._db_or_none()
-        store_id = db.get_config_value("STORE_ID") if db else None
-        # Reutilizar sucursal de POS existentes aunque la configuración local se haya vaciado.
-        existing = self.listar_pos()
-        if not store_id and existing:
-            store_id = next((str(p["store_id"]) for p in existing if p.get("store_id")), None)
+        store_id = None
+        store_ext = None
+        if mp_oauth_bridge.connected():
+            # Nunca usar STORE_ID de la base heredada para otra cuenta autorizada.
+            existing = self.listar_pos()
+            store_ids = {str(pos["store_id"]) for pos in existing if pos.get("store_id")}
+            try:
+                response = requests.get(
+                    f"{MP_BASE}/users/{uid}/stores",
+                    headers=self._headers(token), timeout=settings.mp_timeout_seg)
+                if response.status_code == 200:
+                    stores = response.json().get("results", [])
+                    store_ids.update(str(store["id"]) for store in stores if store.get("id"))
+            except requests.RequestException:
+                pass
+            if requested_store_id and str(requested_store_id) not in store_ids:
+                return "", "", "La sucursal seleccionada no pertenece a la cuenta conectada."
+            store_id = str(requested_store_id) if requested_store_id else next(iter(sorted(store_ids)), None)
+            if not store_id:
+                return "", "", ("La cuenta no tiene sucursales disponibles. "
+                                "Creá una sucursal válida en Mercado Pago y volvé a intentar.")
+        else:
+            store_id = db.get_config_value("STORE_ID") if db else None
+            if not store_id:
+                existing = self.listar_pos()
+                store_id = next((str(pos["store_id"]) for pos in existing if pos.get("store_id")), None)
+            if not store_id:
+                store_ext = legacy_store_ext
+
         if not store_id and not store_ext:
-            return "", "", ("No se encontró una sucursal de Mercado Pago. "
-                            "Seleccioná una sucursal existente o configurá una nueva con permisos.")
-        payload = {"name": nombre or "POS Adicional",
-                   "external_id": "POS" + uuid.uuid4().hex[:24],
-                   "config": {"qr": {"operating_mode": "pdv"}}}
+            return "", "", "No se encontró una sucursal para crear el POS."
+        payload = {
+            "name": nombre or "POS Adicional",
+            "external_id": "POS" + uuid.uuid4().hex[:24],
+            "config": {"qr": {"operating_mode": "pdv"}},
+        }
         if store_id:
-            payload["store_id"] = int(store_id)
+            payload["store_id"] = str(store_id)
         else:
             payload["external_store_id"] = store_ext
+
         headers = self._headers(token)
         headers["X-Idempotency-Key"] = str(uuid.uuid4())
         try:
-            resp = requests.post(f"{MP_BASE}/v2/pos", headers=headers, json=payload,
-                                 timeout=settings.mp_timeout_seg)
+            response = requests.post(
+                f"{MP_BASE}/v2/pos", headers=headers, json=payload,
+                timeout=settings.mp_timeout_seg)
         except requests.RequestException as exc:
             return "", "", f"Error de red: {exc}"
-        if resp.status_code not in (200, 201):
-            return "", "", f"Mercado Pago HTTP {resp.status_code}: {resp.text[:300]}"
-        result = resp.json()
+        if response.status_code not in (200, 201):
+            return "", "", f"Mercado Pago HTTP {response.status_code}: {response.text[:300]}"
+        result = response.json()
         pos_ext = result.get("external_id", "")
         qr_url = (result.get("qr_response") or result.get("qr") or {}).get("image", "")
-        if db and store_id:
-            db.set_config("STORE_ID", str(store_id))
+        # No modificar por sorpresa la caja predeterminada de ningún POS.
         return pos_ext, qr_url, ""
 
     def descargar_qr(self, destino: str | Path = "img/qr.png") -> tuple[bool, str]:
