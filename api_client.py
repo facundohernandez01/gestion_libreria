@@ -27,6 +27,21 @@ class ApiClient:
         r.raise_for_status()
         return r.json()
 
+    def autenticar_usuario(self, usuario: str, clave: str):
+        try:
+            response = httpx.post(self.base_url + "/pos/auth/login",
+                json={"usuario": usuario, "clave": clave}, timeout=8)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            from adapters.entregas import set_session
+            set_session(data["access_token"])
+            return {"usuario": data["usuario"], "nombre": data["usuario"],
+                    "rol": data.get("rol", "OPERADOR"), "es_admin": data.get("es_admin", False),
+                    "permisos": data.get("permisos", {}), "activo": True}
+        except Exception:
+            return None
+
     def health(self) -> bool:
         try:
             return httpx.get(self.base_url + "/health", timeout=5).status_code == 200
@@ -54,6 +69,13 @@ class ApiClient:
 
     def buscar_productos(self, termino: str = "", campo: str = "descripcion", limit: int = 200):
         return self._get("/productos", params={"termino": termino, "campo": campo})[:limit]
+
+    def listar_cajas(self, filtro: str = "", desde: str = "", hasta: str = ""):
+        return self._get("/cajas/historial",
+                         params={"filtro": filtro, "desde": desde, "hasta": hasta})
+
+    def obtener_ventas_por_caja(self, caja_id: int):
+        return self._get(f"/cajas/{int(caja_id)}/ventas")
 
     def obtener_caja_abierta(self):
         return self._get("/cajas/abierta")

@@ -12,7 +12,7 @@ from ui.helpers import abrir_dialogo, cerrar_dialogo, snack
 from utils.paths import base_dir
 from utils.licencia import obtener_device_id
 
-def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja, on_compras=None, on_historial_cajas=None, on_ingreso_stock=None, on_salir=None, permisos=None, es_admin=False, on_roles_usuarios=None, modo_cliente=False):
+def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado, on_nueva_venta_lector, on_gestion_articulos, on_cerrar_caja, on_compras=None, on_historial_cajas=None, on_ingreso_stock=None, on_salir=None, permisos=None, es_admin=False, on_roles_usuarios=None, modo_cliente=False, usuario_actual=""):
     """Ventana principal con lista de ventas y acciones"""
     permisos = permisos or {}
 
@@ -128,6 +128,14 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     
     print(f"Ventas encontradas: {len(ventas)}")
     
+    def consultar_pendientes():
+        from adapters.entregas import EntregasAdapter
+        return {int(o["venta_id"]) for o in EntregasAdapter().listar() if o["estado"] != "entregado"}
+
+    try:
+        pendientes_entrega = consultar_pendientes()
+    except Exception:
+        pendientes_entrega = set()
     # Estado para controlar qué ventas están expandidas
     ventas_expandidas = set()
     
@@ -136,6 +144,8 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         lista = ft.Column(spacing=5)
         
         for venta in ventas:
+            if venta.get("comprobante", "").startswith("IntraShop") and venta["id"] in pendientes_entrega:
+                continue
             venta_id = venta['id']
             expandido = venta_id in ventas_expandidas
             
@@ -269,6 +279,11 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
     def actualizar_ventas():
         
         """Actualiza la lista de ventas"""
+        nonlocal pendientes_entrega
+        try:
+            pendientes_entrega = consultar_pendientes()
+        except Exception:
+            pass
         ventas_column.controls = [crear_lista_ventas()]
         page.update()
     
@@ -308,15 +323,39 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         padding=ft.Padding.symmetric(horizontal=8, vertical=1)
     )
     
-    # Sección de ventas de hoy
+    # Navegación de pestañas táctiles, con selección visual inequívoca.
+    tab_ventas = ft.FilledButton("Ventas de hoy", icon=ft.Icons.RECEIPT_LONG)
+    tab_entregas = ft.OutlinedButton("Comandas IntraShop", icon=ft.Icons.LOCAL_SHIPPING)
     ventas_header = ft.Container(
-        content=ft.Row([
-            ft.Icon(ft.Icons.HISTORY, color=N.BLUE_400, size=28),
-            ft.Text("VENTAS DE HOY", size=22, weight=ft.FontWeight.BOLD)
-        ], spacing=1),
-        padding=ft.Padding.only(left=1, bottom=1)
+        content=ft.Row([tab_ventas, tab_entregas], spacing=8, wrap=True),
+        padding=ft.Padding.symmetric(horizontal=10, vertical=10),
+        border_radius=12, bgcolor=N.GREY_800,
     )
-    
+
+    if puede("ENTREGAS_INTRASHOP"):
+        from componente_entregas_intrashop import panel_entregas
+        tablero_entregas = ft.Container(
+            content=panel_entregas(page, usuario_actual or getattr(db_manager, "usuario_actual", "") or "operador POS", puede_configurar=puede("CONFIGURACION")),
+            visible=False, expand=True, height=440,
+        )
+
+        def cambiar_pestana(entregas):
+            ventas_container.visible = not entregas
+            tablero_entregas.visible = entregas
+            tab_ventas.bgcolor = N.GREY_700 if entregas else N.BLUE
+            tab_entregas.bgcolor = N.BLUE if entregas else N.GREY_700
+            if not entregas:
+                actualizar_ventas()
+            page.update()
+
+        tab_ventas.on_click = lambda e: cambiar_pestana(False)
+        tab_entregas.on_click = lambda e: cambiar_pestana(True)
+        tab_ventas.bgcolor = N.BLUE
+        tab_entregas.bgcolor = N.GREY_700
+    else:
+        tab_entregas.visible = False
+        tablero_entregas = ft.Container(visible=False)
+
     # Panel derecho con total y botones
     panel_derecho = ft.Container(
         content=ft.Column([
@@ -503,6 +542,7 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         ft.Column([
             ventas_header,
             ventas_container,
+            tablero_entregas,
             ft.Container(height=20),
 
             ft.Row(botones_accion,

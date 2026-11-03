@@ -221,6 +221,31 @@ def ConfigModal(page: ft.Page):
         label="Dirección del servidor", width=340,
         value=cfg.get("SERVER_URL") or settings.server_url or "http://127.0.0.1:8000")
     red_estado_text = ft.Text("", size=12, color=N.GREEN_400)
+    red_modo_activo = ft.Text("● Comprobando modo de conexión…", size=13, weight=ft.FontWeight.BOLD, color=N.AMBER_400)
+
+    def comprobar_modo_activo(e=None):
+        from core.db_factory import modo_actual, _server_url
+        import httpx
+        modo = modo_actual()
+        if modo == "local":
+            red_modo_activo.value = "● LOCAL ACTIVO · Base de datos de esta terminal"
+            red_modo_activo.color = N.GREEN_400
+        else:
+            url = _server_url() if modo == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
+            try:
+                respuesta = httpx.get(url.rstrip("/") + "/health", timeout=2.5)
+                if respuesta.status_code == 200:
+                    red_modo_activo.value = "● " + modo.upper() + " ACTIVO · " + url
+                    red_modo_activo.color = N.GREEN_400
+                else:
+                    raise RuntimeError("HTTP " + str(respuesta.status_code))
+            except Exception:
+                red_modo_activo.value = "● " + modo.upper() + " CONFIGURADO · Sin conexión a " + url
+                red_modo_activo.color = N.RED_400
+        if red_modo_dropdown.value != modo:
+            red_modo_activo.value += " · Cambios sin guardar"
+        page.update()
+
 
     def _escanear_red(e=None):
         red_estado_text.value = "🔍 Escaneando la red…"
@@ -489,6 +514,8 @@ def ConfigModal(page: ft.Page):
                         fit=ft.BoxFit.CONTAIN)
     pos_dropdown = ft.Dropdown(width=350)
     pos_list: list = []
+    mp_loading = ft.ProgressRing(width=18, height=18, visible=False)
+    mp_load_status = ft.Text("Consultá los POS para restaurar la selección.", size=12)
 
     external_pos_id_saved = settings.mp_external_pos_id or cfg.get("EXTERNAL_POS_ID", "")
     external_store_id_saved = settings.mp_external_store_id or cfg.get("EXTERNAL_STORE_ID", "")
@@ -545,11 +572,16 @@ def ConfigModal(page: ft.Page):
             page.update()
             return
         resultado_text.value = "⏳ Consultando POS…"
+        mp_loading.visible = True
+        mp_load_status.value = "Consultando Mercado Pago…"
         page.update()
         _aplicar_credenciales()
         nonlocal pos_list
         pos_list = mp_service.listar_pos()
         if not pos_list:
+            cargar_asignaciones()
+            mp_loading.visible = False
+            mp_load_status.value = "No se encontraron puntos de venta."
             resultado_text.value = "⚠️ Sin POS o error de credenciales"
             page.update()
             return
@@ -557,6 +589,10 @@ def ConfigModal(page: ft.Page):
             ft.dropdown.Option(key=str(i), text=f"{p.get('name')} ({p.get('external_id', 'N/A')})")
             for i, p in enumerate(pos_list)
         ]
+        pos_dropdown.value = next((str(i) for i, p in enumerate(pos_list) if p.get("external_id") == (db.get_config_value("EXTERNAL_POS_ID") or external_pos_id_saved)), None)
+        cargar_asignaciones()
+        mp_loading.visible = False
+        mp_load_status.value = f"{len(pos_list)} POS cargados; selección restaurada."
         resultado_text.value = f"✅ {len(pos_list)} POS. Seleccione uno."
         page.update()
 
@@ -585,22 +621,26 @@ def ConfigModal(page: ft.Page):
         page.update()
 
     def crear_pos_adicional(e=None):
-        if not external_store_id_saved and not db.get_config_value("STORE_ID"):
-            resultado_text.value = "❌ Faltan datos para crear el POS"
+        if not token_field.value.strip() or not user_field.value.strip():
+            resultado_text.value = "Ingresá credenciales de Mercado Pago."
             page.update()
             return
-        resultado_text.value = "⏳ Creando POS adicional…"
+        resultado_text.value = "Creando nuevo POS en la sucursal existente…"
+        mp_loading.visible = True
         page.update()
 
         def worker():
-            _aplicar_credenciales()
-            p_ext, qr_url, error = mp_service.crear_pos_adicional()
-            if error:
-                resultado_text.value = f"❌ {error}"
-            else:
-                resultado_text.value = f"✅ POS adicional: {p_ext}"
-                qr_image.src = qr_url or qr_image.src
-            page.update()
+            try:
+                _aplicar_credenciales()
+                p_ext, qr_url, error = mp_service.crear_pos_adicional()
+                if error:
+                    resultado_text.value = error
+                else:
+                    resultado_text.value = "POS creado: " + p_ext + ". Asignalo a una caja o tótem."
+                    obtener_pos()
+            finally:
+                mp_loading.visible = False
+                page.update()
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -635,9 +675,16 @@ def ConfigModal(page: ft.Page):
     def guardar_config(e=None):
         _guardar_en_db(token_field.value.strip(), user_field.value.strip(),
                        nombre_negocio_field.value.strip(),
-                       pos_dropdown.value or external_pos_id_saved,
+                       (pos_list[int(pos_dropdown.value)].get("external_id", "")
+                        if pos_dropdown.value is not None and pos_list
+                        else external_pos_id_saved),
                        external_store_id_saved or db.get_config_value("EXTERNAL_STORE_ID") or "",
                        qr_image.src or "")
+        try:
+            sincronizar_mp_servidor()
+        except Exception as exc:
+            snack(page, "No se guardó Mercado Pago en el servidor: " + str(exc), ok=False)
+            return
         _guardar_ventas_en_db()
         _guardar_afip_en_db()
         _guardar_red_en_db()
@@ -645,9 +692,121 @@ def ConfigModal(page: ft.Page):
         if (red_modo_dropdown.value or "").lower() == "servidor":
             _encender_servidor()
         settings.reload()
-        snack(page, "✅ Configuración guardada con éxito", ok=True)
+        comprobar_modo_activo()
+        snack(page, "✅ Configuración guardada. Reiniciá el POS para aplicar el modo de conexión.", ok=True)
         dialog.open = False
         page.update()
+
+    # Asignaciones exclusivas: un QR MP por tótem o caja física.
+    mp_terminal = ft.Dropdown(label="Dispositivo IntraShop / Caja", width=340)
+    mp_asignado = ft.Dropdown(label="POS de Mercado Pago asignado", width=340)
+    mp_bindings_info = ft.Text("Consultá dispositivos y POS disponibles.", size=12, color=N.GREY_500)
+    mp_bindings_list = ft.Column(spacing=4)
+    mp_saved_bindings = []
+
+    def cargar_asignaciones(e=None):
+        nonlocal mp_saved_bindings
+        try:
+            from adapters.entregas import EntregasAdapter
+            from adapters.mp_bindings import listar
+            registrados = EntregasAdapter().totems()
+            mp_terminal.options = [
+                ft.dropdown.Option(key="totem:" + t["id"], text="Tótem · " + t["nombre"])
+                for t in registrados
+            ]
+            from core.terminal_identity import terminal_id
+            mp_terminal.options.append(ft.dropdown.Option(
+                key="caja:" + terminal_id(), text="Esta caja POS · " + terminal_id()[:14]))
+            bindings = listar()
+            mp_saved_bindings = bindings
+            mp_bindings_list.controls = [
+                ft.Text(("Tótem" if x["terminal_type"] == "totem" else "Caja")
+                        + " · " + (x.get("nombre") or x["terminal_id"][:12])
+                        + " → " + x["pos_external_id"], size=12)
+                for x in bindings
+            ]
+            mp_asignado.options = [
+                ft.dropdown.Option(key=str(i), text=p.get("name","POS") + " · " + p.get("external_id",""))
+                for i,p in enumerate(pos_list) if p.get("external_id")
+            ]
+            restaurar_qr_dispositivo()
+            mp_bindings_info.value = str(len(registrados)) + " tótem(s) registrados · " + str(len(bindings)) + " asignaciones"
+            mp_bindings_info.color = N.GREEN_400
+        except Exception as exc:
+            mp_bindings_info.value = "No se pudo consultar la configuración central: " + str(exc)
+            mp_bindings_info.color = N.RED_400
+        page.update()
+
+    def restaurar_qr_dispositivo(e=None):
+        selected = (mp_terminal.value or "").split(":", 1)
+        binding = next((x for x in mp_saved_bindings
+                        if len(selected) == 2 and x["terminal_type"] == selected[0]
+                        and x["terminal_id"] == selected[1]), None)
+        if binding:
+            mp_asignado.value = next((str(i) for i, p in enumerate(pos_list)
+                                      if p.get("external_id") == binding["pos_external_id"]), None)
+            mp_bindings_info.value = "QR guardado: " + binding["pos_external_id"]
+        else:
+            mp_asignado.value = None
+        page.update()
+
+    mp_terminal.on_change = restaurar_qr_dispositivo
+
+    def sincronizar_mp_servidor():
+        """En modo cliente, las credenciales deben vivir en el servidor autónomo."""
+        from core.db_factory import modo_actual, _server_url
+        if modo_actual() != "cliente":
+            return
+        from adapters.entregas import _session_token
+        import httpx
+        if not _session_token:
+            raise ValueError("Iniciá sesión en el servidor antes de configurar Mercado Pago.")
+        response = httpx.put(
+            _server_url().rstrip("/") + "/tienda/admin/mp-credentials",
+            json={"access_token":token_field.value.strip(),
+                  "user_id":user_field.value.strip(),
+                  "enabled":bool(mp_activo_switch.value)},
+            headers={"Authorization":"Bearer "+_session_token},
+            timeout=12)
+        response.raise_for_status()
+
+    def guardar_asignacion(e=None):
+        if not mp_terminal.value or mp_asignado.value is None:
+            mp_bindings_info.value = "Seleccioná un dispositivo y un POS Mercado Pago."
+            page.update()
+            return
+        try:
+            sincronizar_mp_servidor()
+            from adapters.mp_bindings import asignar
+            tipo, tid = mp_terminal.value.split(":",1)
+            pos = pos_list[int(mp_asignado.value)]
+            store_ext = (pos.get("external_store_id")
+                         or settings.mp_external_store_id
+                         or db.get_config_value("EXTERNAL_STORE_ID") or "")
+            if not store_ext:
+                raise ValueError("Configurá el Store de Mercado Pago antes de asignar.")
+            asignar(tid,tipo,pos["external_id"],store_ext,
+                    (pos.get("qr_response") or pos.get("qr") or {}).get("image",""),
+                    next((o.text for o in mp_terminal.options if o.key == mp_terminal.value), tid))
+            cargar_asignaciones()
+        except Exception as exc:
+            mp_bindings_info.value = "No se pudo asignar: " + str(exc)
+            mp_bindings_info.color = N.RED_400
+            page.update()
+
+    seccion_mp_terminales = ft.Container(
+        content=ft.Column([
+            ft.Text("Asignación de QR por dispositivo", size=14, weight=ft.FontWeight.BOLD, color=N.BLUE_400),
+            ft.Text("Cada tótem debe tener un POS Mercado Pago distinto. Una misma asignación no se puede reutilizar.", size=12),
+            ft.Row([ft.OutlinedButton("Detectar tótems y POS", icon=ft.Icons.SEARCH,
+                on_click=lambda e: (obtener_pos(), cargar_asignaciones()))], wrap=True),
+            mp_terminal, mp_asignado,
+            ft.FilledButton("Asignar QR al dispositivo", icon=ft.Icons.CHECK, on_click=guardar_asignacion),
+            mp_bindings_info, mp_bindings_list,
+        ], spacing=8),
+        padding=12, border_radius=8,
+        bgcolor=ft.Colors.with_opacity(0.05,N.BLUE_GREY_800),
+    )
 
     # ---------- secciones (layout del build) ----------
     seccion_negocio = ft.Container(
@@ -669,10 +828,12 @@ def ConfigModal(page: ft.Page):
             token_field,
             ft.Row([
                 ft.FilledButton("Obtener POS", icon=ft.Icons.SEARCH, on_click=obtener_pos),
+                mp_loading,
                 pos_dropdown,
                 ft.FilledButton("Seleccionar", icon=ft.Icons.CHECK, on_click=seleccionar_pos),
             ], spacing=8, wrap=True),
-            ft.Text("Los secretos definitivos van en el archivo .env (no en la DB).",
+            mp_load_status,
+            ft.Text("La configuración debe persistir en el servidor POS.",
                     size=11, italic=True, color=N.GREY_500),
             ft.Divider(height=8),
         ], spacing=8),
@@ -760,6 +921,7 @@ def ConfigModal(page: ft.Page):
     btn_quitar = ft.TextButton("🗑️ Quitar servicio", icon=ft.Icons.DELETE_OUTLINE,
                                on_click=_quitar_servicio)
     _actualizar_controles_servidor()
+    comprobar_modo_activo()
 
     seccion_red = ft.Container(
         content=ft.Column([
@@ -767,6 +929,8 @@ def ConfigModal(page: ft.Page):
                     color=N.INDIGO_400),
             ft.Row([red_modo_dropdown], spacing=8, wrap=True),
             red_url_field,
+            red_modo_activo,
+            ft.OutlinedButton("Verificar conexión activa", icon=ft.Icons.WIFI, on_click=comprobar_modo_activo),
             ft.Row([
                 ft.FilledButton("🔍 Escanear red", icon=ft.Icons.WIFI_FIND,
                                 on_click=_escanear_red),
@@ -1003,7 +1167,7 @@ def ConfigModal(page: ft.Page):
 
     contenidos = [
         tienda_tab,
-        _tab_content([seccion_mp, seccion_crear_pos, qr_panel]),
+        _tab_content([seccion_mp, seccion_mp_terminales, seccion_crear_pos, qr_panel]),
         _tab_content([seccion_facturacion]),
         backup_tab,
     ]
@@ -1021,6 +1185,8 @@ def ConfigModal(page: ft.Page):
             b.icon = ft.Icons.CHECK if j == i else None
         contenedor_tabs.content.controls = [contenidos[i]]
         page.update()
+        if i == 1:
+            threading.Thread(target=obtener_pos, daemon=True).start()
 
     for i, label in enumerate(etiquetas):
         botones_tab.append(ft.FilledTonalButton(
@@ -1033,7 +1199,9 @@ def ConfigModal(page: ft.Page):
 
     alto_pantalla = int(getattr(page, "height", 0) or
                         getattr(getattr(page, "window", None), "height", 0) or 900)
-    alto_tabs = max(200, min(460, alto_pantalla - 260))
+    # Adaptar el contenido a la pantalla; evitar el antiguo tope fijo de 460 px.
+    alto_dialogo = max(360, min(900, alto_pantalla - 64))
+    alto_tabs = max(220, alto_dialogo - 190)
     contenedor_tabs = ft.Container(
         content=ft.Column([contenidos[0]], expand=True),
         height=alto_tabs,
@@ -1047,8 +1215,12 @@ def ConfigModal(page: ft.Page):
             ft.Text("Ajustes", size=20, weight=ft.FontWeight.BOLD),
         ], spacing=8),
         content=ft.Container(
-            content=ft.Column([tabs_row, contenedor_tabs, seccion_resultado], spacing=10),
-            width=min(1040, max(360, int(getattr(page, "width", 0) or 1200) - 40)),
+            content=ft.Column(
+                [tabs_row, contenedor_tabs, seccion_resultado],
+                spacing=10, tight=True,
+            ),
+            height=alto_dialogo - 115,
+            width=min(1040, max(360, int(getattr(page, "width", 0) or 1200) - 64)),
         ),
         actions=[
             ft.TextButton("Cancelar", on_click=lambda _: cerrar_dialogo(page)),

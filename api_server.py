@@ -67,6 +67,21 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespan)
 
+from fastapi.middleware.cors import CORSMiddleware
+from intrashop_api import router as intrashop_router
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+    allow_headers=["*", "x-api-key", "content-type"],
+)
+app.include_router(intrashop_router)
+from intrashop_entregas import router as intrashop_entregas_router
+app.include_router(intrashop_entregas_router)
+from pos_auth import router as pos_auth_router
+app.include_router(pos_auth_router)
+
 
 def _connect() -> sqlite3.Connection:
     c = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
@@ -97,7 +112,7 @@ def _tx():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "db": DB_PATH}
+    return {"ok": True, "service": "pos-lan", "capabilities": ["intrashop-entregas-v1", "pos-operator-sessions-v1"]}
 
 
 @app.get("/config")
@@ -135,6 +150,40 @@ def list_productos(termino: str = "", campo: str = "descripcion", x_api_key: str
             (f"%{termino or ''}%",),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+@app.get("/cajas/historial")
+def historial_cajas(filtro: str = "", desde: str = "", hasta: str = "",
+                    x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _connect() as conn:
+        where = []
+        params = []
+        if filtro.strip():
+            where.append("(CAST(id AS TEXT) LIKE ? OR strftime('%Y-%m-%d', fecha_apertura) LIKE ?)")
+            params.extend([f"%{filtro.strip()}%", f"%{filtro.strip()}%"])
+        if desde.strip():
+            where.append("date(fecha_apertura) >= date(?)")
+            params.append(desde.strip())
+        if hasta.strip():
+            where.append("date(fecha_apertura) <= date(?)")
+            params.append(hasta.strip())
+        sql = "SELECT * FROM cajas"
+        if where:
+            sql += " WHERE " + " AND ".join(where)
+        sql += " ORDER BY fecha_apertura DESC"
+        return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+@app.get("/cajas/{caja_id}/ventas")
+def ventas_por_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _connect() as conn:
+        rows = conn.execute("""SELECT v.*, COUNT(vi.id) AS items_count FROM ventas v
+            LEFT JOIN venta_items vi ON v.id=vi.venta_id
+            WHERE v.caja_id=? AND v.estado='completada'
+            GROUP BY v.id ORDER BY v.fecha DESC""", (caja_id,)).fetchall()
+        return [dict(row) for row in rows]
 
 
 @app.get("/cajas/abierta")
@@ -188,8 +237,10 @@ def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None)):
             if cant <= 0 or precio < 0:
                 raise HTTPException(400, "item inválido")
             row = conn.execute("SELECT stock_actual FROM productos WHERE id=?", (pid,)).fetchone()
-            if not row or int(row["stock_actual"]) < cant:
-                raise HTTPException(400, f"stock insuficiente prod={pid}")
+            import intrashop_checkout_store as reservation_store
+            reservation_store.ensure_schema(conn)
+            if not row or reservation_store.available(conn, pid) < cant:
+                raise HTTPException(409, f"stock disponible insuficiente prod={pid} (reservas IntraShop)")
             stocks[pid] = int(row["stock_actual"])
             total += precio * cant
         cur = conn.execute(
@@ -325,4 +376,5 @@ def _montar_flet_web() -> None:
         logging.getLogger(__name__).warning("No se pudo montar la UI web: %s", ex)
 
 
-_montar_flet_web()
+if os.getenv("POS_API_ONLY", "").lower() not in ("1", "true", "yes"):
+    _montar_flet_web()
