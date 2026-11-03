@@ -719,7 +719,9 @@ def ConfigModal(page: ft.Page):
             bindings = listar()
             mp_saved_bindings = bindings
             mp_bindings_list.controls = [
-                ft.Text(x["nombre"] + " → " + x["pos_external_id"], size=12)
+                ft.Text(("Tótem" if x["terminal_type"] == "totem" else "Caja")
+                        + " · " + (x.get("nombre") or x["terminal_id"][:12])
+                        + " → " + x["pos_external_id"], size=12)
                 for x in bindings
             ]
             mp_asignado.options = [
@@ -777,7 +779,9 @@ def ConfigModal(page: ft.Page):
             from adapters.mp_bindings import asignar
             tipo, tid = mp_terminal.value.split(":",1)
             pos = pos_list[int(mp_asignado.value)]
-            store_ext = settings.mp_external_store_id or db.get_config_value("EXTERNAL_STORE_ID") or ""
+            store_ext = (pos.get("external_store_id")
+                         or settings.mp_external_store_id
+                         or db.get_config_value("EXTERNAL_STORE_ID") or "")
             if not store_ext:
                 raise ValueError("Configurá el Store de Mercado Pago antes de asignar.")
             asignar(tid,tipo,pos["external_id"],store_ext,
@@ -1179,6 +1183,8 @@ def ConfigModal(page: ft.Page):
             b.icon = ft.Icons.CHECK if j == i else None
         contenedor_tabs.content.controls = [contenidos[i]]
         page.update()
+        if i == 1:
+            threading.Thread(target=obtener_pos, daemon=True).start()
 
     for i, label in enumerate(etiquetas):
         botones_tab.append(ft.FilledTonalButton(
