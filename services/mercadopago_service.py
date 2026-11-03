@@ -69,6 +69,11 @@ class MercadoPagoService:
                 pos_ext = pos_ext or db.get_config_value("EXTERNAL_POS_ID") or ""
             except Exception:
                 pass
+        # OAuth tiene prioridad solo tras la vinculación, sin mezclar cuentas.
+        from services import mp_oauth_bridge
+        if mp_oauth_bridge.connected():
+            token, uid = mp_oauth_bridge.credentials()
+
         # Caja física: resolver la asignación central si existe.
         try:
             from core.terminal_identity import terminal_id
