@@ -521,6 +521,129 @@ def ConfigModal(page: ft.Page):
     external_store_id_saved = settings.mp_external_store_id or cfg.get("EXTERNAL_STORE_ID", "")
     needs_initial_setup = not external_store_id_saved
 
+
+    # Conexión OAuth opcional: solo el servidor LAN conoce el secreto de
+    # instalación. Los clientes no reciben ningún access_token MP.
+    oauth_hub_field = ft.TextField(
+        label="URL del backend central OAuth (HTTPS)",
+        value=cfg.get("MP_OAUTH_HUB_URL") or os.environ.get("MP_OAUTH_HUB_URL", ""),
+        width=420)
+    oauth_info = ft.Text("Mercado Pago OAuth: consultando conexión…",
+                         size=12, color=N.BLUE_400)
+    oauth_busy = ft.ProgressRing(width=18, height=18, visible=False)
+    oauth_open = ft.OutlinedButton("Abrir autorización", visible=False)
+    oauth_connected = {"value": False}
+
+    def _oauth_api(method, path, payload=None):
+        from core.db_factory import modo_actual, _server_url
+        if modo_actual() == "cliente":
+            from adapters.entregas import _session_token
+            import httpx
+            if not _session_token:
+                raise ValueError("Iniciá sesión como administrador en el servidor POS.")
+            response = httpx.request(
+                method, _server_url().rstrip("/") + "/tienda/admin/mp-oauth/" + path,
+                json=payload, headers={"Authorization": "Bearer " + _session_token},
+                timeout=25)
+            response.raise_for_status()
+            return response.json()
+        from services import mp_oauth_bridge as bridge
+        if path == "start":
+            return bridge.start((payload or {}).get("hub_url") or None)
+        if path == "status":
+            return bridge.status()
+        if path == "disconnect":
+            return bridge.disconnect()
+        raise ValueError("Operación OAuth no disponible")
+
+    def _abrir_oauth(e=None):
+        url = oauth_open.data
+        if not url:
+            return
+        import webbrowser
+        if hasattr(page, "launch_url"):
+            page.launch_url(url)
+        else:
+            webbrowser.open(url)
+
+    oauth_open.on_click = _abrir_oauth
+
+    def consultar_oauth(e=None):
+        try:
+            status = _oauth_api("GET", "status")
+            oauth_connected["value"] = status.get("status") == "connected"
+            if oauth_connected["value"]:
+                oauth_info.value = ("Conectado con Mercado Pago · Usuario "
+                                    + str(status.get("user_id") or "autorizado"))
+                oauth_info.color = N.GREEN_400
+            elif status.get("status") == "pending":
+                oauth_info.value = "Esperando autorización del vendedor en el navegador…"
+                oauth_info.color = N.AMBER_400
+            else:
+                oauth_info.value = "Sin cuenta OAuth conectada."
+                oauth_info.color = N.GREY_500
+        except Exception as exc:
+            oauth_info.value = "No se pudo consultar OAuth: " + str(exc)
+            oauth_info.color = N.RED_400
+        page.update()
+
+    def conectar_oauth(e=None):
+        if oauth_busy.visible:
+            return
+        oauth_busy.visible = True
+        oauth_info.value = "Preparando vinculación segura…"
+        page.update()
+
+        def worker():
+            try:
+                result = _oauth_api("POST", "start",
+                                   {"hub_url": oauth_hub_field.value.strip()})
+                oauth_open.data = result["authorize_url"]
+                oauth_open.visible = True
+                oauth_info.value = "Autorizá Mercado Pago en el navegador."
+                oauth_info.color = N.BLUE_400
+                page.update()
+                _abrir_oauth()
+                # El proceso termina aunque se cierre la ventana de Ajustes.
+                import time
+                for _ in range(180):
+                    time.sleep(5)
+                    data = _oauth_api("GET", "status")
+                    if data.get("status") == "connected":
+                        oauth_connected["value"] = True
+                        oauth_info.value = "Mercado Pago conectado. Cargando POS…"
+                        oauth_info.color = N.GREEN_400
+                        oauth_open.visible = False
+                        page.update()
+                        obtener_pos()
+                        break
+                    if data.get("status") == "failed":
+                        raise ValueError("La autorización no se completó.")
+                else:
+                    raise TimeoutError("La vinculación venció. Iniciá una nueva.")
+            except Exception as exc:
+                oauth_info.value = "No se pudo vincular Mercado Pago: " + str(exc)
+                oauth_info.color = N.RED_400
+            finally:
+                oauth_busy.visible = False
+                page.update()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def desconectar_oauth(e=None):
+        if oauth_busy.visible:
+            return
+        try:
+            _oauth_api("POST", "disconnect")
+            oauth_connected["value"] = False
+            oauth_open.visible = False
+            oauth_info.value = "Mercado Pago OAuth desconectado de este servidor."
+            oauth_info.color = N.AMBER_400
+        except Exception as exc:
+            oauth_info.value = "No se pudo desconectar: " + str(exc)
+            oauth_info.color = N.RED_400
+        page.update()
+
     # ---------- helpers ----------
     def _guardar_en_db(token, uid, nombre, p_ext, s_ext, qr=""):
         db.set_config("ACCESS_TOKEN", token)
