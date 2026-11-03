@@ -1,0 +1,23 @@
+name: Mercado Pago OAuth Python syntax
+
+on:
+  push:
+    branches: [feature/mercadopago-oauth]
+  pull_request:
+    paths:
+      - "config.py"
+      - "api_server.py"
+      - "services/mp_oauth_*.py"
+      - "services/mercadopago_service.py"
+      - ".github/workflows/mp-oauth-check.yml"
+
+jobs:
+  syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile changed Python modules
+        run: python -m compileall -q config.py api_server.py services/mp_oauth_api.py services/mp_oauth_bridge.py services/mercadopago_service.py
