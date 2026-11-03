@@ -579,6 +579,7 @@ def ConfigModal(page: ft.Page):
         nonlocal pos_list
         pos_list = mp_service.listar_pos()
         if not pos_list:
+            cargar_asignaciones()
             mp_loading.visible = False
             mp_load_status.value = "No se encontraron puntos de venta."
             resultado_text.value = "⚠️ Sin POS o error de credenciales"
