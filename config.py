@@ -22,7 +22,10 @@ def ConfigModal(page: ft.Page):
     from database_manager import DatabaseManager
 
     db = DatabaseManager()
-    mp_service.sincronizar_store_id()
+    try:
+        mp_service.sincronizar_store_id()
+    except Exception:
+        pass  # Ajustes debe abrir incluso si el backend OAuth no responde.
     cfg = db.get_all_config()
 
     # ---------- campos ----------
@@ -598,6 +601,8 @@ def ConfigModal(page: ft.Page):
             try:
                 result = _oauth_api("POST", "start",
                                    {"hub_url": oauth_hub_field.value.strip()})
+                if oauth_hub_field.value.strip():
+                    db.set_config("MP_OAUTH_HUB_URL", oauth_hub_field.value.strip())
                 oauth_open.data = result["authorize_url"]
                 oauth_open.visible = True
                 oauth_info.value = "Autorizá Mercado Pago en el navegador."
@@ -772,7 +777,7 @@ def ConfigModal(page: ft.Page):
                     s_ext = r.json().get("external_id", "")
         except Exception:
             pass
-        resultado_text.value = f"✅ POS: {p_ext}\nStore: {s_ext or '—'}\nCopie a su .env"
+        resultado_text.value = f"POS: {p_ext}\nSucursal: {s_ext or 'Sin identificar'}"
         qr_image.src = qr_url or None
         _guardar_en_db(token_field.value.strip(), user_field.value.strip(),
                        nombre_negocio_field.value.strip(), p_ext, s_ext, qr_url)
@@ -941,7 +946,7 @@ def ConfigModal(page: ft.Page):
     def sincronizar_mp_servidor():
         """En modo cliente, las credenciales deben vivir en el servidor autónomo."""
         from core.db_factory import modo_actual, _server_url
-        if modo_actual() != "cliente" or not token_field.value.strip():
+        if modo_actual() != "cliente" or not token_field.value.strip() or oauth_connected["value"] :
             return  # En OAuth las credenciales las gestiona el servidor, no la caja.
         from adapters.entregas import _session_token
         import httpx
