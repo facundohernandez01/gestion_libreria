@@ -776,9 +776,14 @@ def ConfigModal(page: ft.Page):
                        nombre_negocio_field.value.strip(), p_ext, s_ext, qr_url)
         page.update()
 
+    nuevo_pos_nombre = ft.TextField(label="Nombre del nuevo POS / QR",
+                                     value="Nueva Caja", width=280)
+
     def crear_pos_adicional(e=None):
-        if not token_field.value.strip() or not user_field.value.strip():
-            resultado_text.value = "Ingresá credenciales de Mercado Pago."
+        import re
+        nombre = nuevo_pos_nombre.value.strip()
+        if not nombre or len(nombre) > 45 or not re.fullmatch(r"[A-Za-z0-9 _-]+", nombre):
+            resultado_text.value = "Nombre inválido: usá letras, números, espacios o guiones (máximo 45)."
             page.update()
             return
         resultado_text.value = "Creando nuevo POS en la sucursal existente…"
@@ -786,17 +791,40 @@ def ConfigModal(page: ft.Page):
         page.update()
 
         def worker():
+            created = False
             try:
-                _aplicar_credenciales()
-                p_ext, qr_url, error = mp_service.crear_pos_adicional()
-                if error:
-                    resultado_text.value = error
-                else:
-                    resultado_text.value = "POS creado: " + p_ext + ". Asignalo a una caja o tótem."
-                    obtener_pos()
+                from core.db_factory import modo_actual, _server_url
+                import httpx
+                if modo_actual() == "cliente":
+                    from adapters.entregas import _session_token
+                    if not _session_token:
+                        raise ValueError("Iniciá sesión como administrador del servidor POS.")
+                    response = httpx.post(
+                        _server_url().rstrip("/") + "/tienda/admin/mp-oauth/pos/create",
+                        json={"nombre": nombre},
+                        headers={"Authorization": "Bearer " + _session_token}, timeout=45)
+                    if response.status_code == 200:
+                        p_ext = response.json()["pos_external_id"]
+                        created = True
+                    elif response.status_code != 409:
+                        response.raise_for_status()
+                if not created:
+                    if token_field.value.strip() and user_field.value.strip():
+                        _aplicar_credenciales()
+                    elif modo_actual() == "cliente":
+                        raise ValueError("Conectá Mercado Pago mediante OAuth antes de crear un POS.")
+                    p_ext, _, error = mp_service.crear_pos_adicional(nombre)
+                    if error:
+                        raise ValueError(error)
+                    created = True
+                resultado_text.value = "POS creado: " + p_ext + ". Asignalo a una caja o tótem."
+            except Exception as exc:
+                resultado_text.value = "No se pudo crear el POS: " + str(exc)
             finally:
                 mp_loading.visible = False
                 page.update()
+            if created:
+                obtener_pos()
 
         threading.Thread(target=worker, daemon=True).start()
 
