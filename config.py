@@ -864,12 +864,15 @@ def ConfigModal(page: ft.Page):
         snack(page, msg if ok else f"⚠️ {msg}", ok=ok)
 
     def guardar_config(e=None):
+        selected = (pos_list[int(pos_dropdown.value)]
+                    if pos_dropdown.value is not None and pos_list else {})
         _guardar_en_db(token_field.value.strip(), user_field.value.strip(),
                        nombre_negocio_field.value.strip(),
-                       (pos_list[int(pos_dropdown.value)].get("external_id", "")
-                        if pos_dropdown.value is not None and pos_list
-                        else external_pos_id_saved),
-                       external_store_id_saved or db.get_config_value("EXTERNAL_STORE_ID") or "",
+                       selected.get("external_id") or db.get_config_value("EXTERNAL_POS_ID")
+                       or external_pos_id_saved or "",
+                       selected.get("external_store_id")
+                       or db.get_config_value("EXTERNAL_STORE_ID")
+                       or external_store_id_saved or "",
                        qr_image.src or "")
         try:
             sincronizar_mp_servidor()
