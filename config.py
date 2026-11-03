@@ -785,7 +785,8 @@ def ConfigModal(page: ft.Page):
             if not store_ext:
                 raise ValueError("Configurá el Store de Mercado Pago antes de asignar.")
             asignar(tid,tipo,pos["external_id"],store_ext,
-                    (pos.get("qr") or {}).get("image",""),pos.get("name",""))
+                    (pos.get("qr_response") or pos.get("qr") or {}).get("image",""),
+                    next((o.text for o in mp_terminal.options if o.key == mp_terminal.value), tid))
             cargar_asignaciones()
         except Exception as exc:
             mp_bindings_info.value = "No se pudo asignar: " + str(exc)
