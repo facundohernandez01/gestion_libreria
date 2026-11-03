@@ -87,7 +87,7 @@ def start(hub_url=None):
         db.set_config("MP_OAUTH_HUB_URL", url)
         db.set_config("MP_OAUTH_SESSION_ID", response["session_id"])
         _save_secret("MP_OAUTH_SESSION_PROOF", response["session_proof"])
-        _save_secret("MP_OAUTH_INSTALLATION_SECRET", response["installation_secret"])
+        _save_secret("MP_OAUTH_PENDING_INSTALLATION_SECRET", response["installation_secret"])
         # No activar el OAuth hasta comprobar que la cuenta autorizó y sincronizó.
         return {"authorize_url": response["authorize_url"],
                 "expires_in": response["expires_in"]}
@@ -103,13 +103,15 @@ def status():
                             "session_proof": _secret("MP_OAUTH_SESSION_PROOF")})
     if data.get("status") == "connected":
         # Pedir las credenciales antes de activar el modo OAuth.
-        credentials = _fetch_credentials()
+        credentials = _fetch_credentials(_secret("MP_OAUTH_PENDING_INSTALLATION_SECRET"))
         if not credentials.get("access_token") or not credentials.get("user_id"):
             raise ValueError("Mercado Pago no devolvió credenciales utilizables.")
         with _lock:
             global _cached
             _cached = (credentials["access_token"], str(credentials["user_id"]),
                        int(credentials["expires_at"]), time.monotonic())
+            _save_secret("MP_OAUTH_INSTALLATION_SECRET", _secret("MP_OAUTH_PENDING_INSTALLATION_SECRET"))
+            db.set_config("MP_OAUTH_PENDING_INSTALLATION_SECRET", "")
             db.set_config("MP_OAUTH_ENABLED", "1")
             db.set_config("MP_OAUTH_MP_USER_ID", str(credentials["user_id"]))
             db.set_config("MP_OAUTH_SESSION_ID", "")
@@ -118,10 +120,10 @@ def status():
             "user_id": db.get_config_value("MP_OAUTH_MP_USER_ID") or ""}
 
 
-def _fetch_credentials():
+def _fetch_credentials(proof=None):
     return _post("credentials", {
         "installation_id": _installation_id(),
-        "installation_secret": _secret("MP_OAUTH_INSTALLATION_SECRET"),
+        "installation_secret": proof or _secret("MP_OAUTH_INSTALLATION_SECRET"),
     })
 
 
