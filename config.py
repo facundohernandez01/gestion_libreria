@@ -945,8 +945,23 @@ def ConfigModal(page: ft.Page):
 
     seccion_mp = ft.Container(
         content=ft.Column([
-            ft.Text("🔐 Credenciales Mercado Pago", size=14, weight=ft.FontWeight.BOLD,
-                    color=N.BLUE_400),
+            ft.Text("Conectar cuenta de Mercado Pago", size=14,
+                    weight=ft.FontWeight.BOLD, color=N.BLUE_400),
+            ft.Text("Autorizá tu cuenta desde el navegador. No necesitás copiar un Access Token.",
+                    size=12),
+            oauth_hub_field,
+            ft.Row([
+                ft.FilledButton("Conectar Mercado Pago", icon=ft.Icons.LINK,
+                                on_click=conectar_oauth),
+                oauth_open, oauth_busy,
+                ft.OutlinedButton("Consultar estado", icon=ft.Icons.REFRESH,
+                                  on_click=consultar_oauth),
+                ft.TextButton("Desconectar", on_click=desconectar_oauth),
+            ], wrap=True, spacing=8),
+            oauth_info,
+            ft.Divider(height=8),
+            ft.Text("Credenciales manuales (compatibilidad con instalaciones existentes)",
+                    size=12, weight=ft.FontWeight.BOLD),
             user_field,
             token_field,
             ft.Row([
