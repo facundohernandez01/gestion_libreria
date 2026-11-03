@@ -321,33 +321,41 @@ class MercadoPagoService:
             return "", "", "", f"Error de red: {e}"
 
     def crear_pos_adicional(self, nombre: str = "POS Adicional") -> tuple[str, str, str]:
-        """Crea un POS fixed_amount adicional en el Store existente (STORE_ID).
-
-        Retorna (pos_ext, qr_url, error).
-        """
+        """Crear un POS sin cambiar el POS predeterminado de ninguna caja."""
         from core.settings import settings
-
-        token, uid, _, _ = self.credenciales()
+        token, uid, store_ext, _ = self.credenciales()
+        if not token or not uid:
+            return "", "", "Configurá las credenciales de Mercado Pago."
         db = self._db_or_none()
         store_id = db.get_config_value("STORE_ID") if db else None
-        if not token or not uid or not store_id:
-            return "", "", "Faltan credenciales o STORE_ID (cree la tienda primero)"
-        ts = int(time.time())
+        # Reutilizar sucursal de POS existentes aunque la configuración local se haya vaciado.
+        existing = self.listar_pos()
+        if not store_id and existing:
+            store_id = next((str(p["store_id"]) for p in existing if p.get("store_id")), None)
+        if not store_id and not store_ext:
+            return "", "", ("No se encontró una sucursal de Mercado Pago. "
+                            "Seleccioná una sucursal existente o configurá una nueva con permisos.")
+        payload = {"name": nombre or "POS Adicional",
+                   "external_id": "POS" + uuid.uuid4().hex[:24],
+                   "config": {"qr": {"operating_mode": "pdv"}}}
+        if store_id:
+            payload["store_id"] = int(store_id)
+        else:
+            payload["external_store_id"] = store_ext
+        headers = self._headers(token)
+        headers["X-Idempotency-Key"] = str(uuid.uuid4())
         try:
-            r = requests.post(f"{MP_BASE}/pos", headers=self._headers(token), json={
-                "name": nombre or "POS Adicional", "external_id": f"POS{ts}",
-                "store_id": store_id, "fixed_amount": True, "category": 621102,
-            }, timeout=settings.mp_timeout_seg)
-        except requests.RequestException as e:
-            return "", "", f"Error de red: {e}"
-        if r.status_code not in (200, 201):
-            return "", "", f"Error creando POS: {r.text[:300]}"
-        pos_ext = r.json().get("external_id", "")
-        qr_url = (r.json().get("qr") or {}).get("image", "")
-        if db:
-            db.set_config("EXTERNAL_POS_ID", pos_ext)
-            if qr_url:
-                db.set_config("QR_URL", qr_url)
+            resp = requests.post(f"{MP_BASE}/v2/pos", headers=headers, json=payload,
+                                 timeout=settings.mp_timeout_seg)
+        except requests.RequestException as exc:
+            return "", "", f"Error de red: {exc}"
+        if resp.status_code not in (200, 201):
+            return "", "", f"Mercado Pago HTTP {resp.status_code}: {resp.text[:300]}"
+        result = resp.json()
+        pos_ext = result.get("external_id", "")
+        qr_url = (result.get("qr_response") or result.get("qr") or {}).get("image", "")
+        if db and store_id:
+            db.set_config("STORE_ID", str(store_id))
         return pos_ext, qr_url, ""
 
     def descargar_qr(self, destino: str | Path = "img/qr.png") -> tuple[bool, str]:
