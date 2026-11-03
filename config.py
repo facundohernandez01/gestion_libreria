@@ -646,8 +646,10 @@ def ConfigModal(page: ft.Page):
 
     # ---------- helpers ----------
     def _guardar_en_db(token, uid, nombre, p_ext, s_ext, qr=""):
-        db.set_config("ACCESS_TOKEN", token)
-        db.set_config("USER_ID", uid)
+        if token:
+            db.set_config("ACCESS_TOKEN", token)
+        if uid:
+            db.set_config("USER_ID", uid)
         db.set_config("NOMBRE_NEGOCIO", nombre)
         db.set_config("DIRECCION", direccion_field.value.strip())
         db.set_config("RECARGO", recargo_field.value.strip() or "0")
@@ -758,11 +760,11 @@ def ConfigModal(page: ft.Page):
         pos = pos_list[int(pos_dropdown.value)]
         p_ext = pos.get("external_id", "")
         qr_url = (pos.get("qr") or {}).get("image", "")
-        s_ext = ""
+        s_ext = pos.get("external_store_id") or ""
         try:
             import requests
             store_id = pos.get("store_id")
-            if store_id:
+            if store_id and token_field.value.strip():
                 r = requests.get(f"https://api.mercadopago.com/stores/{store_id}",
                                  headers={"Authorization": f"Bearer {token_field.value.strip()}"},
                                  timeout=15)
@@ -939,8 +941,8 @@ def ConfigModal(page: ft.Page):
     def sincronizar_mp_servidor():
         """En modo cliente, las credenciales deben vivir en el servidor autónomo."""
         from core.db_factory import modo_actual, _server_url
-        if modo_actual() != "cliente":
-            return
+        if modo_actual() != "cliente" or not token_field.value.strip():
+            return  # En OAuth las credenciales las gestiona el servidor, no la caja.
         from adapters.entregas import _session_token
         import httpx
         if not _session_token:
