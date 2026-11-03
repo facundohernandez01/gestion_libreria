@@ -273,17 +273,40 @@ class MercadoPagoService:
         return None
 
     def listar_pos(self) -> list:
+        """Obtener cajas, incluidas las del API v2 con paginación."""
         from core.settings import settings
 
         token, _, _, _ = self.credenciales()
+        if not token:
+            return []
+        headers = self._headers(token)
         try:
-            resp = requests.get(f"{MP_BASE}/pos", headers=self._headers(token), timeout=settings.mp_timeout_seg)
-        except requests.RequestException as e:
-            logger.warning("listar_pos: %s", e)
+            results = []
+            for offset in range(0, 500, 100):
+                response = requests.get(
+                    f"{MP_BASE}/v2/pos", headers=headers,
+                    params={"limit": 100, "offset": offset},
+                    timeout=settings.mp_timeout_seg)
+                if response.status_code != 200:
+                    break
+                payload = response.json()
+                batch = payload.get("data") or payload.get("results") or []
+                results.extend(batch)
+                total = (payload.get("paging") or {}).get("total")
+                if len(batch) < 100 or (total is not None and offset + len(batch) >= total):
+                    return results
+            if results:
+                return results
+            # Compatibilidad con instalaciones que utilizan el endpoint clásico.
+            response = requests.get(f"{MP_BASE}/pos", headers=headers,
+                                    timeout=settings.mp_timeout_seg)
+            if response.status_code == 200:
+                return response.json().get("results", [])
+            logger.warning("listar_pos: Mercado Pago HTTP %s", response.status_code)
             return []
-        if resp.status_code != 200:
+        except requests.RequestException as exc:
+            logger.warning("listar_pos: %s", exc)
             return []
-        return resp.json().get("results", [])
 
     def crear_store_y_pos(self, nombre_negocio: str) -> tuple[str, str, str, str]:
         """Crea Store + POS fixed_amount. Retorna (store_ext, pos_ext, qr_url, error)."""
