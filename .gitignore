@@ -11,3 +11,6 @@ certificados/
 img/qr.png
 *.xlsx
 !ejemplo*.xlsx
+
+# Secreto local de la vinculación Mercado Pago OAuth
+.mp-oauth-local.key
