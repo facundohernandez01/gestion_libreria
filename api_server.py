@@ -81,6 +81,8 @@ from intrashop_entregas import router as intrashop_entregas_router
 app.include_router(intrashop_entregas_router)
 from pos_auth import router as pos_auth_router
 app.include_router(pos_auth_router)
+from services.mp_oauth_api import router as mp_oauth_router
+app.include_router(mp_oauth_router)
 
 
 def _connect() -> sqlite3.Connection:
