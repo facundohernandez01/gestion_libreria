@@ -802,13 +802,16 @@ def ConfigModal(page: ft.Page):
             try:
                 from core.db_factory import modo_actual, _server_url
                 import httpx
+                chosen = (pos_list[int(pos_dropdown.value)]
+                          if pos_dropdown.value is not None and pos_list else {})
+                selected_store = str(chosen.get("store_id") or "")
                 if modo_actual() == "cliente":
                     from adapters.entregas import _session_token
                     if not _session_token:
                         raise ValueError("Iniciá sesión como administrador del servidor POS.")
                     response = httpx.post(
                         _server_url().rstrip("/") + "/tienda/admin/mp-oauth/pos/create",
-                        json={"nombre": nombre},
+                        json={"nombre": nombre, "store_id": selected_store},
                         headers={"Authorization": "Bearer " + _session_token}, timeout=45)
                     if response.status_code == 200:
                         p_ext = response.json()["pos_external_id"]
@@ -820,7 +823,7 @@ def ConfigModal(page: ft.Page):
                         _aplicar_credenciales()
                     elif modo_actual() == "cliente":
                         raise ValueError("Conectá Mercado Pago mediante OAuth antes de crear un POS.")
-                    p_ext, _, error = mp_service.crear_pos_adicional(nombre)
+                    p_ext, _, error = mp_service.crear_pos_adicional(nombre, selected_store)
                     if error:
                         raise ValueError(error)
                     created = True
