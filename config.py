@@ -689,35 +689,68 @@ def ConfigModal(page: ft.Page):
         threading.Thread(target=worker, daemon=True).start()
 
     def obtener_pos(e=None):
-        token, uid = token_field.value.strip(), user_field.value.strip()
-        if not token or not uid:
-            resultado_text.value = "❌ Debes ingresar Access Token y User ID"
-            page.update()
+        """Lista POS sin bloquear la UI. En cliente OAuth los tokens no salen de pos_server."""
+        if mp_loading.visible:
             return
-        resultado_text.value = "⏳ Consultando POS…"
         mp_loading.visible = True
-        mp_load_status.value = "Consultando Mercado Pago…"
+        mp_load_status.value = "Consultando puntos de venta de Mercado Pago…"
         page.update()
-        _aplicar_credenciales()
-        nonlocal pos_list
-        pos_list = mp_service.listar_pos()
-        if not pos_list:
-            cargar_asignaciones()
-            mp_loading.visible = False
-            mp_load_status.value = "No se encontraron puntos de venta."
-            resultado_text.value = "⚠️ Sin POS o error de credenciales"
-            page.update()
-            return
-        pos_dropdown.options = [
-            ft.dropdown.Option(key=str(i), text=f"{p.get('name')} ({p.get('external_id', 'N/A')})")
-            for i, p in enumerate(pos_list)
-        ]
-        pos_dropdown.value = next((str(i) for i, p in enumerate(pos_list) if p.get("external_id") == (db.get_config_value("EXTERNAL_POS_ID") or external_pos_id_saved)), None)
-        cargar_asignaciones()
-        mp_loading.visible = False
-        mp_load_status.value = f"{len(pos_list)} POS cargados; selección restaurada."
-        resultado_text.value = f"✅ {len(pos_list)} POS. Seleccione uno."
-        page.update()
+
+        def worker():
+            nonlocal pos_list
+            try:
+                from core.db_factory import modo_actual, _server_url
+                import httpx
+                results = None
+                if modo_actual() == "cliente":
+                    from adapters.entregas import _session_token
+                    if not _session_token:
+                        raise ValueError("Iniciá sesión como administrador del servidor POS.")
+                    response = httpx.get(
+                        _server_url().rstrip("/") + "/tienda/admin/mp-oauth/pos",
+                        headers={"Authorization": "Bearer " + _session_token}, timeout=45)
+                    if response.status_code == 200:
+                        results = response.json().get("results", [])
+                    elif response.status_code != 409:
+                        response.raise_for_status()
+                if results is None:
+                    # Modo manual heredado, o instalación servidor/local con OAuth.
+                    if token_field.value.strip() and user_field.value.strip():
+                        _aplicar_credenciales()
+                    elif modo_actual() == "cliente":
+                        raise ValueError("Conectá Mercado Pago con OAuth para cargar los POS.")
+                    results = mp_service.listar_pos()
+                if not results:
+                    raise ValueError("Mercado Pago no devolvió puntos de venta.")
+                pos_list = results
+                pos_dropdown.options = [
+                    ft.dropdown.Option(key=str(i),
+                                       text=str(pos.get("name") or "POS") + " · "
+                                       + str(pos.get("external_id") or "Sin external_id"))
+                    for i, pos in enumerate(results)]
+                saved = db.get_config_value("EXTERNAL_POS_ID") or external_pos_id_saved
+                pos_dropdown.value = next(
+                    (str(i) for i, pos in enumerate(results)
+                     if pos.get("external_id") == saved), None)
+                cargar_asignaciones()
+                mp_load_status.value = (
+                    str(len(results)) + " POS cargados · selección guardada restaurada")
+                mp_load_status.color = N.GREEN_400
+                resultado_text.value = "POS disponibles: " + str(len(results))
+            except Exception as exc:
+                mp_load_status.value = "No se pudieron cargar los POS: " + str(exc)
+                mp_load_status.color = N.RED_400
+                # Las asociaciones locales deben permanecer visibles incluso
+                # cuando Mercado Pago no responda.
+                try:
+                    cargar_asignaciones()
+                except Exception:
+                    pass
+            finally:
+                mp_loading.visible = False
+                page.update()
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def seleccionar_pos(e=None):
         if pos_dropdown.value is None:
