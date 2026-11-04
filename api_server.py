@@ -67,6 +67,15 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespan)
 
+# La interfaz Astro compilada se publica desde el mismo servidor FastAPI.
+# Si dist no existe, la API continúa funcionando normalmente.
+from fastapi.staticfiles import StaticFiles
+
+INTRASHOP_DIST = Path(__file__).resolve().parent / "intrashop" / "dist"
+if (INTRASHOP_DIST / "index.html").is_file():
+    app.mount("/intrashop", StaticFiles(directory=str(INTRASHOP_DIST), html=True), name="intrashop")
+
+
 from fastapi.middleware.cors import CORSMiddleware
 from intrashop_api import router as intrashop_router
 
