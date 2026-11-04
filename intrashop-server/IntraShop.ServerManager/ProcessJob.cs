@@ -48,7 +48,7 @@ internal sealed class ProcessJob : IDisposable
     private struct IO_COUNTERS
     {
         public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
-        public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount, OtherTransferCount2;
+        public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
     }
     [StructLayout(LayoutKind.Sequential)]
     private struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION
