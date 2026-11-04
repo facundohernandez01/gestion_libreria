@@ -56,6 +56,19 @@ public partial class MainWindow : Window
         if (_ownedProcess is { HasExited: true }) { _ownedProcess.Dispose(); _ownedProcess = null; }
     }
 
+    private static string FindRepoRoot()
+    {
+        var current = new System.IO.DirectoryInfo(AppContext.BaseDirectory);
+        while (current is not null)
+        {
+            if (System.IO.File.Exists(System.IO.Path.Combine(current.FullName, "pos_server.py")))
+                return current.FullName;
+            current = current.Parent;
+        }
+        throw new System.IO.DirectoryNotFoundException(
+            "No se encontró pos_server.py. Ejecutá el administrador dentro del repositorio o usá el backend empaquetado.");
+    }
+
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
         if (!ReadPort() || await IsHealthyAsync()) return;
@@ -69,9 +82,7 @@ public partial class MainWindow : Window
         try
         {
             var isPython = System.IO.Path.GetFileNameWithoutExtension(backend).StartsWith("python", StringComparison.OrdinalIgnoreCase);
-            var workdir = isPython
-                ? System.IO.Path.GetFullPath(System.IO.Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."))
-                : System.IO.Path.GetDirectoryName(backend)!;
+            var workdir = isPython ? FindRepoRoot() : System.IO.Path.GetDirectoryName(backend)!;
             var info = new ProcessStartInfo(backend)
             {
                 WorkingDirectory = workdir,
