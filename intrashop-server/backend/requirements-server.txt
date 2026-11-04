@@ -1,0 +1,8 @@
+# Dependencias directas del servidor. Las transitivas se resuelven al compilar.
+# No incluir Flet, pandas, openpyxl ni reportlab salvo dependencia real.
+fastapi>=0.110
+uvicorn>=0.29
+httpx>=0.27
+requests>=2.31
+python-dotenv>=1.0
+cryptography>=42.0
