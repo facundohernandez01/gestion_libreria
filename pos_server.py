@@ -21,7 +21,19 @@ def main() -> None:
         return
     import uvicorn
     from api_server import app
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    # La consola del administrador .NET envía "shutdown" por stdin.
+    # Uvicorn cierra conexiones y finaliza su ciclo de vida normalmente.
+    import sys
+    import threading
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="info"))
+    def watch_stdin():
+        for line in sys.stdin:
+            if line.strip().lower() == "shutdown":
+                server.should_exit = True
+                break
+    if not sys.stdin.closed and not sys.stdin.isatty():
+        threading.Thread(target=watch_stdin, daemon=True).start()
+    server.run()
 
 
 if __name__ == "__main__":
