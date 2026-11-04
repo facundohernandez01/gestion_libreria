@@ -1,9 +1,6 @@
 using System.Diagnostics;
-using System.ComponentModel;
 using System.Drawing;
 using System.Windows.Forms;
-using System.Windows.Media;
-using System.Windows.Threading;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Threading;
@@ -86,7 +83,7 @@ public partial class MainWindow : Window
 
     private async Task StopOwnedProcessAsync()
     {
-        if (_ownedProcess is not { HasExited: false }) return;
+        if (_ownedProcess is not { HasExited: false } process) return;
         try
         {
             await process.StandardInput.WriteLineAsync("shutdown");
