@@ -1398,7 +1398,8 @@ def ConfigModal(page: ft.Page):
         contenedor_tabs.content.controls = [contenidos[i]]
         page.update()
         if i == 1:
-            threading.Thread(target=obtener_pos, daemon=True).start()
+            threading.Thread(target=consultar_oauth, daemon=True).start()
+            obtener_pos()
 
     for i, label in enumerate(etiquetas):
         botones_tab.append(ft.FilledTonalButton(
