@@ -143,11 +143,6 @@ class ServerConsole:
         with sqlite3.connect(settings.db_path, timeout=3) as conn:
             conn.row_factory = sqlite3.Row
             # Una lectura agrupada cada 15 s; no se hace polling de la red.
-            from intrashop_entregas import ensure_schema
-            from intrashop_checkout_store import ensure_schema as ensure_checkout_schema
-            ensure_schema(conn)
-            ensure_checkout_schema(conn)
-            conn.commit()
             columns = {row["name"] for row in conn.execute("PRAGMA table_info(intrashop_totems)")}
             ip_col = "ip" if "ip" in columns else ("ip_address" if "ip_address" in columns else None)
             fields = "id,nombre,ultimo_contacto" + ("," + ip_col if ip_col else "")
