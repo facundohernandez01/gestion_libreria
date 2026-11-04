@@ -94,15 +94,28 @@ def start(hub_url=None):
 
 
 def status():
-    """Verifica autorización; activa OAuth solo luego de obtener tokens válidos."""
+    """Estado persistido en POS_Server; nunca depende de la sesión Flet."""
     db = _db()
+    enabled = db.get_config_value("MP_OAUTH_ENABLED") == "1"
     session = db.get_config_value("MP_OAUTH_SESSION_ID") or ""
+    if enabled:
+        # El estado local es persistente; validar la credencial remota cuando
+        # se usa para cobrar, no bloquear el panel de ajustes al abrirlo.
+        return {"status": "connected",
+                "user_id": db.get_config_value("MP_OAUTH_MP_USER_ID") or ""}
     if not session:
-        return {"status": "connected" if db.get_config_value("MP_OAUTH_ENABLED") == "1" else "disconnected"}
-    data = _post("status", {"session_id": session,
-                            "session_proof": _secret("MP_OAUTH_SESSION_PROOF")})
+        return {"status": "disconnected"}
+    try:
+        data = _post("status", {"session_id": session,
+                                "session_proof": _secret("MP_OAUTH_SESSION_PROOF")}, timeout=12)
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code in (400, 404, 410):
+            db.set_config("MP_OAUTH_SESSION_ID", "")
+            db.set_config("MP_OAUTH_SESSION_PROOF", "")
+            db.set_config("MP_OAUTH_PENDING_INSTALLATION_SECRET", "")
+            return {"status": "disconnected"}
+        raise
     if data.get("status") == "connected":
-        # Pedir las credenciales antes de activar el modo OAuth.
         credentials = _fetch_credentials(_secret("MP_OAUTH_PENDING_INSTALLATION_SECRET"))
         if not credentials.get("access_token") or not credentials.get("user_id"):
             raise ValueError("Mercado Pago no devolvió credenciales utilizables.")
@@ -116,6 +129,10 @@ def status():
             db.set_config("MP_OAUTH_MP_USER_ID", str(credentials["user_id"]))
             db.set_config("MP_OAUTH_SESSION_ID", "")
             db.set_config("MP_OAUTH_SESSION_PROOF", "")
+    elif data.get("status") == "failed":
+        db.set_config("MP_OAUTH_SESSION_ID", "")
+        db.set_config("MP_OAUTH_SESSION_PROOF", "")
+        db.set_config("MP_OAUTH_PENDING_INSTALLATION_SECRET", "")
     return {"status": data.get("status", "pending"),
             "user_id": db.get_config_value("MP_OAUTH_MP_USER_ID") or ""}
 
