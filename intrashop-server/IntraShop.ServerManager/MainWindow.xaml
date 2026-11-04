@@ -12,6 +12,7 @@
           <Button x:Name="StartButton" Content="Iniciar" Click="Start_Click" Margin="14,0,8,0" Padding="16,8"/>
           <Button x:Name="StopButton" Content="Detener" Click="Stop_Click" Padding="16,8"/>
           <Button Content="Abrir tienda" Click="OpenShop_Click" Margin="8,0,0,0" Padding="16,8"/>
+          <Button Content="Mercado Pago / QR" Click="OpenMercadoPago_Click" Margin="8,0,0,0" Padding="16,8"/>
         </StackPanel>
       </StackPanel>
     </Border>
