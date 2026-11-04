@@ -73,9 +73,11 @@ class ServerConsole:
         devices = ttk.Frame(notebook, padding=12)
         assignments = ttk.Frame(notebook, padding=12)
         sessions = ttk.Frame(notebook, padding=12)
+        pending_tab = ttk.Frame(notebook, padding=12)
         notebook.add(devices, text="Tótems")
         notebook.add(assignments, text="Asignaciones QR")
         notebook.add(sessions, text="Operadores POS")
+        notebook.add(pending_tab, text="Conciliación")
 
         ttk.Label(devices, text="Verde: actividad en los últimos 90 segundos. Gris: sin señal reciente.").pack(anchor="w", pady=(0, 8))
         self.totems = self._table(devices, [
@@ -95,6 +97,9 @@ class ServerConsole:
 
         ttk.Label(sessions, text="Sesiones de operadores con acceso vigente").pack(anchor="w", pady=(0, 8))
         self.clients = self._table(sessions, [("operador", "Operador", 240), ("expira", "Válida hasta", 200)])
+        ttk.Label(pending_tab, text="Operaciones que bloquean el QR; verificar en Mercado Pago antes de liberar.").pack(anchor="w", pady=(0, 8))
+        self.pending_tree = self._table(pending_tab, [("id", "Checkout", 260), ("estado", "Estado", 110), ("pos", "POS Mercado Pago", 220), ("total", "Total", 110)])
+        ttk.Button(pending_tab, text="Copiar ID", command=self.copy_checkout_id).pack(anchor="w", pady=8)
         ttk.Label(page, textvariable=self.notice, style="Sub.TLabel").pack(anchor="w", pady=(10, 0))
 
     def _table(self, parent, columns):
@@ -149,8 +154,8 @@ class ServerConsole:
             totems = [dict(row) for row in conn.execute("SELECT " + fields + " FROM intrashop_totems ORDER BY nombre COLLATE NOCASE")]
             bindings = [dict(row) for row in conn.execute(
                 "SELECT terminal_id,terminal_type,nombre,pos_external_id FROM intrashop_mp_bindings ORDER BY terminal_type,nombre")]
-            pending = conn.execute("SELECT COUNT(*) FROM intrashop_checkouts WHERE estado='uncertain'").fetchone()[0]
-        return totems, bindings, pending
+            pending_rows = [dict(row) for row in conn.execute("SELECT id,estado,pos_external_id,total FROM intrashop_checkouts WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid') ORDER BY created_at DESC LIMIT 100")]
+        return totems, bindings, pending_rows
 
     @staticmethod
     def _fill(table, rows):
@@ -196,7 +201,7 @@ class ServerConsole:
             threading.Thread(target=worker, daemon=True).start()
         self._timer = self.root.after(self.REFRESH_MS, self.refresh)
 
-    def _render(self, totems, bindings, pending):
+    def _render(self, totems, bindings, pending_rows):
         now = datetime.now()
         device_rows = []
         online_count = 0
@@ -208,6 +213,7 @@ class ServerConsole:
                                  item["nombre"], item["id"], item.get("ip", item.get("ip_address", "—")),
                                  item["ultimo_contacto"]), "online" if online else "offline"))
         self._fill(self.totems, device_rows)
+        self._fill(self.pending_tree, [((p["id"],p["estado"],p["pos_external_id"],p["total"]),None) for p in pending_rows])
         self._fill(self.qr_tree, [
             ((b["terminal_id"], b["terminal_type"], b["nombre"], b["pos_external_id"]), None)
             for b in bindings])
@@ -221,8 +227,18 @@ class ServerConsole:
             for user, exp in active])
         self.summary.set(
             f"Tótems: {len(totems)} · En línea: {online_count} · QR asignados: {len(bindings)}"
-            f" · Operadores: {len(active)} · Pagos a conciliar: {pending}")
+            f" · Operadores: {len(active)} · Operaciones bloqueantes: {len(pending_rows)}")
         self.notice.set("Última actualización: " + datetime.now().strftime("%H:%M:%S"))
+
+    def copy_checkout_id(self):
+        selected = self.pending_tree.selection()
+        if not selected:
+            messagebox.showinfo("Conciliación", "Seleccioná un checkout.")
+            return
+        checkout_id = self.pending_tree.item(selected[0], "values")[0]
+        self.root.clipboard_clear()
+        self.root.clipboard_append(checkout_id)
+        messagebox.showinfo("Conciliación", "ID copiado. Verificá este pago en Mercado Pago antes de liberar la reserva.")
 
     def unbind_qr(self):
         selection = self.qr_tree.selection()
