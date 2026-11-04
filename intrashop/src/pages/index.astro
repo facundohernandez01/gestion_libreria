@@ -13,7 +13,7 @@ const title = "IntraShop · Tu tienda local";
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="IntraShop inicio">
+      <a class="brand" href="/intrashop/" aria-label="IntraShop inicio">
         <img class="brand-logo" src="/intrashop-logo.svg" width="43" height="43" alt=""/>
         <span>Intra<span class="brand-accent">Shop</span><small>TIENDA LOCAL</small></span>
       </a>
@@ -54,7 +54,7 @@ const title = "IntraShop · Tu tienda local";
       </section>
     </main>
 
-    <footer><span class="footer-brand">IntraShop</span><span>Compras dentro de la red local del comercio.</span><a href="/admin">Administración de tienda ↗</a></footer>
+    <footer><span class="footer-brand">IntraShop</span><span>Compras dentro de la red local del comercio.</span><a href="/intrashop/admin">Administración de tienda ↗</a></footer>
 
     <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
     <aside id="cart-drawer" class="cart-drawer" aria-label="Carrito de compras" aria-hidden="true">
@@ -129,7 +129,7 @@ const title = "IntraShop · Tu tienda local";
           $("catalog").innerHTML = "";
           $("connection-message").classList.remove("success");
           $("connection-message").innerHTML = "No se pudo conectar con el POS. Revisá la dirección del servidor y la API key. <button id=\"connection-config\" class=\"text-button\">Configurar conexión</button>";
-          $("connection-config")?.addEventListener("click", ()=>{window.location.href="/admin";});
+          $("connection-config")?.addEventListener("click", ()=>{window.location.href="/intrashop/admin";});
           $("empty-state").hidden = true;
         }
       }
