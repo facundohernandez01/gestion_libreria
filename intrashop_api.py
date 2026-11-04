@@ -438,6 +438,25 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
     return {"ok": True}
 
 
+@router.delete("/admin/mp-bindings/{terminal_id}")
+def desvincular_binding(terminal_id: str, operador: str = Depends(require_config)):
+    """Quita la asignación local sin borrar el POS ni el QR de Mercado Pago."""
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        checkout_store.ensure_schema(conn)
+        row = conn.execute("SELECT pos_external_id FROM intrashop_mp_bindings WHERE terminal_id=?", (terminal_id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "No existe la asignación")
+        busy = conn.execute("""SELECT 1 FROM intrashop_checkouts WHERE pos_external_id=?
+            AND estado IN ('reserved','creating','waiting','verifying','uncertain','paid') LIMIT 1""",
+            (row["pos_external_id"],)).fetchone()
+        if busy:
+            raise HTTPException(409, "El QR tiene cobros pendientes; conciliá antes de desvincular")
+        conn.execute("DELETE FROM intrashop_mp_bindings WHERE terminal_id=?", (terminal_id,))
+        conn.commit()
+    return {"ok": True}
+
+
 @router.get("/admin/checkouts-pending")
 def pending_checkouts(operador: str = Depends(require_config)):
     with _connect() as conn:
