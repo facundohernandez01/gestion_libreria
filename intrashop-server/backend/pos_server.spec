@@ -3,7 +3,9 @@
 from pathlib import Path
 root = Path(SPECPATH).resolve().parents[1]
 dist = root / "intrashop" / "dist"
-datas = [(str(dist), "intrashop/dist")] if (dist / "index.html").is_file() else []
+if not (dist / "index.html").is_file():
+    raise RuntimeError("Falta intrashop/dist/index.html. Ejecutá pnpm build antes de PyInstaller.")
+datas = [(str(dist), "intrashop/dist")]
 a = Analysis(
     [str(root / "pos_server.py")],
     pathex=[str(root)],
