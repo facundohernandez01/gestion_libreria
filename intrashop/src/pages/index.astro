@@ -92,6 +92,7 @@ const title = "IntraShop · Tu tienda local";
       const totemName=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
       let polling = false;
       let activeCheckoutId = "";
+      let checkoutPending = false;
       let selectedCategory = "";
       const money = (value:number) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(value);
       const api = async (path:string, init:RequestInit={}) => {
@@ -156,6 +157,8 @@ const title = "IntraShop · Tu tienda local";
       }
       function openPayment() { $("payment-modal").hidden = false; $("payment-spinner").hidden=false; $("payment-result").hidden=true; $("payment-done").hidden=true; $("qr-container").hidden=true; $("payment-message").textContent="Preparando tu cobro…"; }
       async function startCheckout() {
+        if (checkoutPending || activeCheckoutId) return;
+        checkoutPending = true;
         openCart(false); openPayment();
         $("payment-message").textContent = "Generando el cobro con Mercado Pago…";
         $("payment-order").hidden=true; $("payment-cancel").hidden=true; activeCheckoutId="";
@@ -164,6 +167,7 @@ const title = "IntraShop · Tu tienda local";
             body:JSON.stringify({id:totemId,nombre:totemName})});
           const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({totem_id:totemId,items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
           activeCheckoutId = result.checkout_id;
+          checkoutPending = false;
           const orderItems = result.items || cart.map(i=>({descripcion:i.product.descripcion,cantidad:i.quantity,precio_unitario:i.product.precio_lista}));
           $("payment-order-items").innerHTML = orderItems.map((item:any)=>"<div class=\"payment-order-item\"><span>"+escapeHtml(item.descripcion)+" <b>× "+item.cantidad+"</b></span><strong>"+money(item.precio_unitario*item.cantidad)+"</strong></div>").join("");
           $("payment-order-count").textContent = orderItems.reduce((sum:number,item:any)=>sum+item.cantidad,0)+" unidades";
@@ -173,11 +177,12 @@ const title = "IntraShop · Tu tienda local";
           $("payment-message").textContent = "Escaneá el QR y confirmá el pago desde Mercado Pago.";
           pollCheckout(result.checkout_id);
         } catch(error) {
+          checkoutPending = false;
           showPaymentResult((error as Error).message,false);
         }
       }
       async function cancelCheckout() {
-        if (!activeCheckoutId) { $("payment-modal").hidden=true; return; }
+        if (!activeCheckoutId) { if (!checkoutPending) $("payment-modal").hidden=true; return; }
         $<HTMLButtonElement>("payment-cancel").disabled = true;
         $("payment-message").textContent = "Solicitando cancelación del pedido…";
         try {
@@ -196,6 +201,7 @@ const title = "IntraShop · Tu tienda local";
             $("payment-message").textContent = state.message || "Procesando pago…";
             if (state.qr_url) { $<HTMLImageElement>("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
             if (["completed","error","expired","paid_sale_error","cancelled","cancel_error"].includes(state.status)) {
+              activeCheckoutId = "";
               $("payment-cancel").hidden = true;
               $<HTMLButtonElement>("payment-cancel").disabled = false;
               if (state.status==="completed") { cart=[]; updateCart(); await loadProducts($<HTMLInputElement>("search").value.trim()); showPaymentResult("Pago confirmado. Tu venta quedó registrada en el comercio.",true); }
@@ -218,9 +224,9 @@ const title = "IntraShop · Tu tienda local";
       $("cart-close").addEventListener("click",()=>openCart(false));
       $("drawer-backdrop").addEventListener("click",()=>openCart(false));
       $("checkout").addEventListener("click",startCheckout);
-      $("payment-close").addEventListener("click",()=>{if(activeCheckoutId && polling) cancelCheckout(); else $("payment-modal").hidden=true;});
+      $("payment-close").addEventListener("click",()=>{if(activeCheckoutId) void cancelCheckout(); else if (!checkoutPending) $("payment-modal").hidden=true;});
       $("payment-cancel").addEventListener("click",cancelCheckout);
-      $("payment-done").addEventListener("click",()=>{$("payment-modal").hidden=true;activeCheckoutId="";$("payment-order").hidden=true;});
+      $("payment-done").addEventListener("click",()=>{if(activeCheckoutId || checkoutPending) return;$("payment-modal").hidden=true;$("payment-order").hidden=true;});
       $<HTMLInputElement>("search").addEventListener("input",()=>{window.clearTimeout((window as any).__searchTimer);(window as any).__searchTimer=window.setTimeout(()=>loadProducts($<HTMLInputElement>("search").value.trim()),250);});
       updateCart(); loadProducts();
     </script>
