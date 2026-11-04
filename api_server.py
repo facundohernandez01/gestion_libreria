@@ -70,23 +70,25 @@ app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespa
 # La interfaz Astro compilada se publica desde el mismo servidor FastAPI.
 # Si dist no existe, la API continúa funcionando normalmente.
 from fastapi.staticfiles import StaticFiles
-from starlette.responses import RedirectResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 INTRASHOP_DIST = Path(__file__).resolve().parent / "intrashop" / "dist"
 if (INTRASHOP_DIST / "index.html").is_file():
     class AstroStaticFiles(StaticFiles):
         async def get_response(self, path, scope):
             # Astro static builds output admin/index.html or admin.html.
-            response = await super().get_response(path, scope)
-            if response.status_code != 404:
-                return response
+            try:
+                return await super().get_response(path, scope)
+            except StarletteHTTPException as exc:
+                if exc.status_code != 404:
+                    raise
             clean = path.strip("/")
             if not clean or "." in clean.rsplit("/", 1)[-1]:
-                return response
+                raise StarletteHTTPException(status_code=404)
             for candidate in (clean + "/index.html", clean + ".html"):
                 if (INTRASHOP_DIST / candidate).is_file():
                     return await super().get_response(candidate, scope)
-            return response
+            raise StarletteHTTPException(status_code=404)
 
     app.mount("/intrashop", AstroStaticFiles(directory=str(INTRASHOP_DIST), html=True), name="intrashop")
 
