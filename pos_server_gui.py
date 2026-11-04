@@ -4,6 +4,7 @@ Ejecutar: python pos_server_gui.py
 Empaquetar: pyinstaller --onefile --windowed --name IntraShopServer pos_server_gui.py
 """
 import sqlite3
+import webbrowser
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -31,6 +32,7 @@ class ServerConsole:
         actions.pack(fill="x",pady=12)
         ttk.Button(actions,text="Iniciar servidor",command=self.start).pack(side="left",padx=(0,8))
         ttk.Button(actions,text="Detener",command=self.stop).pack(side="left")
+        ttk.Button(actions,text="Abrir IntraShop",command=self.open_intrashop).pack(side="left",padx=(8,0))
         ttk.Label(outer,text="Tótems registrados (último contacto)").pack(anchor="w",pady=(12,4))
         self.totems=ttk.Treeview(outer,columns=("nombre","id","contacto"),show="headings",height=8)
         for col,title,width in (("nombre","Nombre",190),("id","ID",190),("contacto","Último contacto",170)):
@@ -59,6 +61,9 @@ class ServerConsole:
             except Exception as exc:
                 self.root.after(0,lambda:messagebox.showerror("Servidor",str(exc)))
         threading.Thread(target=run,daemon=True).start()
+
+    def open_intrashop(self):
+        webbrowser.open("http://127.0.0.1:" + str(self.port) + "/intrashop/")
 
     def stop(self):
         threading.Thread(target=server_manager.detener,daemon=True).start()
