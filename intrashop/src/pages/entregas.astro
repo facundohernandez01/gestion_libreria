@@ -23,7 +23,7 @@ let filter="activos",first=true,seen=new Set<number>(),busy=false;
 const labels:Record<string,string>={pendiente:"Pendiente de preparación",preparando:"Preparando",listo:"Listo para retirar",entregado:"Entregado"};
 const money=(n:number)=>new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS"}).format(n);
 const escape=(s:string)=>s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]||c));
-async function api(path:string,options:RequestInit={}){const response=await fetch(base+path,{...options,headers:{"Authorization":"Bearer "+token,"X-Terminal-Id":terminalId,"Content-Type":"application/json",...(options.headers||{})}});if(!response.ok)throw Error((await response.text()).slice(0,160));return response.json();}
+async function api(path:string,options:RequestInit={}){const response=await fetch(base+path,{...options,headers:{"Authorization":"Bearer "+token,"X-Terminal-Id":terminalId ?? "","Content-Type":"application/json",...(options.headers||{})}});if(!response.ok)throw Error((await response.text()).slice(0,160));return response.json();}
 function alertNew(n:number){if(n<1)return;try{if(Notification.permission==="granted")new Notification("IntraShop · Pedido nuevo",{body:n+" comanda(s) para preparar"});}catch{}}
 async function load(){
 if(!token){$("#connection").textContent="Iniciá sesión con tu usuario POS para ver las comandas.";return;}
