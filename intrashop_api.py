@@ -268,8 +268,17 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
         # No liberar stock cuando el resultado de MP es incierto.
         with _jobs_lock:
             current = _jobs.get(job_id, {}).get("status")
+        # Una cancelación confirmada y una expiración con cierre confirmado
+        # no deben dejar reservas perpetuas. Los resultados ambiguos sí.
+        persisted = {
+            "completed": "completed",
+            "cancelled": "cancelled",
+            "expired": "cancelled",
+            "error": "uncertain",
+            "cancel_error": "uncertain",
+            "paid_sale_error": "uncertain",
+        }.get(current, "uncertain")
         if current != "completed":
-            persisted = "uncertain"  # El cierre de QR no demuestra ausencia definitiva de pago.
             with _connect() as conn:
                 conn.execute("BEGIN IMMEDIATE")
                 checkout_store.set_status(conn, job_id, persisted)
