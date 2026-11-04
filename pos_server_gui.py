@@ -7,7 +7,7 @@ import time
 import tkinter as tk
 import webbrowser
 from datetime import datetime, timedelta
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 
 from core.settings import settings
 from server_manager import server_manager, ip_lan
@@ -99,7 +99,9 @@ class ServerConsole:
         self.clients = self._table(sessions, [("operador", "Operador", 240), ("expira", "Válida hasta", 200)])
         ttk.Label(pending_tab, text="Operaciones que bloquean el QR; verificar en Mercado Pago antes de liberar.").pack(anchor="w", pady=(0, 8))
         self.pending_tree = self._table(pending_tab, [("id", "Checkout", 260), ("estado", "Estado", 110), ("pos", "POS Mercado Pago", 220), ("total", "Total", 110)])
-        ttk.Button(pending_tab, text="Copiar ID", command=self.copy_checkout_id).pack(anchor="w", pady=8)
+        ttk.Button(pending_tab, text="Verificar pago y conciliar", command=self.reconcile_selected).pack(anchor="w", pady=4)
+        ttk.Button(pending_tab, text="Liberar tras verificar en Mercado Pago", command=self.release_selected).pack(anchor="w", pady=4)
+        ttk.Button(pending_tab, text="Copiar ID", command=self.copy_checkout_id).pack(anchor="w", pady=4)
         ttk.Label(page, textvariable=self.notice, style="Sub.TLabel").pack(anchor="w", pady=(10, 0))
 
     def _table(self, parent, columns):
@@ -230,6 +232,54 @@ class ServerConsole:
             f" · Operadores: {len(active)} · Operaciones bloqueantes: {len(pending_rows)}")
         self.notice.set("Última actualización: " + datetime.now().strftime("%H:%M:%S"))
 
+    def _selected_checkout(self):
+        selected = self.pending_tree.selection()
+        if not selected:
+            messagebox.showinfo("Conciliación", "Seleccioná un checkout.")
+            return None
+        return self.pending_tree.item(selected[0], "values")[0]
+
+    def reconcile_selected(self):
+        checkout_id = self._selected_checkout()
+        if not checkout_id:
+            return
+        self.notice.set("Consultando Mercado Pago…")
+        def worker():
+            try:
+                from intrashop_api import reconcile_checkout
+                result = reconcile_checkout(checkout_id, operador="POS_SERVER_LOCAL")
+                msg = "Resultado: " + str(result.get("estado")) + " — " + str(result.get("message", ""))
+                self.root.after(0, lambda: self._reconcile_result(msg))
+            except Exception as exc:
+                error = str(exc)
+                self.root.after(0, lambda: messagebox.showerror("Conciliación", error))
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _reconcile_result(self, msg):
+        if not self._closing:
+            messagebox.showinfo("Conciliación", msg)
+            self.refresh()
+
+    def release_selected(self):
+        checkout_id = self._selected_checkout()
+        if not checkout_id:
+            return
+        if not messagebox.askyesno("Verificación obligatoria",
+            "¿Confirmaste en Mercado Pago que NO hubo cobro y que el QR está cerrado?"):
+            return
+        confirmation = simpledialog.askstring("Liberación manual",
+            "Escribí LIBERAR SIN COBRO para confirmar:", parent=self.root)
+        if confirmation != "LIBERAR SIN COBRO":
+            return
+        try:
+            from intrashop_api import release_checkout, ReleaseRequest
+            result = release_checkout(checkout_id,
+                ReleaseRequest(confirmacion="VERIFIQUE EN MERCADO PAGO QUE NO EXISTE COBRO"),
+                operador="POS_SERVER_LOCAL")
+            messagebox.showinfo("Reserva liberada", str(result))
+            self.refresh()
+        except Exception as exc:
+            messagebox.showerror("Liberación", str(exc))
     def copy_checkout_id(self):
         selected = self.pending_tree.selection()
         if not selected:
