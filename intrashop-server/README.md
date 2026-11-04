@@ -33,3 +33,36 @@ Ejecutar el EXE resultante. En «Ejecutable FastAPI» configurar la ruta absolut
 - Definir migraciones y copias de seguridad de SQLite.
 
 No usar este prototipo para operar cobros reales hasta implementar cierre ordenado y pruebas de integración.
+
+
+## Compilación Windows: .NET + backend
+
+El script `build-backend.ps1` **solo** genera el motor Python. Para compilar exclusivamente la interfaz C#:
+
+```powershell
+.\intrashop-server\scripts\build-dotnet.ps1
+```
+
+Para crear la distribución combinada (administrador .NET + FastAPI empaquetado):
+
+```powershell
+.\intrashop-server\scripts\build-release.ps1
+```
+
+Salida:
+
+```text
+intrashop-server/release/
+  IntraShop.ServerManager.exe
+  backend/
+    pos_server.exe
+    _internal/
+```
+
+El administrador detecta el backend en esa ubicación de manera predeterminada. La publicación .NET es `win-x64`, autocontenida y de archivo único; no necesita el runtime .NET instalado por separado. El backend continúa siendo Python y se distribuye junto al administrador, sin instalar Python. **Esto no genera todavía un Setup.exe**: la carpeta release es una distribución portable para pruebas. No utilizar con cobros reales hasta completar parada ordenada y validación de integridad.
+
+Para repetir la publicación .NET usando un backend Python ya empaquetado:
+
+```powershell
+.\intrashop-server\scripts\build-release.ps1 -SkipBackend
+```
