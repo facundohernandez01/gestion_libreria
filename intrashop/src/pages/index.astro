@@ -89,7 +89,7 @@ const title = "IntraShop · Tu tienda local";
       let apiKey = localStorage.getItem("intrashop_key") || import.meta.env.PUBLIC_POS_API_KEY || "";
       let totemId = localStorage.getItem("intrashop_totem_id");
       if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
-      const totemName=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
+      let totemName=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
       let polling = false;
       let activeCheckoutId = "";
       let checkoutPending = false;
@@ -102,8 +102,18 @@ const title = "IntraShop · Tu tienda local";
         return body;
       };
       async function reportPresence(){
-        try{await api("/tienda/totems/register",{method:"POST",
-          body:JSON.stringify({id:totemId,nombre:totemName})});}catch{}
+        try {
+          let data;
+          try {
+            data = await api("/tienda/totems/presence",{method:"POST",
+              body:JSON.stringify({id:totemId})});
+          } catch(error) {
+            if (!(error instanceof Error) || !error.message.includes("Tótem no registrado")) throw error;
+            data = await api("/tienda/totems/register",{method:"POST",
+              body:JSON.stringify({id:totemId,nombre:totemName})});
+          }
+          if(data.nombre){totemName=data.nombre;localStorage.setItem("intrashop_totem_name",totemName);}
+        } catch {}
       }
       void reportPresence();
       setInterval(reportPresence,30000);
@@ -163,8 +173,7 @@ const title = "IntraShop · Tu tienda local";
         $("payment-message").textContent = "Generando el cobro con Mercado Pago…";
         $("payment-order").hidden=true; $("payment-cancel").hidden=true; activeCheckoutId="";
         try {
-          await api("/tienda/totems/register",{method:"POST",
-            body:JSON.stringify({id:totemId,nombre:totemName})});
+          await reportPresence();
           const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({totem_id:totemId,items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
           activeCheckoutId = result.checkout_id;
           checkoutPending = false;
