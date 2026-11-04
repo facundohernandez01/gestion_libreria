@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import os
 import sqlite3
+import sys
 import threading
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
@@ -72,7 +73,7 @@ app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespa
 from fastapi.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-INTRASHOP_DIST = Path(__file__).resolve().parent / "intrashop" / "dist"
+INTRASHOP_DIST = (Path(getattr(sys, "_MEIPASS")) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent) / "intrashop" / "dist"
 if (INTRASHOP_DIST / "index.html").is_file():
     class AstroStaticFiles(StaticFiles):
         async def get_response(self, path, scope):
