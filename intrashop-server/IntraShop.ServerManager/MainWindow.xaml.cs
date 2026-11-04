@@ -1,4 +1,9 @@
 using System.Diagnostics;
+using System.ComponentModel;
+using System.Drawing;
+using System.Windows.Forms;
+using System.Windows.Media;
+using System.Windows.Threading;
 using System.Net.Http;
 using System.Windows;
 using System.Windows.Threading;
@@ -11,15 +16,92 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _timer = new() { Interval = TimeSpan.FromSeconds(4) };
     private Process? _ownedProcess;
     private int _port = 8000;
+    private readonly ProcessJob _job = new();
+    private readonly NotifyIcon _tray;
+    private bool _reallyExit;
+    private bool _busy;
 
     public MainWindow()
     {
         InitializeComponent();
+        _tray = new NotifyIcon
+        {
+            Icon = SystemIcons.Application,
+            Text = "IntraShop Server Manager",
+            Visible = true,
+            ContextMenuStrip = new ContextMenuStrip()
+        };
+        _tray.ContextMenuStrip.Items.Add("Abrir administrador", null, (_, _) => RestoreFromTray());
+        _tray.ContextMenuStrip.Items.Add("Iniciar servidor", null, (_, _) => Dispatcher.Invoke(() => Start_Click(this, new RoutedEventArgs())));
+        _tray.ContextMenuStrip.Items.Add("Detener servidor", null, (_, _) => Dispatcher.Invoke(() => Stop_Click(this, new RoutedEventArgs())));
+        _tray.ContextMenuStrip.Items.Add("Abrir IntraShop", null, (_, _) => Dispatcher.Invoke(() => OpenShop_Click(this, new RoutedEventArgs())));
+        _tray.ContextMenuStrip.Items.Add(new ToolStripSeparator());
+        _tray.ContextMenuStrip.Items.Add("Salir y detener servidor", null, async (_, _) => await ExitAsync());
+        _tray.DoubleClick += (_, _) => RestoreFromTray();
         BackendPathInput.Text = System.IO.Path.Combine(AppContext.BaseDirectory, "backend", "pos_server.exe");
         _timer.Tick += async (_, _) => await RefreshStatusAsync();
         _timer.Start();
         Loaded += async (_, _) => await RefreshStatusAsync();
-        Closed += (_, _) => { _timer.Stop(); _http.Dispose(); };
+        Closing += (_, e) =>
+        {
+            if (_reallyExit) return;
+            e.Cancel = true;
+            Hide();
+            ShowInTaskbar = false;
+            _tray.BalloonTipTitle = "IntraShop sigue activo";
+            _tray.BalloonTipText = "Usá el ícono junto al reloj para administrar el servidor.";
+            _tray.ShowBalloonTip(2000);
+        };
+        Closed += (_, _) => { _timer.Stop(); _tray.Visible = false; _tray.Dispose(); _http.Dispose(); _job.Dispose(); };
+    }
+
+    public void RestoreFromTray()
+    {
+        ShowInTaskbar = true;
+        Show();
+        WindowState = WindowState.Normal;
+        Activate();
+    }
+
+    private async Task ExitAsync()
+    {
+        if (_busy) return;
+        if (_ownedProcess is { HasExited: false } &&
+            System.Windows.MessageBox.Show("¿Salir y detener el servidor IntraShop?", "Confirmar salida",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        _busy = true;
+        try
+        {
+            await StopOwnedProcessAsync();
+            _reallyExit = true;
+            Close();
+        }
+        catch (Exception ex)
+        {
+            _busy = false;
+            RestoreFromTray();
+            MessageText.Text = "No se pudo detener el servidor: " + ex.Message;
+        }
+    }
+
+    private async Task StopOwnedProcessAsync()
+    {
+        if (_ownedProcess is not { HasExited: false }) return;
+        try
+        {
+            await process.StandardInput.WriteLineAsync("shutdown");
+            await process.StandardInput.FlushAsync();
+            using var timeout = new System.Threading.CancellationTokenSource(TimeSpan.FromSeconds(12));
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (Exception)
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+                await process.WaitForExitAsync();
+            }
+        }
     }
 
     private bool ReadPort()
@@ -92,7 +174,7 @@ public partial class MainWindow : Window
 
     private async void Start_Click(object sender, RoutedEventArgs e)
     {
-        if (!ReadPort() || await IsHealthyAsync()) return;
+        if (_busy || !ReadPort() || await IsHealthyAsync()) return;
         if (_ownedProcess is { HasExited: false }) return;
         var backend = BackendPathInput.Text.Trim();
         if (!System.IO.File.Exists(backend))
@@ -108,7 +190,8 @@ public partial class MainWindow : Window
             {
                 WorkingDirectory = workdir,
                 UseShellExecute = false,
-                CreateNoWindow = true
+                CreateNoWindow = true,
+                RedirectStandardInput = true
             };
             if (!isPython)
             {
@@ -127,6 +210,7 @@ public partial class MainWindow : Window
             info.ArgumentList.Add("--port");
             info.ArgumentList.Add(_port.ToString());
             _ownedProcess = Process.Start(info) ?? throw new InvalidOperationException("No se inició el backend.");
+            _job.Add(_ownedProcess);
             MessageText.Text = "Servidor iniciado. Esperando respuesta HTTP…";
             await Task.Delay(1200);
             await RefreshStatusAsync();
@@ -137,12 +221,10 @@ public partial class MainWindow : Window
     private async void Stop_Click(object sender, RoutedEventArgs e)
     {
         if (_ownedProcess is not { HasExited: false } process) return;
-        if (MessageBox.Show("¿Detener el servidor? Los tótems conectados perderán acceso.", "Confirmar", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
+        if (System.Windows.MessageBox.Show("¿Detener el servidor? Los tótems conectados perderán acceso.", "Confirmar", MessageBoxButton.YesNo, MessageBoxImage.Warning) != MessageBoxResult.Yes) return;
         try
         {
-            // Prototipo: solo detiene procesos que lanzó este administrador.
-            process.Kill(entireProcessTree: true);
-            await process.WaitForExitAsync();
+            await StopOwnedProcessAsync();
             MessageText.Text = "Servidor detenido.";
         }
         catch (Exception ex) { MessageText.Text = "Error al detener: " + ex.Message; }
