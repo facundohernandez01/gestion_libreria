@@ -149,6 +149,12 @@ public partial class MainWindow : Window
         await RefreshStatusAsync();
     }
 
+    private void OpenMercadoPago_Click(object sender, RoutedEventArgs e)
+    {
+        if (!ReadPort()) return;
+        new MercadoPagoWindow(_port) { Owner = this }.Show();
+    }
+
     private void OpenShop_Click(object sender, RoutedEventArgs e)
     {
         if (!ReadPort()) return;
