@@ -46,11 +46,32 @@ public partial class MainWindow : Window
         catch (TaskCanceledException) { return false; }
     }
 
+    private async Task<bool> IsShopAvailableAsync()
+    {
+        try
+        {
+            using var response = await _http.GetAsync($"http://127.0.0.1:{_port}/intrashop/");
+            if (!response.IsSuccessStatusCode) return false;
+            var type = response.Content.Headers.ContentType?.MediaType;
+            return type is not null && type.Contains("html", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (HttpRequestException) { return false; }
+        catch (TaskCanceledException) { return false; }
+    }
+
     private async Task RefreshStatusAsync()
     {
         if (!ReadPort()) return;
         var healthy = await IsHealthyAsync();
-        StatusText.Text = healthy ? $"Activo · http://127.0.0.1:{_port}" : "Detenido o inaccesible";
+        if (healthy)
+        {
+            var shop = await IsShopAvailableAsync();
+            StatusText.Text = shop
+                ? $"API y tienda activas · http://127.0.0.1:{_port}/intrashop/"
+                : "API activa, pero tienda Astro no disponible (404 o error).";
+            MessageText.Text = shop ? "Servidor listo." : "Reconstruí la distribución con build-release.ps1 para incluir Astro.";
+        }
+        else StatusText.Text = "Detenido o inaccesible";
         StartButton.IsEnabled = !healthy && (_ownedProcess is null || _ownedProcess.HasExited);
         StopButton.IsEnabled = _ownedProcess is { HasExited: false };
         if (_ownedProcess is { HasExited: true }) { _ownedProcess.Dispose(); _ownedProcess = null; }
