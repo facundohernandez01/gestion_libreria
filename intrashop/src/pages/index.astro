@@ -133,15 +133,6 @@ const title = "IntraShop · Tu tienda local";
           $("empty-state").hidden = true;
         }
       }
-      function configureConnection() {
-        const base = prompt("Dirección del servidor POS (por ejemplo http://192.168.1.10:8000)",apiBase);
-        if (base === null) return;
-        const key = prompt("API key configurada en el POS",apiKey);
-        if (key === null) return;
-        apiBase = base.trim().replace(/\/$/,""); apiKey = key.trim();
-        localStorage.setItem("intrashop_api",apiBase); localStorage.setItem("intrashop_key",apiKey);
-        loadProducts($<HTMLInputElement>("search").value.trim());
-      }
       function updateCart() {
         $("cart-count").textContent = String(cart.reduce((sum,item)=>sum+item.quantity,0));
         $("cart-items").innerHTML = cart.length ? cart.map(({product:p,quantity:q})=>`
@@ -187,14 +178,14 @@ const title = "IntraShop · Tu tienda local";
       }
       async function cancelCheckout() {
         if (!activeCheckoutId) { $("payment-modal").hidden=true; return; }
-        $("payment-cancel").disabled = true;
+        $<HTMLButtonElement>("payment-cancel").disabled = true;
         $("payment-message").textContent = "Solicitando cancelación del pedido…";
         try {
           await api("/tienda/checkout/"+encodeURIComponent(activeCheckoutId)+"/cancel",{method:"POST"});
           $("payment-message").textContent = "Cancelación solicitada. Verificando estado…";
         } catch(error) {
           $("payment-message").textContent = (error as Error).message;
-          $("payment-cancel").disabled = false;
+          $<HTMLButtonElement>("payment-cancel").disabled = false;
         }
       }
       async function pollCheckout(id:string) {
@@ -206,7 +197,7 @@ const title = "IntraShop · Tu tienda local";
             if (state.qr_url) { $<HTMLImageElement>("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
             if (["completed","error","expired","paid_sale_error","cancelled","cancel_error"].includes(state.status)) {
               $("payment-cancel").hidden = true;
-              $("payment-cancel").disabled = false;
+              $<HTMLButtonElement>("payment-cancel").disabled = false;
               if (state.status==="completed") { cart=[]; updateCart(); await loadProducts($<HTMLInputElement>("search").value.trim()); showPaymentResult("Pago confirmado. Tu venta quedó registrada en el comercio.",true); }
               else if (state.status==="cancelled") { cart=[]; updateCart(); showPaymentResult("Pedido cancelado. No se registró ninguna venta.",false); }
               else showPaymentResult(state.message || "No se pudo completar el pago.",false);
