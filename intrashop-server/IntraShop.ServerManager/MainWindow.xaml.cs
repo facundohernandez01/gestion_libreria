@@ -110,6 +110,18 @@ public partial class MainWindow : Window
                 UseShellExecute = false,
                 CreateNoWindow = true
             };
+            if (!isPython)
+            {
+                var persistentDirectory = System.IO.Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                    "Kiosmico", "IntraShop");
+                var persistentDb = System.IO.Path.Combine(persistentDirectory, "libreria.db");
+                if (System.IO.File.Exists(persistentDb))
+                {
+                    // No migrar ni crear una DB en forma implícita.
+                    info.Environment["DB_PATH"] = persistentDb;
+                }
+            }
             if (isPython) info.ArgumentList.Add("pos_server.py");
             info.ArgumentList.Add("--headless");
             info.ArgumentList.Add("--port");
