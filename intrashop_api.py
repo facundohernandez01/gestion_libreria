@@ -547,6 +547,24 @@ def registrar_totem(body: TotemRegisterIn, x_api_key: str | None = Header(defaul
     return {"id": body.id, "nombre": body.nombre.strip(), "ok": True}
 
 
+class TotemPresenceIn(BaseModel):
+    id: str = Field(min_length=8, max_length=64)
+
+
+@router.post("/totems/presence")
+def presencia_totem(body: TotemPresenceIn, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    from intrashop_entregas import ensure_schema
+    with _connect() as conn:
+        ensure_schema(conn)
+        row = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.id,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Tótem no registrado")
+        conn.execute("UPDATE intrashop_totems SET ultimo_contacto=CURRENT_TIMESTAMP WHERE id=?", (body.id,))
+        conn.commit()
+    return {"ok": True, "id": body.id, "nombre": row["nombre"]}
+
+
 @router.post("/checkout")
 def iniciar_checkout(body: CheckoutIn):
     _ensure_schema()
