@@ -70,6 +70,11 @@ class ApiClient:
     def buscar_productos(self, termino: str = "", campo: str = "descripcion", limit: int = 200):
         return self._get("/productos", params={"termino": termino, "campo": campo})[:limit]
 
+    def guardar_producto(self, producto: dict) -> int:
+        """Crea o actualiza un producto mediante el servidor LAN."""
+        result = self._post("/productos", json=producto)
+        return int(result.get("id", 0))
+
     def listar_cajas(self, filtro: str = "", desde: str = "", hasta: str = ""):
         return self._get("/cajas/historial",
                          params={"filtro": filtro, "desde": desde, "hasta": hasta})
