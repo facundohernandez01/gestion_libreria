@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import socket
 import threading
 import time
 import tkinter as tk
@@ -28,6 +29,12 @@ class ServerConsole:
         self._closing = False
         self._loading = False
         self._timer = None
+        self._tray = None
+        self._tray_available = False
+        self._exit_requested = False
+        self._single_socket = None
+        self._single_port = 49000 + (int(self.port) % 1000)
+        self._init_single_instance()
         self.status = tk.StringVar(value="Iniciando servidor…")
         self.url = tk.StringVar(value="http://" + ip_lan() + ":" + str(self.port))
         self.summary = tk.StringVar(value="Cargando dispositivos…")
@@ -35,8 +42,82 @@ class ServerConsole:
         self._style()
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
+        self._init_tray()
         self.refresh()
         self.start()
+
+    def _init_single_instance(self):
+        """Una consola por puerto; una segunda apertura enfoca la existente."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            sock.bind(("127.0.0.1", self._single_port))
+            sock.listen(4)
+            sock.settimeout(0.5)
+        except OSError:
+            sock.close()
+            try:
+                with socket.create_connection(("127.0.0.1", self._single_port), timeout=1) as peer:
+                    peer.sendall(b"SHOW\\n")
+            except OSError:
+                pass
+            self.root.destroy()
+            raise SystemExit(0)
+        self._single_socket = sock
+
+        def listen():
+            while not self._closing:
+                try:
+                    peer, _ = sock.accept()
+                except socket.timeout:
+                    continue
+                except OSError:
+                    break
+                with peer:
+                    try:
+                        if peer.recv(16).strip() == b"SHOW":
+                            self.root.after(0, self.restore)
+                    except OSError:
+                        pass
+
+        threading.Thread(target=listen, name="intrashop-singleton", daemon=True).start()
+
+    def _init_tray(self):
+        try:
+            import pystray
+            from PIL import Image, ImageDraw
+
+            img = Image.new("RGB", (64, 64), "#192b48")
+            draw = ImageDraw.Draw(img)
+            draw.rounded_rectangle((9, 9, 55, 55), radius=12, fill="#2d9f81")
+            draw.text((23, 18), "I", fill="white")
+            menu = pystray.Menu(
+                pystray.MenuItem("Abrir administrador", lambda icon, item: self.root.after(0, self.restore), default=True),
+                pystray.MenuItem("Iniciar servidor", lambda icon, item: self.root.after(0, self.start)),
+                pystray.MenuItem("Detener servidor", lambda icon, item: self.root.after(0, self.stop)),
+                pystray.MenuItem("Salir (detener servidor)", lambda icon, item: self.root.after(0, self.exit_app)),
+            )
+            self._tray = pystray.Icon("intrashop-server", img, "IntraShop Server", menu)
+            threading.Thread(target=self._tray.run, name="intrashop-tray", daemon=True).start()
+            self._tray_available = True
+        except Exception:
+            # Sin bandeja disponible (Linux sin AppIndicator, dependencias faltantes),
+            # la ventana conserva su cierre normal para evitar quedar invisible.
+            self._tray = None
+            self._tray_available = False
+
+    def restore(self):
+        self.root.deiconify()
+        self.root.lift()
+        self.root.focus_force()
+
+    def exit_app(self):
+        if not messagebox.askyesno(
+            "Salir de IntraShop Server",
+            "¿Cerrar el administrador y detener el servidor que controla?"
+        ):
+            return
+        self._exit_requested = True
+        self.close()
 
     def _style(self):
         style = ttk.Style(self.root)
@@ -319,10 +400,20 @@ class ServerConsole:
         self.refresh()
 
     def close(self):
+        if self._tray_available and not self._exit_requested:
+            self.root.withdraw()
+            return
         self._closing = True
         if self._timer is not None:
             self.root.after_cancel(self._timer)
         server_manager.detener()
+        if self._single_socket is not None:
+            self._single_socket.close()
+        if self._tray is not None:
+            try:
+                self._tray.stop()
+            except Exception:
+                pass
         self.root.destroy()
 
     def run(self):
