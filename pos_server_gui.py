@@ -57,7 +57,7 @@ class ServerConsole:
             sock.close()
             try:
                 with socket.create_connection(("127.0.0.1", self._single_port), timeout=1) as peer:
-                    peer.sendall(b"SHOW\\n")
+                    peer.sendall(b"SHOW")
             except OSError:
                 pass
             self.root.destroy()
