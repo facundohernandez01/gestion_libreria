@@ -180,6 +180,18 @@ def list_productos(termino: str = "", campo: str = "descripcion", x_api_key: str
     return [dict(r) for r in rows]
 
 
+@app.post("/productos")
+def save_producto(producto: dict, x_api_key: str | None = Header(default=None)):
+    """Reutiliza las validaciones y transacciones del gestor de datos."""
+    _auth(x_api_key)
+    from database_manager import DatabaseManager
+    with _write_lock:
+        producto_id = DatabaseManager().guardar_producto(producto)
+    if not producto_id:
+        raise HTTPException(status_code=422, detail="Producto inválido o no se pudo guardar")
+    return {"id": producto_id}
+
+
 @app.get("/cajas/historial")
 def historial_cajas(filtro: str = "", desde: str = "", hasta: str = "",
                     x_api_key: str | None = Header(default=None)):
