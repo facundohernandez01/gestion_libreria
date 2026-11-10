@@ -156,7 +156,14 @@ class LibreriaApp:
         # Modo servidor: asegurar que el servidor HTTP esté disponible.
         # En Windows se prefiere el servicio del SO (auto-inicio); si no está
         # instalado se levanta en proceso al abrir la app.
-        if getattr(settings, "modo_red", "") == "servidor":
+        # Migración gradual: con POS_EXTERNAL_SERVER=1, FastAPI debe
+        # iniciarse por separado (pos_server.py o servicio Windows).
+        # Por defecto se conserva el arranque histórico para instalaciones
+        # existentes hasta completar la transición del modo cliente.
+        external_server = os.getenv("POS_EXTERNAL_SERVER", "").strip().lower() in (
+            "1", "true", "yes", "si", "sí", "on"
+        )
+        if getattr(settings, "modo_red", "") == "servidor" and not external_server:
             try:
                 if os.name == "nt":
                     import windows_service as wsp
