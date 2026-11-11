@@ -668,11 +668,11 @@ class DatabaseManager:
                    WHERE u.usuario=? COLLATE NOCASE""",
                 (usuario,),
             ).fetchone()
-            if row:
-                if not row["activo"] or str(row["clave"] or "") != clave:
-                    return None
+            if row and row["activo"] and str(row["clave"] or "") == clave:
                 return self._usuario_dict(row)
             # Compatibilidad con la clave única de versiones anteriores.
+            # La clave de Ajustes puede diferir de la clave guardada en usuarios;
+            # ambas deben permitir el acceso del administrador configurado.
             cfg_user = (self.get_config_value("LOGIN_USUARIO") or "admin").strip()
             cfg_clave = (self.get_config_value("LOGIN_CLAVE") or "admin").strip()
             if usuario == cfg_user and clave == cfg_clave:
