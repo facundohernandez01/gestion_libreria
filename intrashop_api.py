@@ -560,19 +560,29 @@ class TotemRegisterIn(BaseModel):
 
 @router.post("/totems/register")
 def registrar_totem(body: TotemRegisterIn, request: Request, x_api_key: str | None = Header(default=None)):
-    # La API key de instalación autoriza el alta, no los cambios de nombre de otros tótems.
-    if not settings.api_key or x_api_key != settings.api_key:
-        raise HTTPException(401, "Clave de instalación inválida")
+    """Alta LAN sin clave solo para nuevos dispositivos; nunca asigna QR ni permisos."""
     from intrashop_entregas import ensure_schema
+    authenticated = bool(settings.api_key and x_api_key == settings.api_key)
     with _connect() as conn:
         ensure_schema(conn)
-        conn.execute("""INSERT INTO intrashop_totems(id, nombre, ip_address)
-            VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET
-            nombre=excluded.nombre, ip_address=excluded.ip_address,
-            ultimo_contacto=CURRENT_TIMESTAMP""",
-            (body.id, body.nombre.strip(), request.client.host if request.client else None))
+        row = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.id,)).fetchone()
+        if row:
+            if authenticated:
+                conn.execute("""UPDATE intrashop_totems SET nombre=?, ip_address=?,
+                    ultimo_contacto=CURRENT_TIMESTAMP WHERE id=?""",
+                    (body.nombre.strip(), request.client.host if request.client else None, body.id))
+            else:
+                conn.execute("""UPDATE intrashop_totems SET ip_address=?,
+                    ultimo_contacto=CURRENT_TIMESTAMP WHERE id=?""",
+                    (request.client.host if request.client else None, body.id))
+            nombre = body.nombre.strip() if authenticated else row["nombre"]
+        else:
+            conn.execute("""INSERT INTO intrashop_totems(id, nombre, ip_address)
+                VALUES (?, ?, ?)""",
+                (body.id, body.nombre.strip(), request.client.host if request.client else None))
+            nombre = body.nombre.strip()
         conn.commit()
-    return {"id": body.id, "nombre": body.nombre.strip(), "ok": True}
+    return {"id": body.id, "nombre": nombre, "ok": True, "qr_pendiente": True}
 
 
 class TotemPresenceIn(BaseModel):
@@ -580,8 +590,7 @@ class TotemPresenceIn(BaseModel):
 
 
 @router.post("/totems/presence")
-def presencia_totem(body: TotemPresenceIn, request: Request, x_api_key: str | None = Header(default=None)):
-    _auth(x_api_key)
+def presencia_totem(body: TotemPresenceIn, request: Request):
     from intrashop_entregas import ensure_schema
     with _connect() as conn:
         ensure_schema(conn)
