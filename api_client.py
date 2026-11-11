@@ -22,6 +22,47 @@ class ApiClient:
         r.raise_for_status()
         return r.json()
 
+    def _admin_headers(self):
+        from adapters.entregas import get_session
+        token = get_session()
+        if not token:
+            raise PermissionError("Iniciá sesión como administrador POS para gestionar usuarios y roles")
+        return {**self._headers, "Authorization": "Bearer " + token}
+
+    def _admin_request(self, method, path, json=None):
+        response = httpx.request(method, self.base_url + path,
+                                 json=json, headers=self._admin_headers(), timeout=15)
+        response.raise_for_status()
+        return response.json()
+
+    def listar_roles(self):
+        return self._admin_request("GET", "/roles")
+
+    def obtener_rol(self, rol_id):
+        return self._admin_request("GET", f"/roles/{int(rol_id)}")
+
+    def guardar_rol(self, datos):
+        result = self._admin_request("POST", "/roles", json=datos)
+        return result["id"], result["error"]
+
+    def eliminar_rol(self, rol_id):
+        result = self._admin_request("DELETE", f"/roles/{int(rol_id)}")
+        return result["ok"], result["error"]
+
+    def listar_usuarios(self):
+        return self._admin_request("GET", "/usuarios")
+
+    def obtener_usuario(self, usuario_id):
+        return self._admin_request("GET", f"/usuarios/{int(usuario_id)}")
+
+    def guardar_usuario(self, datos):
+        result = self._admin_request("POST", "/usuarios", json=datos)
+        return result["id"], result["error"]
+
+    def eliminar_usuario(self, usuario_id):
+        result = self._admin_request("DELETE", f"/usuarios/{int(usuario_id)}")
+        return result["ok"], result["error"]
+
     def _post(self, path, json=None, params=None):
         r = httpx.post(self.base_url + path, json=json, params=params, headers=self._headers, timeout=15)
         r.raise_for_status()
