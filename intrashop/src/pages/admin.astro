@@ -23,55 +23,90 @@ import "../styles/global.css";
 <h2>Estado del servidor</h2><div id="server-state" class="admin-server-state">Sin comprobar</div>
 </section></div></main>
 <footer><span class="footer-brand">IntraShop</span><span>Panel local de configuración</span><a href="/intrashop/">Ir al catálogo</a></footer>
-<script>
-const baseDefault = import.meta.env.PUBLIC_POS_URL || (window.location.port === "8000" ? window.location.origin : window.location.hostname.replace(/^localhost$/,"127.0.0.1"));
-const defaultUrl = baseDefault.startsWith("http") ? baseDefault : "http://"+baseDefault+":8000";
-const keyDefault = import.meta.env.PUBLIC_POS_API_KEY || "";
-const url = document.querySelector<HTMLInputElement>("#server-url")!;
-const key = document.querySelector<HTMLInputElement>("#api-key")!;
-const totemName = document.querySelector<HTMLInputElement>("#totem-name")!;
-let totemId = localStorage.getItem("intrashop_totem_id");
-if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
-totemName.value=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
-document.querySelector<HTMLButtonElement>("#discover-server")!.addEventListener("click",async()=>{
-const box=document.querySelector<HTMLElement>("#discover-results")!;
-box.textContent="Comprobando servidor en el mismo equipo y host de IntraShop…";
-const candidates=[url.value.trim(),"http://"+location.hostname+":8000","http://127.0.0.1:8000"];
-const found:string[]=[];
-await Promise.all([...new Set(candidates.filter(Boolean))].map(async candidate=>{
-try{const ctrl=new AbortController();const timeout=setTimeout(()=>ctrl.abort(),1800);
-const response=await fetch(candidate.replace(/\/$/,"")+"/health",{signal:ctrl.signal});
-clearTimeout(timeout);
-if(response.ok){const data=await response.json();if(data.service==="pos-lan")found.push(candidate);}
-}catch{}
-}));
-box.replaceChildren();
-if(!found.length){box.textContent="No se detectó el servidor. Ingresá su IP LAN manualmente.";return;}
-for(const address of found){const btn=document.createElement("button");btn.type="button";btn.textContent="Usar "+address;btn.addEventListener("click",()=>{url.value=address;box.textContent="Servidor seleccionado: "+address;});box.append(btn);}
-});
-const status = document.querySelector<HTMLElement>("#admin-status")!;
-const state = document.querySelector<HTMLElement>("#server-state")!;
-url.value = localStorage.getItem("intrashop_api") || defaultUrl;
-key.value = localStorage.getItem("intrashop_key") || keyDefault;
-function message(text:string,ok:boolean){status.textContent=text;status.className="admin-status "+(ok?"success":"error");}
-document.querySelector<HTMLFormElement>("#connection-form")!.addEventListener("submit",async e=>{
-e.preventDefault();const value=url.value.trim().replace(/\/$/,"");
-if(!/^https?:\/\//i.test(value)){message("La URL debe empezar con http:// o https://",false);return;}
-localStorage.setItem("intrashop_api",value);localStorage.setItem("intrashop_key",key.value.trim());
-localStorage.setItem("intrashop_totem_name",totemName.value.trim());
-try{
-const response=await fetch(value+"/tienda/totems/register",{method:"POST",headers:{"Content-Type":"application/json","x-api-key":key.value.trim()},
-body:JSON.stringify({id:totemId,nombre:totemName.value.trim()})});
-if(!response.ok)throw Error("HTTP "+response.status);
-message("Tótem registrado en el servidor y configuración guardada.",true);
-}catch(err){message("Configuración guardada localmente, pero no se pudo registrar el tótem: "+(err as Error).message,false);}
-});
-document.querySelector<HTMLButtonElement>("#toggle-key")!.addEventListener("click",()=>{
-key.type=key.type==="password"?"text":"password";
-document.querySelector<HTMLButtonElement>("#toggle-key")!.textContent=key.type==="password"?"Mostrar":"Ocultar";
-});
-document.querySelector<HTMLButtonElement>("#test-connection")!.addEventListener("click",async()=>{
-state.textContent="Conectando…";try{const controller=new AbortController();const timeout=setTimeout(()=>controller.abort(),5000);
-try{const response=await fetch(url.value.trim().replace(/\/$/,"")+"/tienda/health",{signal:controller.signal});if(!response.ok)throw Error("HTTP "+response.status);const data=await response.json();if(!data.ok)throw Error("Servidor sin respuesta válida");state.textContent="Conectado · "+(data.service||"POS");message("El servidor responde correctamente.",true);}finally{clearTimeout(timeout);}
-}catch(error){state.textContent="Sin conexión";message("No se pudo conectar: "+(error as Error).message,false);}});
+<script is:inline>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const form = $("connection-form"), url = $("server-url"), key = $("api-key"), name = $("totem-name");
+  const status = $("admin-status"), state = $("server-state");
+  const origin = location.port === "8000" ? location.origin : location.protocol + "//" + location.hostname + ":8000";
+  const stored = localStorage.getItem("intrashop_api") || "";
+  const defaultUrl = stored && !stored.includes("localhost") && !stored.includes("127.0.0.1") ? stored : origin;
+  url.value = defaultUrl;
+  key.value = localStorage.getItem("intrashop_key") || "";
+  let id = localStorage.getItem("intrashop_totem_id");
+  if (!id) { id = crypto.randomUUID(); localStorage.setItem("intrashop_totem_id", id); }
+  name.value = localStorage.getItem("intrashop_totem_name") || "Tótem " + id.slice(0, 8);
+  function message(text, ok) { status.textContent = text; status.className = "admin-status " + (ok ? "success" : "error"); }
+  async function request(base, path, options = {}) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 7000);
+    try {
+      const response = await fetch(base + path, { ...options, signal: controller.signal });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "HTTP " + response.status);
+      return data;
+    } finally { clearTimeout(timer); }
+  }
+  $("toggle-key").addEventListener("click", () => {
+    key.type = key.type === "password" ? "text" : "password";
+    $("toggle-key").textContent = key.type === "password" ? "Mostrar" : "Ocultar";
+  });
+  $("discover-server").addEventListener("click", async () => {
+    const button = $("discover-server"), box = $("discover-results");
+    button.disabled = true; button.textContent = "Buscando servidores…";
+    const candidates = [...new Set([url.value.trim(), origin])].filter(Boolean);
+    const found = await Promise.all(candidates.map(async candidate => {
+      try { const data = await request(candidate.replace(/\/$/, ""), "/health"); return data.service === "pos-lan" ? candidate : null; }
+      catch { return null; }
+    }));
+    box.replaceChildren();
+    const valid = found.filter(Boolean);
+    if (!valid.length) box.textContent = "No se detectó FastAPI. Revisá la IP, el puerto 8000 y el firewall del servidor.";
+    for (const address of valid) {
+      const option = document.createElement("button");
+      option.type = "button"; option.textContent = "Seleccionar " + address;
+      option.addEventListener("click", () => { url.value = address; box.textContent = "Servidor seleccionado: " + address; });
+      box.append(option);
+    }
+    button.disabled = false; button.textContent = "Detectar servidor cercano";
+  });
+  $("test-connection").addEventListener("click", async () => {
+    const button = $("test-connection"), base = url.value.trim().replace(/\/$/, "");
+    button.disabled = true; button.textContent = "Verificando…"; state.textContent = "Comprobando conexión…";
+    try {
+      const health = await request(base, "/health");
+      if (health.service !== "pos-lan") throw new Error("La dirección no corresponde al servidor POS.");
+      const catalog = await request(base, "/tienda/productos", { headers: { "x-api-key": key.value.trim() } });
+      state.textContent = "Conectado · " + catalog.length + " productos";
+      message("Conexión verificada. Ya podés guardar la configuración.", true);
+    } catch (error) {
+      state.textContent = "Sin conexión";
+      message("Error de conexión: " + error.message + ". Verificá IP, API key y firewall.", false);
+    } finally { button.disabled = false; button.textContent = "Probar conexión"; }
+  });
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const base = url.value.trim().replace(/\/$/, "");
+    if (!/^https?:\/\//i.test(base)) { message("Ingresá una URL válida con http:// o https://", false); return; }
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true; button.textContent = "Guardando y verificando…";
+    message("Validando conexión y registrando el tótem…", true);
+    try {
+      const health = await request(base, "/health");
+      if (health.service !== "pos-lan") throw new Error("No es un servidor POS compatible.");
+      await request(base, "/tienda/totems/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": key.value.trim() },
+        body: JSON.stringify({ id, nombre: name.value.trim() })
+      });
+      localStorage.setItem("intrashop_api", base);
+      localStorage.setItem("intrashop_key", key.value.trim());
+      localStorage.setItem("intrashop_totem_name", name.value.trim());
+      state.textContent = "Conectado · tótem registrado";
+      message("Configuración guardada y tótem registrado. Abrí el catálogo para comprobar los productos.", true);
+    } catch (error) {
+      message("No se guardó la configuración: " + error.message + ". Revisá el servidor y la clave de instalación.", false);
+    } finally { button.disabled = false; button.textContent = "Guardar configuración"; }
+  });
+})();
 </script></body></html>
