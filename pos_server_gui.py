@@ -387,7 +387,18 @@ class ServerConsole:
             for b in bindings])
         try:
             from pos_auth import _sessions
-            active = [(user, exp) for user, exp in list(_sessions.values()) if exp > time.time()]
+            # Varias autenticaciones del mismo operador/terminal no son
+            # múltiples puestos conectados. Mostrar solo la sesión más reciente.
+            unique = {}
+            for session in list(_sessions.values()):
+                user, exp = session[:2]
+                if exp <= time.time():
+                    continue
+                terminal = session[3] if len(session) > 3 else ""
+                key = (user.casefold(), terminal or "sin-terminal")
+                if key not in unique or exp > unique[key][1]:
+                    unique[key] = (user, exp)
+            active = list(unique.values())
         except Exception:
             active = []
         self._fill(self.clients, [
