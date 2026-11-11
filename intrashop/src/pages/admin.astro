@@ -24,7 +24,7 @@ import "../styles/global.css";
 </section></div></main>
 <footer><span class="footer-brand">IntraShop</span><span>Panel local de configuración</span><a href="/intrashop/">Ir al catálogo</a></footer>
 <script>
-const baseDefault = import.meta.env.PUBLIC_POS_URL || new URL(window.location.href).hostname.replace(/^localhost$/,"127.0.0.1");
+const baseDefault = import.meta.env.PUBLIC_POS_URL || (window.location.port === "8000" ? window.location.origin : window.location.hostname.replace(/^localhost$/,"127.0.0.1"));
 const defaultUrl = baseDefault.startsWith("http") ? baseDefault : "http://"+baseDefault+":8000";
 const keyDefault = import.meta.env.PUBLIC_POS_API_KEY || "";
 const url = document.querySelector<HTMLInputElement>("#server-url")!;
