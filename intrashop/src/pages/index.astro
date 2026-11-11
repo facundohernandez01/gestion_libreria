@@ -79,6 +79,7 @@ const title = "IntraShop · Tu tienda local";
     </div>
 
     <script>
+      const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "terminal-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
       type Product = { id:number; codigo:string; descripcion:string; categoria:string; marca:string; precio_lista:number; stock_actual:number; imagen_url:string };
       type CartItem = { product:Product; quantity:number };
       const $ = <T extends HTMLElement>(id:string) => document.getElementById(id) as T;
@@ -92,7 +93,7 @@ const title = "IntraShop · Tu tienda local";
       let apiBase = window.location.port === "8000" ? window.location.origin : (safeStoredApi || import.meta.env.PUBLIC_POS_URL || defaultApiBase);
       // El catálogo es público en la LAN. Nunca insertar claves en el frontend.
       let totemId = localStorage.getItem("intrashop_totem_id");
-      if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
+      if(!totemId){totemId=makeId();localStorage.setItem("intrashop_totem_id",totemId);}
       let totemName=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
       let polling = false;
       let activeCheckoutId = "";
