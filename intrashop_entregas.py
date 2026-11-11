@@ -42,6 +42,10 @@ def ensure_schema(conn):
         ultimo_contacto TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
         fecha_registro TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )""")
+    # Conservar la última IP observada, también en instalaciones existentes.
+    totem_columns = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_totems)")}
+    if "ip_address" not in totem_columns:
+        conn.execute("ALTER TABLE intrashop_totems ADD COLUMN ip_address TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_intrashop_entregas_estado ON intrashop_entregas(estado, fecha_creacion)")
 
 
