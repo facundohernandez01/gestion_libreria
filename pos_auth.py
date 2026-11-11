@@ -24,17 +24,17 @@ class LoginRequest(BaseModel):
 
 
 @router.post("/login")
-def login(body: LoginRequest):
+def login(body: LoginRequest, x_terminal_id: str = Header(default="")):
     usuario = DatabaseManager().autenticar_usuario(body.usuario, body.clave)
     if not usuario or not usuario.get("activo", True):
         raise HTTPException(401, "Credenciales incorrectas")
     token = secrets.token_urlsafe(36)
     with _lock:
-        _sessions[token] = (usuario["usuario"], time.time() + TTL)
+        _sessions[token] = (usuario["usuario"], time.time() + TTL, bool(usuario.get("es_admin")), x_terminal_id[:100])
         if len(_sessions) > 5000:
             now = time.time()
-            for key, (_, expiry) in list(_sessions.items()):
-                if expiry < now:
+            for key, session in list(_sessions.items()):
+                if session[1] < now:
                     _sessions.pop(key, None)
     return {"access_token": token, "token_type": "bearer", "expires_in": TTL,
             "usuario": usuario["usuario"], "permisos": usuario.get("permisos", {}),
@@ -60,11 +60,13 @@ def require_delivery(authorization: str | None = Header(default=None)):
         # Instalaciones antiguas usan LOGIN_USUARIO/LOGIN_CLAVE sin fila
         # en usuarios. La sesión se autenticó previamente con esas credenciales.
         legacy_user = (DatabaseManager().get_config_value("LOGIN_USUARIO") or "admin").strip()
-        if session[0] == legacy_user:
+        if session[2] and session[0] == legacy_user:
             return session[0]
         raise HTTPException(403, "Usuario inexistente")
     if not row["activo"]:
         raise HTTPException(403, "Usuario inactivo o eliminado")
+    if session[2] and session[0] == (DatabaseManager().get_config_value("LOGIN_USUARIO") or "admin").strip():
+        return session[0]
     if not tiene(normalizar(row["permisos"]), "ENTREGAS_INTRASHOP", bool(row["es_admin"])):
         raise HTTPException(403, "El rol no permite gestionar entregas")
     return session[0]
@@ -79,6 +81,14 @@ def require_config(authorization: str | None = Header(default=None)):
     if not row:
         legacy_user = (DatabaseManager().get_config_value("LOGIN_USUARIO") or "admin").strip()
         if operador == legacy_user:
+            with _lock:
+                session = _sessions.get(authorization[7:]) if authorization else None
+            if session and session[2]:
+                return operador
+    if row and operador == (DatabaseManager().get_config_value("LOGIN_USUARIO") or "admin").strip():
+        with _lock:
+            session = _sessions.get(authorization[7:]) if authorization else None
+        if session and session[2]:
             return operador
     if not row or not tiene(normalizar(row["permisos"]), "CONFIGURACION", bool(row["es_admin"])):
         raise HTTPException(403, "Solo administración puede asignar terminales")
