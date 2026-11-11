@@ -23,8 +23,8 @@ class ApiClient:
         return r.json()
 
     def _admin_headers(self):
-        from adapters.entregas import get_session
-        token = get_session()
+        from adapters import entregas
+        token = entregas._session_token
         if not token:
             raise PermissionError("Iniciá sesión como administrador POS para gestionar usuarios y roles")
         return {**self._headers, "Authorization": "Bearer " + token}
