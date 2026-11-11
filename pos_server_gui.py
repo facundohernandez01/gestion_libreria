@@ -211,10 +211,12 @@ class ServerConsole:
             menu.add_command(label="Copiar ID de operación", command=self.copy_checkout_id)
         else:
             menu.add_command(label="Las sesiones expiran automáticamente", state="disabled")
+        menu.bind("<FocusOut>", lambda _event: menu.unpost())
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+            menu.destroy()
 
     def rename_totem(self):
         selection = self.totems.selection()
