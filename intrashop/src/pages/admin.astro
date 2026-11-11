@@ -10,15 +10,14 @@ import "../styles/global.css";
 <section class="admin-heading"><span class="section-kicker">CONFIGURACIÓN LOCAL</span><h1>Administración de tienda</h1><p>Configurá la conexión con el POS. Estos datos se guardan en este dispositivo, sin servicios externos.</p></section>
 <div class="admin-layout">
 <section class="admin-panel"><h2>Conexión al servidor</h2><p>Usá la dirección IP del equipo que ejecuta el POS. Evitá <code>localhost</code> en tablets o TV.</p>
-<form id="connection-form"><label for="totem-name">Nombre de este tótem</label><input id="totem-name" type="text" maxlength="80" required placeholder="Tótem Entrada 1"/><p class="admin-hint">Identifica este dispositivo en las comandas y permite asignarlo a cajas específicas.</p>
+<div id="connection-form"><label for="totem-name">Nombre de este tótem</label><input id="totem-name" type="text" maxlength="80" required placeholder="Tótem Entrada 1"/><p class="admin-hint">Identifica este dispositivo en las comandas y permite asignarlo a cajas específicas.</p>
 <label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="http://192.168.1.100:8000" autocomplete="url"/>
 <button id="discover-server" type="button" class="admin-test-button">Detectar servidor cercano</button><div id="discover-results" role="status"></div>
-<label for="api-key">API key del POS</label><div class="admin-password"><input id="api-key" type="password" required autocomplete="off" spellcheck="false"/><button id="toggle-key" type="button">Mostrar</button></div>
-<p class="admin-hint">La clave se guarda localmente en el navegador. No uses esta configuración en dispositivos públicos sin control de acceso.</p>
-<div class="admin-actions"><button class="primary-button" type="submit">Guardar configuración</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
-</form><div id="admin-status" role="status" class="admin-status"></div></section>
-<section class="admin-panel"><h2>Valores iniciales</h2><p>Para una instalación nueva, podés definir los valores de fábrica al compilar la tienda.</p>
-<div class="admin-tip"><strong>Variables de entorno de Astro</strong><code>PUBLIC_POS_URL=http://192.168.1.100:8000</code><code>PUBLIC_POS_API_KEY=</code></div>
+<p class="admin-hint">La conexión al catálogo no necesita usuario, contraseña ni API key. La administración y los cobros conservan su seguridad independiente.</p>
+<div class="admin-actions"><button id="save-connection" class="primary-button" type="button">Conectar y guardar</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
+</div><div id="admin-status" role="status" class="admin-status"></div></section>
+<section class="admin-panel"><h2>Conexión LAN</h2><p>Usá la IP de la computadora que ejecuta POS Server. El catálogo se consulta sin credenciales.</p>
+<div class="admin-tip"><strong>Variables de entorno de Astro</strong><code>PUBLIC_POS_URL=http://192.168.1.100:8000</code></div>
 <p class="admin-hint">No incrustes claves privadas en una compilación pública. Para producción, preferí un proxy local autenticado y dispositivos administrados.</p>
 <h2>Estado del servidor</h2><div id="server-state" class="admin-server-state">Sin comprobar</div>
 </section></div></main>
@@ -26,13 +25,13 @@ import "../styles/global.css";
 <script is:inline>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const form = $("connection-form"), url = $("server-url"), key = $("api-key"), name = $("totem-name");
+  const url = $("server-url"), name = $("totem-name");
   const status = $("admin-status"), state = $("server-state");
   const origin = location.port === "8000" ? location.origin : location.protocol + "//" + location.hostname + ":8000";
   const stored = localStorage.getItem("intrashop_api") || "";
   const defaultUrl = stored && !stored.includes("localhost") && !stored.includes("127.0.0.1") ? stored : origin;
   url.value = defaultUrl;
-  key.value = localStorage.getItem("intrashop_key") || "";
+
   let id = localStorage.getItem("intrashop_totem_id");
   if (!id) { id = crypto.randomUUID(); localStorage.setItem("intrashop_totem_id", id); }
   name.value = localStorage.getItem("intrashop_totem_name") || "Tótem " + id.slice(0, 8);
@@ -47,10 +46,6 @@ import "../styles/global.css";
       return data;
     } finally { clearTimeout(timer); }
   }
-  $("toggle-key").addEventListener("click", () => {
-    key.type = key.type === "password" ? "text" : "password";
-    $("toggle-key").textContent = key.type === "password" ? "Mostrar" : "Ocultar";
-  });
   $("discover-server").addEventListener("click", async () => {
     const button = $("discover-server"), box = $("discover-results");
     button.disabled = true; button.textContent = "Buscando servidores…";
@@ -76,7 +71,7 @@ import "../styles/global.css";
     try {
       const health = await request(base, "/health");
       if (health.service !== "pos-lan") throw new Error("La dirección no corresponde al servidor POS.");
-      const catalog = await request(base, "/tienda/productos", { headers: { "x-api-key": key.value.trim() } });
+      const catalog = await request(base, "/tienda/productos");
       state.textContent = "Conectado · " + catalog.length + " productos";
       message("Conexión verificada. Ya podés guardar la configuración.", true);
     } catch (error) {
@@ -84,29 +79,24 @@ import "../styles/global.css";
       message("Error de conexión: " + error.message + ". Verificá IP, API key y firewall.", false);
     } finally { button.disabled = false; button.textContent = "Probar conexión"; }
   });
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
+  $("save-connection").addEventListener("click", async () => {
     const base = url.value.trim().replace(/\/$/, "");
     if (!/^https?:\/\//i.test(base)) { message("Ingresá una URL válida con http:// o https://", false); return; }
-    const button = form.querySelector('button[type="submit"]');
+    const button = $("save-connection");
     button.disabled = true; button.textContent = "Guardando y verificando…";
     message("Validando conexión y registrando el tótem…", true);
     try {
       const health = await request(base, "/health");
       if (health.service !== "pos-lan") throw new Error("No es un servidor POS compatible.");
-      await request(base, "/tienda/totems/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-api-key": key.value.trim() },
-        body: JSON.stringify({ id, nombre: name.value.trim() })
-      });
+      await request(base, "/tienda/productos");
       localStorage.setItem("intrashop_api", base);
-      localStorage.setItem("intrashop_key", key.value.trim());
+      localStorage.removeItem("intrashop_key");
       localStorage.setItem("intrashop_totem_name", name.value.trim());
-      state.textContent = "Conectado · tótem registrado";
-      message("Configuración guardada y tótem registrado. Abrí el catálogo para comprobar los productos.", true);
+      state.textContent = "Conectado · catálogo disponible";
+      message("Conexión guardada. El catálogo está disponible; abrí la tienda para ver los productos.", true);
     } catch (error) {
-      message("No se guardó la configuración: " + error.message + ". Revisá el servidor y la clave de instalación.", false);
-    } finally { button.disabled = false; button.textContent = "Guardar configuración"; }
+      message("No se guardó la configuración: " + error.message + ". Revisá la IP, el puerto y que POS Server esté iniciado.", false);
+    } finally { button.disabled = false; button.textContent = "Conectar y guardar"; }
   });
 })();
 </script></body></html>
