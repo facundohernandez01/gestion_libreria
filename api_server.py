@@ -208,7 +208,8 @@ def api_eliminar_rol(rol_id: int, operador: str = Depends(require_config)):
 @app.get("/usuarios")
 def api_listar_usuarios(operador: str = Depends(require_config)):
     from database_manager import DatabaseManager
-    return DatabaseManager().listar_usuarios()
+    return [{k: v for k, v in user.items() if k != "clave"}
+            for user in DatabaseManager().listar_usuarios()]
 
 
 @app.get("/usuarios/{usuario_id}")
@@ -217,7 +218,7 @@ def api_obtener_usuario(usuario_id: int, operador: str = Depends(require_config)
     result = DatabaseManager().obtener_usuario(usuario_id)
     if result is None:
         raise HTTPException(404, "Usuario inexistente")
-    return result
+    return {k: v for k, v in result.items() if k != "clave"}
 
 
 @app.post("/usuarios")
