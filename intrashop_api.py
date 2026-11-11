@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException, Depends
+from fastapi import APIRouter, Header, HTTPException, Depends, Request
 from pos_auth import require_config
 import intrashop_checkout_store as checkout_store
 from fastapi.responses import FileResponse
@@ -559,17 +559,18 @@ class TotemRegisterIn(BaseModel):
 
 
 @router.post("/totems/register")
-def registrar_totem(body: TotemRegisterIn, x_api_key: str | None = Header(default=None)):
+def registrar_totem(body: TotemRegisterIn, request: Request, x_api_key: str | None = Header(default=None)):
     # La API key de instalación autoriza el alta, no los cambios de nombre de otros tótems.
     if not settings.api_key or x_api_key != settings.api_key:
         raise HTTPException(401, "Clave de instalación inválida")
     from intrashop_entregas import ensure_schema
     with _connect() as conn:
         ensure_schema(conn)
-        conn.execute("""INSERT INTO intrashop_totems(id, nombre)
-            VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET
-            nombre=excluded.nombre, ultimo_contacto=CURRENT_TIMESTAMP""",
-            (body.id, body.nombre.strip()))
+        conn.execute("""INSERT INTO intrashop_totems(id, nombre, ip_address)
+            VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET
+            nombre=excluded.nombre, ip_address=excluded.ip_address,
+            ultimo_contacto=CURRENT_TIMESTAMP""",
+            (body.id, body.nombre.strip(), request.client.host if request.client else None))
         conn.commit()
     return {"id": body.id, "nombre": body.nombre.strip(), "ok": True}
 
@@ -579,7 +580,7 @@ class TotemPresenceIn(BaseModel):
 
 
 @router.post("/totems/presence")
-def presencia_totem(body: TotemPresenceIn, x_api_key: str | None = Header(default=None)):
+def presencia_totem(body: TotemPresenceIn, request: Request, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
     from intrashop_entregas import ensure_schema
     with _connect() as conn:
@@ -587,7 +588,8 @@ def presencia_totem(body: TotemPresenceIn, x_api_key: str | None = Header(defaul
         row = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.id,)).fetchone()
         if not row:
             raise HTTPException(404, "Tótem no registrado")
-        conn.execute("UPDATE intrashop_totems SET ultimo_contacto=CURRENT_TIMESTAMP WHERE id=?", (body.id,))
+        conn.execute("UPDATE intrashop_totems SET ultimo_contacto=CURRENT_TIMESTAMP, ip_address=? WHERE id=?",
+                     (request.client.host if request.client else None, body.id))
         conn.commit()
     return {"ok": True, "id": body.id, "nombre": row["nombre"]}
 
