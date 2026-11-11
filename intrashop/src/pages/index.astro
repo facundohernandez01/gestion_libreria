@@ -88,7 +88,7 @@ const title = "IntraShop · Tu tienda local";
       const defaultApiBase = window.location.port === "8000" ? window.location.origin : (window.location.protocol + "//" + window.location.hostname + ":8000");
       const storedApiBase = localStorage.getItem("intrashop_api");
       // Un localhost guardado en otro equipo siempre apunta a ese otro equipo.
-      const safeStoredApi = storedApiBase && !/^https?:\\/\\/(localhost|127\\.0\\.0\\.1)(:|\\/|$)/i.test(storedApiBase) ? storedApiBase : "";
+      const safeStoredApi = storedApiBase && !storedApiBase.includes("localhost") && !storedApiBase.includes("127.0.0.1") ? storedApiBase : "";
       let apiBase = window.location.port === "8000" ? window.location.origin : (safeStoredApi || import.meta.env.PUBLIC_POS_URL || defaultApiBase);
       let apiKey = localStorage.getItem("intrashop_key") || import.meta.env.PUBLIC_POS_API_KEY || "";
       let totemId = localStorage.getItem("intrashop_totem_id");
@@ -100,7 +100,7 @@ const title = "IntraShop · Tu tienda local";
       let selectedCategory = "";
       const money = (value:number) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(value);
       const api = async (path:string, init:RequestInit={}) => {
-        const response = await fetch(apiBase.replace(/\/$/,"") + path,{...init,headers:{"x-api-key":apiKey,"Content-Type":"application/json",...(init.headers||{})}});
+        const response = await fetch(apiBase.replace(/\/$/,"") + path,{...init,signal:init.signal || AbortSignal.timeout(8000),headers:{"x-api-key":apiKey,"Content-Type":"application/json",...(init.headers||{})}});
         const body = await response.json().catch(()=>({detail:"Respuesta inválida del servidor"}));
         if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación");
         return body;
@@ -143,7 +143,7 @@ const title = "IntraShop · Tu tienda local";
         } catch (error) {
           $("catalog").innerHTML = "";
           $("connection-message").classList.remove("success");
-          $("connection-message").innerHTML = "No se pudo conectar con el POS. Revisá la dirección del servidor y la API key. <button id=\"connection-config\" class=\"text-button\">Configurar conexión</button>";
+          $("connection-message").innerHTML = "No se pudo consultar el catálogo: "+escapeHtml(error instanceof Error ? error.message : String(error))+" · Servidor: "+escapeHtml(apiBase)+" <button id=\"connection-config\" class=\"text-button\">Configurar conexión</button>";
           $("connection-config")?.addEventListener("click", ()=>{window.location.href="/intrashop/admin";});
           $("empty-state").hidden = true;
         }
