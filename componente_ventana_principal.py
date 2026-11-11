@@ -1,3 +1,4 @@
+import asyncio
 import webbrowser
 from pathlib import Path
 
@@ -30,9 +31,41 @@ def VentanaPrincipal(page: ft.Page, db_manager, caja_id, on_nueva_venta_teclado,
         )
         abrir_dialogo(page, dlg)
 
+    _config_loading = False
+
+    async def _cargar_config(loading_dialog):
+        nonlocal _config_loading
+        try:
+            # Consultas de SQLite y sincronización de Mercado Pago fuera del hilo UI.
+            dlg = await asyncio.to_thread(ConfigModal, page)
+            cerrar_dialogo(page)
+            abrir_dialogo(page, dlg)
+        except Exception as exc:
+            cerrar_dialogo(page)
+            snack(page, "No se pudieron cargar los ajustes: " + str(exc))
+        finally:
+            _config_loading = False
+
     def abrir_config(e):
-        dlg = ConfigModal(page)
-        abrir_dialogo(page, dlg)
+        nonlocal _config_loading
+        if _config_loading:
+            return
+        _config_loading = True
+        loading_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Preparando ajustes"),
+            content=ft.Row([
+                ft.ProgressRing(width=30, height=30),
+                ft.Text("Cargando configuración y Mercado Pago…"),
+            ], spacing=16),
+        )
+        abrir_dialogo(page, loading_dialog)
+        try:
+            page.run_task(_cargar_config, loading_dialog)
+        except Exception as exc:
+            cerrar_dialogo(page)
+            _config_loading = False
+            snack(page, "No se pudieron iniciar los ajustes: " + str(exc))
 
     def abrir_reporte(e):
         from componente_reporte import mostrar_reporte_ventas
