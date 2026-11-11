@@ -90,11 +90,12 @@ import "../styles/global.css";
       const health = await request(base, "/health");
       if (health.service !== "pos-lan") throw new Error("No es un servidor POS compatible.");
       await request(base, "/tienda/productos");
+      const registration = await request(base, "/tienda/totems/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, nombre: name.value.trim() }) });
       localStorage.setItem("intrashop_api", base);
       localStorage.removeItem("intrashop_key");
-      localStorage.setItem("intrashop_totem_name", name.value.trim());
-      state.textContent = "Conectado · catálogo disponible";
-      message("Conexión guardada. El catálogo está disponible; abrí la tienda para ver los productos.", true);
+      localStorage.setItem("intrashop_totem_name", registration.nombre);
+      state.textContent = "Conectado · tótem registrado";
+      message("Tótem registrado como " + registration.nombre + ". Aparecerá en POS Server. Falta asociar un QR para cobrar.", true);
     } catch (error) {
       message("No se guardó la configuración: " + error.message + ". Revisá la IP, el puerto y que POS Server esté iniciado.", false);
     } finally { button.disabled = false; button.textContent = "Conectar y guardar"; }
