@@ -6,6 +6,7 @@ import json
 import logging
 import mimetypes
 import os
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 import sqlite3
 import threading
 import time
@@ -62,6 +63,30 @@ def _ensure_schema() -> None:
         conn.commit()
 
 
+def _qr_surcharge_percent(conn: sqlite3.Connection) -> Decimal:
+    """Recargo QR vigente: la configuración de SQLite prevalece sobre .env."""
+    raw = None
+    try:
+        row = conn.execute("SELECT valor FROM config WHERE clave='RECARGO'").fetchone()
+        if row is not None:
+            raw = row[0]
+    except sqlite3.Error:
+        pass
+    if raw is None or str(raw).strip() == "":
+        raw = settings.recargo_porcentaje
+    try:
+        return max(Decimal("0"), Decimal(str(raw).replace(",", ".")))
+    except (InvalidOperation, ValueError):
+        return Decimal("0")
+
+
+def _qr_price(base: object, percent: Decimal) -> float:
+    amount = Decimal(str(base or 0))
+    return float((amount * (Decimal("1") + percent / Decimal("100"))).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    ))
+
+
 def _product(row: sqlite3.Row) -> dict:
     p = dict(row)
     p["disponible_tienda"] = bool(p.get("disponible_tienda", 0))
@@ -106,7 +131,7 @@ def _load_cart(items: list[CartItem]) -> tuple[list[dict], float]:
             raise HTTPException(400, f"Producto {item.producto_id} no disponible en la tienda")
         if int(p["stock_actual"]) < item.cantidad:
             raise HTTPException(409, f"Stock insuficiente para {p['descripcion']}")
-        price = round(float(p["precio_lista"]), 2)
+        price = _qr_price(p["precio_lista"], _qr_surcharge_percent(conn))
         cart.append({"producto_id": int(p["id"]), "cantidad": item.cantidad,
                      "precio_unitario": price, "descripcion": p["descripcion"]})
         total += price * item.cantidad
@@ -306,8 +331,10 @@ def listar_productos(termino: str = ""):
         ).fetchall()
     with _connect() as conn:
         products = []
+        qr_surcharge = _qr_surcharge_percent(conn)
         for row in rows:
             p = _product(row)
+            p["precio_lista"] = _qr_price(p["precio_lista"], qr_surcharge)
             p["stock_actual"] = checkout_store.available(conn, p["id"])
             if p["stock_actual"] > 0:
                 products.append(p)
