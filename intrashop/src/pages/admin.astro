@@ -25,6 +25,7 @@ import "../styles/global.css";
 <script is:inline>
 (() => {
   const $ = (id) => document.getElementById(id);
+  const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "terminal-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
   const url = $("server-url"), name = $("totem-name");
   const status = $("admin-status"), state = $("server-state");
   const origin = location.port === "8000" ? location.origin : location.protocol + "//" + location.hostname + ":8000";
@@ -33,7 +34,7 @@ import "../styles/global.css";
   url.value = defaultUrl;
 
   let id = localStorage.getItem("intrashop_totem_id");
-  if (!id) { id = crypto.randomUUID(); localStorage.setItem("intrashop_totem_id", id); }
+  if (!id) { id = makeId(); localStorage.setItem("intrashop_totem_id", id); }
   name.value = localStorage.getItem("intrashop_totem_name") || "Tótem " + id.slice(0, 8);
   function message(text, ok) { status.textContent = text; status.className = "admin-status " + (ok ? "success" : "error"); }
   async function request(base, path, options = {}) {
