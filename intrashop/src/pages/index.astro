@@ -85,7 +85,11 @@ const title = "IntraShop · Tu tienda local";
       const placeholder = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" rx="24" fill="#f0f2fa"/><rect x="142" y="80" width="116" height="130" rx="16" fill="#e2e5f5"/><path d="M170 80v-8a30 30 0 0 1 60 0v8" fill="none" stroke="#a6acd0" stroke-width="9" stroke-linecap="round"/><path d="M184 145l12 12 25-27" fill="none" stroke="#8d82d9" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>');
       let products:Product[] = [];
       let cart:CartItem[] = [];
-      let apiBase = localStorage.getItem("intrashop_api") || import.meta.env.PUBLIC_POS_URL || (window.location.port === "8000" ? window.location.origin : (window.location.protocol + "//" + window.location.hostname + ":8000"));
+      const defaultApiBase = window.location.port === "8000" ? window.location.origin : (window.location.protocol + "//" + window.location.hostname + ":8000");
+      const storedApiBase = localStorage.getItem("intrashop_api");
+      // Un localhost guardado en otro equipo siempre apunta a ese otro equipo.
+      const safeStoredApi = storedApiBase && !/^https?:\\/\\/(localhost|127\\.0\\.0\\.1)(:|\\/|$)/i.test(storedApiBase) ? storedApiBase : "";
+      let apiBase = window.location.port === "8000" ? window.location.origin : (safeStoredApi || import.meta.env.PUBLIC_POS_URL || defaultApiBase);
       let apiKey = localStorage.getItem("intrashop_key") || import.meta.env.PUBLIC_POS_API_KEY || "";
       let totemId = localStorage.getItem("intrashop_totem_id");
       if(!totemId){totemId=crypto.randomUUID();localStorage.setItem("intrashop_totem_id",totemId);}
@@ -130,7 +134,7 @@ const title = "IntraShop · Tu tienda local";
       }
       function escapeHtml(value:string) { return value.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c] || c)); }
       async function loadProducts(term="") {
-        $("connection-message").textContent = "Conectando con el servidor del local…";
+        $("connection-message").textContent = "Consultando catálogo en "+apiBase+"…";
         try {
           products = await api("/tienda/productos?termino="+encodeURIComponent(term));
           renderProducts(products);
