@@ -28,6 +28,7 @@ import "../styles/global.css";
 <div id="delivery-loading" class="delivery-loading" hidden><span class="delivery-spinner"></span><span id="loading-label">Consultando comandas…</span></div><div id="orders" class="delivery-grid" aria-live="polite"></div>
 </main>
 <script>
+      const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "terminal-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
 type Item={descripcion:string;cantidad:number;subtotal:number};
 type Order={id:number;venta_id:number;estado:string;fecha_creacion:string;total:number;items:Item[];entregado_por:string|null;tomado_por:string|null;tomado_terminal:string|null};
 const $=(s:string)=>document.querySelector<HTMLElement>(s)!;
@@ -35,7 +36,7 @@ const storedBase=localStorage.getItem("intrashop_api");
 const base=(location.port==="8000"?location.origin:((storedBase&&!storedBase.includes("localhost")&&!storedBase.includes("127.0.0.1")?storedBase:"")||import.meta.env.PUBLIC_POS_URL||(location.protocol+"//"+location.hostname+":8000"))).replace(/\/$/,"");
 let token="";let authenticatedUser="";
 let terminalId=localStorage.getItem("intrashop_delivery_terminal_id");
-if(!terminalId){terminalId=crypto.randomUUID();localStorage.setItem("intrashop_delivery_terminal_id",terminalId);}
+if(!terminalId){terminalId=makeId();localStorage.setItem("intrashop_delivery_terminal_id",terminalId);}
 let filter="activos",first=true,seen=new Set<number>(),busy=false;
 function loading(on:boolean,label="Consultando comandas…"){$("#delivery-loading").hidden=!on;$("#loading-label").textContent=label;}
 function status(message:string,kind="info"){$("#connection").textContent=message;$("#connection").dataset.state=kind;}
