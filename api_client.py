@@ -70,8 +70,10 @@ class ApiClient:
 
     def autenticar_usuario(self, usuario: str, clave: str):
         try:
+            from core.terminal_identity import terminal_id
             response = httpx.post(self.base_url + "/pos/auth/login",
-                json={"usuario": usuario, "clave": clave}, timeout=8)
+                json={"usuario": usuario, "clave": clave},
+                headers={"X-Terminal-Id": terminal_id()}, timeout=8)
             if response.status_code != 200:
                 return None
             data = response.json()
