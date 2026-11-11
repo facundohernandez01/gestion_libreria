@@ -163,7 +163,8 @@ class ServerConsole:
         ttk.Label(devices, text="Verde: actividad en los últimos 90 segundos. Gris: sin señal reciente.").pack(anchor="w", pady=(0, 8))
         self.totems = self._table(devices, [
             ("estado", "Estado", 110), ("nombre", "Nombre", 220), ("id", "Identificador", 260),
-            ("ip", "IP registrada", 140), ("contacto", "Último contacto", 170)])
+            ("ip", "IP registrada", 140), ("contacto", "Último contacto", 170), ("qr", "QR", 145)])
+        ttk.Button(devices, text="Configurar QR del tótem seleccionado", command=self.configure_totem_qr).pack(anchor="w", pady=(8, 0))
         self.totems.tag_configure("online", foreground="#12834a")
         self.totems.tag_configure("offline", foreground="#7a8799")
 
@@ -201,6 +202,7 @@ class ServerConsole:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Actualizar listado", command=self.refresh)
         if kind == "totem":
+            menu.add_command(label="Configurar QR…", command=self.configure_totem_qr)
             menu.add_command(label="Editar nombre del tótem", command=self.rename_totem)
             menu.add_command(label="Eliminar tótem sin asignaciones", command=self.delete_totem)
         elif kind == "qr":
@@ -216,6 +218,38 @@ class ServerConsole:
         finally:
             menu.grab_release()
             menu.destroy()
+
+    def configure_totem_qr(self):
+        """Guía al operador sin asignar QR de otro comercio automáticamente."""
+        selected = self.totems.selection()
+        if not selected:
+            messagebox.showinfo("Asignación QR", "Seleccioná primero un tótem.")
+            return
+        values = self.totems.item(selected[0], "values")
+        totem_id = values[2]
+        try:
+            with sqlite3.connect(settings.db_path, timeout=5) as conn:
+                conn.row_factory = sqlite3.Row
+                existing = conn.execute(
+                    "SELECT pos_external_id, store_external_id FROM intrashop_mp_bindings "
+                    "WHERE terminal_id=? AND terminal_type='totem'", (totem_id,)
+                ).fetchone()
+        except sqlite3.Error as exc:
+            messagebox.showerror("Asignación QR", str(exc))
+            return
+        if existing:
+            messagebox.showinfo("QR vinculado",
+                "Este tótem ya está asociado al POS de Mercado Pago " +
+                str(existing["pos_external_id"]) + ".\\nComercio: " +
+                str(existing["store_external_id"]))
+            return
+        messagebox.showinfo("QR pendiente de asignación",
+            "Tótem: " + str(values[1]) + "\\nIP: " + str(values[3]) +
+            "\\n\\n1. Abrí el POS Kiosmico y entrá a Ajustes > Mercado Pago." +
+            "\\n2. Seleccioná el comercio autorizado y su punto de venta." +
+            "\\n3. Vinculá ese punto de venta con este tótem." +
+            "\\n4. Volvé a POS Server y presioná Actualizar." +
+            "\\n\\nNo se crea un QR automáticamente sin elegir comercio y punto de venta.")
 
     def rename_totem(self):
         selection = self.totems.selection()
@@ -374,13 +408,14 @@ class ServerConsole:
         now = datetime.now()
         device_rows = []
         online_count = 0
+        assigned_totems = {b["terminal_id"] for b in bindings if b["terminal_type"] == "totem"}
         for item in totems:
             last = self._safe_datetime(item["ultimo_contacto"])
             online = bool(last and timedelta(0) <= now - last <= timedelta(seconds=self.ONLINE_SECONDS))
             online_count += int(online)
             device_rows.append((("● En línea" if online else "○ Sin señal",
                                  item["nombre"], item["id"], item.get("ip", item.get("ip_address", "—")),
-                                 item["ultimo_contacto"]), "online" if online else "offline"))
+                                 item["ultimo_contacto"], "● Vinculado" if item["id"] in assigned_totems else "○ Pendiente"), "online" if online else "offline"))
         self._fill(self.totems, device_rows)
         self._fill(self.pending_tree, [((p["id"],p["estado"],p["pos_external_id"],p["total"]),None) for p in pending_rows])
         self._fill(self.qr_tree, [
