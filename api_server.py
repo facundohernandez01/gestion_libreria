@@ -168,6 +168,74 @@ def set_config(body: ConfigIn, x_api_key: str | None = Header(default=None)):
     return {"ok": True}
 
 
+# Administración de roles y usuarios: sesión POS con permiso CONFIGURACION.
+# No se utiliza la API key LAN como sustituto de la autorización del operador.
+from fastapi import Depends
+from pos_auth import require_config
+
+
+@app.get("/roles")
+def api_listar_roles(operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    return DatabaseManager().listar_roles()
+
+
+@app.get("/roles/{rol_id}")
+def api_obtener_rol(rol_id: int, operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    result = DatabaseManager().obtener_rol(rol_id)
+    if result is None:
+        raise HTTPException(404, "Rol inexistente")
+    return result
+
+
+@app.post("/roles")
+def api_guardar_rol(datos: dict, operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    with _write_lock:
+        rol_id, error = DatabaseManager().guardar_rol(datos)
+    return {"id": rol_id, "error": error}
+
+
+@app.delete("/roles/{rol_id}")
+def api_eliminar_rol(rol_id: int, operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    with _write_lock:
+        ok, error = DatabaseManager().eliminar_rol(rol_id)
+    return {"ok": ok, "error": error}
+
+
+@app.get("/usuarios")
+def api_listar_usuarios(operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    return DatabaseManager().listar_usuarios()
+
+
+@app.get("/usuarios/{usuario_id}")
+def api_obtener_usuario(usuario_id: int, operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    result = DatabaseManager().obtener_usuario(usuario_id)
+    if result is None:
+        raise HTTPException(404, "Usuario inexistente")
+    return result
+
+
+@app.post("/usuarios")
+def api_guardar_usuario(datos: dict, operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    with _write_lock:
+        usuario_id, error = DatabaseManager().guardar_usuario(datos)
+    return {"id": usuario_id, "error": error}
+
+
+@app.delete("/usuarios/{usuario_id}")
+def api_eliminar_usuario(usuario_id: int, operador: str = Depends(require_config)):
+    from database_manager import DatabaseManager
+    with _write_lock:
+        ok, error = DatabaseManager().eliminar_usuario(usuario_id)
+    return {"ok": ok, "error": error}
+
+
 @app.get("/productos")
 def list_productos(termino: str = "", campo: str = "descripcion", x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
