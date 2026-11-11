@@ -183,7 +183,92 @@ class ServerConsole:
         ttk.Button(pending_tab, text="Verificar pago y conciliar", command=self.reconcile_selected).pack(anchor="w", pady=4)
         ttk.Button(pending_tab, text="Liberar tras verificar en Mercado Pago", command=self.release_selected).pack(anchor="w", pady=4)
         ttk.Button(pending_tab, text="Copiar ID", command=self.copy_checkout_id).pack(anchor="w", pady=4)
+        # Acciones por fila: nunca eliminar cobros, reservas o sesiones
+        # directamente desde el menú contextual.
+        for table, kind in ((self.totems, "totem"), (self.qr_tree, "qr"),
+                            (self.clients, "session"), (self.pending_tree, "checkout")):
+            table.bind("<Button-3>", lambda event, k=kind: self._context_menu(event, k))
+            table.bind("<Button-2>", lambda event, k=kind: self._context_menu(event, k))
         ttk.Label(page, textvariable=self.notice, style="Sub.TLabel").pack(anchor="w", pady=(10, 0))
+
+    def _context_menu(self, event, kind):
+        table = {"totem": self.totems, "qr": self.qr_tree,
+                 "session": self.clients, "checkout": self.pending_tree}[kind]
+        item = table.identify_row(event.y)
+        if not item:
+            return
+        table.selection_set(item)
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(label="Actualizar listado", command=self.refresh)
+        if kind == "totem":
+            menu.add_command(label="Editar nombre del tótem", command=self.rename_totem)
+            menu.add_command(label="Eliminar tótem sin asignaciones", command=self.delete_totem)
+        elif kind == "qr":
+            menu.add_command(label="Desvincular asignación QR", command=self.unbind_qr)
+        elif kind == "checkout":
+            menu.add_command(label="Verificar y conciliar", command=self.reconcile_selected)
+            menu.add_command(label="Liberar tras verificación", command=self.release_selected)
+            menu.add_command(label="Copiar ID de operación", command=self.copy_checkout_id)
+        else:
+            menu.add_command(label="Las sesiones expiran automáticamente", state="disabled")
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def rename_totem(self):
+        selection = self.totems.selection()
+        if not selection:
+            return
+        values = self.totems.item(selection[0], "values")
+        totem_id, current_name = values[2], values[1]
+        name = simpledialog.askstring("Editar tótem", "Nombre del tótem:",
+                                      initialvalue=current_name, parent=self.root)
+        if name is None:
+            return
+        name = name.strip()
+        if not name or len(name) > 80:
+            messagebox.showerror("Tótem", "Ingresá un nombre de 1 a 80 caracteres.")
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=5) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                cursor = conn.execute("UPDATE intrashop_totems SET nombre=? WHERE id=?",
+                                      (name, totem_id))
+                if cursor.rowcount != 1:
+                    raise ValueError("El tótem ya no existe.")
+                conn.commit()
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("Tótem", str(exc))
+            return
+        self.refresh()
+
+    def delete_totem(self):
+        selection = self.totems.selection()
+        if not selection:
+            return
+        values = self.totems.item(selection[0], "values")
+        totem_id, name = values[2], values[1]
+        if not messagebox.askyesno("Eliminar tótem",
+                "¿Eliminar el registro de «" + name + "»?\\n"
+                "Solo se permite si no tiene QR asignado ni comandas asociadas."):
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=5) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                for sql in (
+                    "SELECT 1 FROM intrashop_mp_bindings WHERE terminal_id=? LIMIT 1",
+                    "SELECT 1 FROM intrashop_entregas WHERE totem_id=? LIMIT 1",
+                    "SELECT 1 FROM intrashop_checkouts WHERE totem_id=? LIMIT 1",
+                ):
+                    if conn.execute(sql, (totem_id,)).fetchone():
+                        raise ValueError("El tótem tiene asignaciones o historial de pedidos. No puede eliminarse.")
+                conn.execute("DELETE FROM intrashop_totems WHERE id=?", (totem_id,))
+                conn.commit()
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo eliminar", str(exc))
+            return
+        self.refresh()
 
     def _table(self, parent, columns):
         frame = ttk.Frame(parent)
