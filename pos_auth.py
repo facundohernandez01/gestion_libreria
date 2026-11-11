@@ -56,7 +56,14 @@ def require_delivery(authorization: str | None = Header(default=None)):
             SELECT u.activo, r.es_admin, r.permisos FROM usuarios u
             LEFT JOIN roles r ON r.id=u.rol_id WHERE u.usuario=? COLLATE NOCASE
         """, (session[0],)).fetchone()
-    if not row or not row["activo"]:
+    if not row:
+        # Instalaciones antiguas usan LOGIN_USUARIO/LOGIN_CLAVE sin fila
+        # en usuarios. La sesión se autenticó previamente con esas credenciales.
+        legacy_user = (DatabaseManager().get_config_value("LOGIN_USUARIO") or "admin").strip()
+        if session[0] == legacy_user:
+            return session[0]
+        raise HTTPException(403, "Usuario inexistente")
+    if not row["activo"]:
         raise HTTPException(403, "Usuario inactivo o eliminado")
     if not tiene(normalizar(row["permisos"]), "ENTREGAS_INTRASHOP", bool(row["es_admin"])):
         raise HTTPException(403, "El rol no permite gestionar entregas")
@@ -69,6 +76,10 @@ def require_config(authorization: str | None = Header(default=None)):
         row = conn.execute("""SELECT r.es_admin, r.permisos FROM usuarios u
             LEFT JOIN roles r ON r.id=u.rol_id WHERE u.usuario=? COLLATE NOCASE""",
             (operador,)).fetchone()
+    if not row:
+        legacy_user = (DatabaseManager().get_config_value("LOGIN_USUARIO") or "admin").strip()
+        if operador == legacy_user:
+            return operador
     if not row or not tiene(normalizar(row["permisos"]), "CONFIGURACION", bool(row["es_admin"])):
         raise HTTPException(403, "Solo administración puede asignar terminales")
     return operador
