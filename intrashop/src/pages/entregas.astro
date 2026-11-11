@@ -52,7 +52,7 @@ return '<article class="delivery-card '+o.estado+'"><div class="delivery-head"><
 $("#login-button").addEventListener("click",async()=>{
 const loginButton=document.querySelector<HTMLButtonElement>("#login-button")!;loginButton.disabled=true;loginButton.textContent="Validando…";loading(true,"Validando usuario…");status("Conectando al servidor POS…");
 try{
-const response=await fetch(base+"/pos/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},
+const response=await fetch(base+"/pos/auth/login",{method:"POST",headers:{"Content-Type":"application/json","X-Terminal-Id":terminalId ?? ""},
 body:JSON.stringify({usuario:(document.querySelector<HTMLInputElement>("#login-user")!).value,clave:(document.querySelector<HTMLInputElement>("#login-pass")!).value})});
 if(!response.ok)throw Error(response.status===401?"Usuario o contraseña incorrectos en el servidor POS":await responseError(response));
 const data=await response.json();token=data.access_token;authenticatedUser=data.usuario;
