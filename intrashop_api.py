@@ -454,6 +454,20 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         checkout_store.ensure_schema(conn)
+        if body.terminal_type == "totem":
+            from intrashop_entregas import ensure_schema as ensure_totems_schema
+            ensure_totems_schema(conn)
+            totem = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.terminal_id,)).fetchone()
+            if not totem:
+                raise HTTPException(404, "El tótem no está registrado en POS Server")
+        duplicate = conn.execute(
+            "SELECT terminal_id, nombre FROM intrashop_mp_bindings "
+            "WHERE pos_external_id=? AND terminal_id<>? LIMIT 1",
+            (body.pos_external_id, body.terminal_id)
+        ).fetchone()
+        if duplicate:
+            raise HTTPException(409, "Este POS de Mercado Pago ya está asignado a " +
+                                (duplicate["nombre"] or duplicate["terminal_id"]))
         busy = conn.execute("""SELECT id FROM intrashop_checkouts WHERE
             pos_external_id IN (?,(SELECT pos_external_id FROM intrashop_mp_bindings WHERE terminal_id=?))
             AND estado IN ('reserved','creating','waiting','verifying','uncertain','paid') LIMIT 1""",
