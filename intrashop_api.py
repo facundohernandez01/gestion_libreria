@@ -31,6 +31,8 @@ _jobs: dict[str, dict] = {}
 _jobs_lock = threading.RLock()
 _checkout_lock = threading.Lock()
 _cancel_events: dict[str, threading.Event] = {}
+_reconcile_lock = threading.Lock()
+_reconciling: set[str] = set()
 
 
 def _auth(x_api_key: str | None) -> None:
@@ -553,6 +555,19 @@ def pending_checkouts(operador: str = Depends(require_config)):
 
 @router.post("/admin/checkouts/{checkout_id}/reconcile")
 def reconcile_checkout(checkout_id: str, operador: str = Depends(require_config)):
+    """Evita que la recuperación y un operador concilien el mismo checkout a la vez."""
+    with _reconcile_lock:
+        if checkout_id in _reconciling:
+            return {"estado": "processing", "message": "Conciliación ya en curso"}
+        _reconciling.add(checkout_id)
+    try:
+        return _reconcile_checkout_impl(checkout_id)
+    finally:
+        with _reconcile_lock:
+            _reconciling.discard(checkout_id)
+
+
+def _reconcile_checkout_impl(checkout_id: str):
     """Reconciliar pagos aprobados tras reinicio, sin liberar reservas por ausencia de respuesta."""
     with _connect() as conn:
         row = conn.execute("SELECT * FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
@@ -560,6 +575,8 @@ def reconcile_checkout(checkout_id: str, operador: str = Depends(require_config)
         raise HTTPException(404, "Checkout inexistente")
     if row["estado"] == "completed":
         return {"estado":"completed","venta_id":row["venta_id"]}
+    if row["estado"] in ("cancelled", "failed"):
+        raise HTTPException(409, "Checkout cerrado. Requiere revisión manual; no se registra otra venta.")
     from services.mercadopago_service import mp_service
     verification = mp_service.verificar_pago_referencia(checkout_id, row["total"])
     if verification["estado"] != "approved":
@@ -575,6 +592,25 @@ def reconcile_checkout(checkout_id: str, operador: str = Depends(require_config)
         result = _jobs[checkout_id]
     return {"estado":result["status"],"venta_id":result.get("venta_id"),
             "message":result.get("message","")}
+
+
+def reconcile_pending_after_startup() -> None:
+    """Revisa operaciones retenidas, sin liberar reservas por ausencia de pago."""
+    try:
+        with _connect() as conn:
+            checkout_store.ensure_schema(conn)
+            ids = [row["id"] for row in conn.execute(
+                "SELECT id FROM intrashop_checkouts "
+                "WHERE estado IN ('uncertain','paid') ORDER BY created_at LIMIT 100"
+            )]
+        for checkout_id in ids:
+            try:
+                result = reconcile_checkout(checkout_id, operador="POS_SERVER_STARTUP")
+                logger.info("Conciliación inicial %s: %s", checkout_id, result.get("estado"))
+            except Exception:
+                logger.exception("Error conciliando checkout %s en arranque", checkout_id)
+    except Exception:
+        logger.exception("No se pudo consultar la cola de conciliación inicial")
 
 
 class ReleaseRequest(BaseModel):
