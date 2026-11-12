@@ -118,6 +118,22 @@ class ApiClient:
         result = self._post("/productos", json=producto)
         return int(result.get("id", 0))
 
+
+    def obtener_config_tienda_producto(self, producto_id: int) -> dict:
+        return self._get(f"/tienda/admin/productos/{int(producto_id)}")
+
+    def actualizar_config_tienda_producto(self, producto_id: int, *, disponible: bool,
+                                          imagen_base64=None, imagen_nombre="producto.jpg",
+                                          imagen_url=None) -> dict:
+        response = httpx.put(
+            self.base_url + f"/tienda/admin/productos/{int(producto_id)}",
+            json={"disponible": disponible, "imagen_base64": imagen_base64,
+                  "imagen_nombre": imagen_nombre, "imagen_url": imagen_url},
+            headers=self._headers, timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
     def listar_cajas(self, filtro: str = "", desde: str = "", hasta: str = ""):
         return self._get("/cajas/historial",
                          params={"filtro": filtro, "desde": desde, "hasta": hasta})
