@@ -257,11 +257,12 @@ class DatabaseManager:
                                           imagen_base64=None, imagen_nombre="producto.jpg",
                                           imagen_url=None) -> dict:
         from intrashop_api import ProductStoreUpdate, actualizar_producto_tienda
+        from core.settings import settings
         return actualizar_producto_tienda(
             int(producto_id),
             ProductStoreUpdate(disponible=disponible, imagen_base64=imagen_base64,
                                imagen_nombre=imagen_nombre, imagen_url=imagen_url),
-            x_api_key=__import__("core.settings", fromlist=["settings"]).settings.api_key,
+            x_api_key=settings.api_key,
         )
 
     def get_connection(self) -> sqlite3.Connection:
