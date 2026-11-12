@@ -60,6 +60,14 @@ async def _lifespan(_app: FastAPI):
         try:
             from intrashop_api import recover_interrupted_checkouts
             recover_interrupted_checkouts()
+            # La consulta a Mercado Pago es I/O remoto; no bloquear el arranque.
+            # Solo registra ventas verificadas, nunca libera stock por timeout.
+            from intrashop_api import reconcile_pending_after_startup
+            threading.Thread(
+                target=reconcile_pending_after_startup,
+                name="intrashop-startup-reconciliation",
+                daemon=True,
+            ).start()
         except (sqlite3.Error, OSError) as exc:
             logging.getLogger(__name__).error(
                 "No se pudo recuperar checkouts interrumpidos: %s", exc)
