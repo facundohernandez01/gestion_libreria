@@ -91,6 +91,9 @@ class ApiClient:
         except Exception:
             return False
 
+    def get_config(self, clave: str) -> Optional[str]:
+        return self.get_config_value(clave)
+
     def get_config_value(self, clave: str) -> Optional[str]:
         try:
             data = self._get("/config")
