@@ -979,29 +979,109 @@ def ConfigModal(page: ft.Page):
             timeout=12)
         response.raise_for_status()
 
-    def guardar_asignacion(e=None):
-        if not mp_terminal.value or mp_asignado.value is None:
-            mp_bindings_info.value = "Seleccioná un dispositivo y un POS Mercado Pago."
+    # Confirmación explícita antes de modificar una asignación de cobro.
+    mp_confirmacion = ft.Text("", size=12, color=N.BLUE_400)
+    mp_guardar_btn = ft.FilledButton("Revisar asignación", icon=ft.Icons.CHECK)
+    mp_confirmar_btn = ft.FilledButton("Confirmar vinculación", icon=ft.Icons.LINK, visible=False)
+    mp_cancelar_btn = ft.TextButton("Cancelar", visible=False)
+    mp_progreso = ft.ProgressRing(width=22, height=22, visible=False)
+    mp_propuesta = {"value": None}
+    mp_guardando = {"value": False}
+
+    def cancelar_asignacion(e=None):
+        if mp_guardando["value"]:
+            return
+        mp_propuesta["value"] = None
+        mp_confirmacion.value = ""
+        mp_confirmar_btn.visible = False
+        mp_cancelar_btn.visible = False
+        mp_guardar_btn.visible = True
+        page.update()
+
+    def revisar_asignacion(e=None):
+        try:
+            if not mp_terminal.value or mp_asignado.value is None:
+                raise ValueError("Seleccioná un dispositivo y un POS Mercado Pago.")
+            tipo, tid = mp_terminal.value.split(":", 1)
+            pos = pos_list[int(mp_asignado.value)]
+            external_id = str(pos.get("external_id") or "").strip()
+            store_ext = str(pos.get("external_store_id")
+                            or settings.mp_external_store_id
+                            or db.get_config_value("EXTERNAL_STORE_ID") or "").strip()
+            if not external_id or not store_ext:
+                raise ValueError("El POS seleccionado debe tener ID y comercio (Store) configurados.")
+            other = next((x for x in mp_saved_bindings
+                          if x["pos_external_id"] == external_id
+                          and x["terminal_id"] != tid), None)
+            if other:
+                raise ValueError("Este POS ya está asignado a " +
+                                 (other.get("nombre") or other["terminal_id"]))
+            label = next((o.text for o in mp_terminal.options if o.key == mp_terminal.value), tid)
+            mp_propuesta["value"] = (tid, tipo, external_id, store_ext,
+                                     (pos.get("qr_response") or pos.get("qr") or {}).get("image", ""), label)
+            mp_confirmacion.value = (
+                "Revisá antes de confirmar:\\nDispositivo: " + label +
+                "\\nPOS Mercado Pago: " + external_id +
+                "\\nComercio: " + store_ext +
+                "\\nEsta operación no crea ni elimina puntos de venta en Mercado Pago.")
+            mp_confirmacion.color = N.BLUE_400
+            mp_guardar_btn.visible = False
+            mp_confirmar_btn.visible = True
+            mp_cancelar_btn.visible = True
+        except Exception as exc:
+            mp_confirmacion.value = str(exc)
+            mp_confirmacion.color = N.RED_400
+        page.update()
+
+    async def confirmar_asignacion(e=None):
+        if mp_guardando["value"] or not mp_propuesta["value"]:
+            return
+        proposal = mp_propuesta["value"]
+        # Evitar confirmar una selección distinta de la que se revisó.
+        if mp_terminal.value != proposal[1] + ":" + proposal[0]:
+            cancelar_asignacion()
+            mp_confirmacion.value = "La selección cambió. Revisá la asignación nuevamente."
             page.update()
             return
+        mp_guardando["value"] = True
+        mp_progreso.visible = True
+        mp_confirmar_btn.disabled = True
+        mp_cancelar_btn.disabled = True
+        mp_confirmacion.value = "Guardando y verificando la vinculación…"
+        page.update()
         try:
-            sincronizar_mp_servidor()
-            from adapters.mp_bindings import asignar
-            tipo, tid = mp_terminal.value.split(":",1)
-            pos = pos_list[int(mp_asignado.value)]
-            store_ext = (pos.get("external_store_id")
-                         or settings.mp_external_store_id
-                         or db.get_config_value("EXTERNAL_STORE_ID") or "")
-            if not store_ext:
-                raise ValueError("Configurá el Store de Mercado Pago antes de asignar.")
-            asignar(tid,tipo,pos["external_id"],store_ext,
-                    (pos.get("qr_response") or pos.get("qr") or {}).get("image",""),
-                    next((o.text for o in mp_terminal.options if o.key == mp_terminal.value), tid))
+            def operation():
+                sincronizar_mp_servidor()
+                from adapters.mp_bindings import asignar, listar
+                asignar(*proposal)
+                records = listar()
+                if not any(x["terminal_id"] == proposal[0] and
+                           x["terminal_type"] == proposal[1] and
+                           x["pos_external_id"] == proposal[2] and
+                           x["store_external_id"] == proposal[3] for x in records):
+                    raise RuntimeError("La asignación no pudo verificarse en la base de datos")
+                return records
+            await asyncio.to_thread(operation)
+            mp_propuesta["value"] = None
+            mp_confirmar_btn.visible = False
+            mp_cancelar_btn.visible = False
+            mp_guardar_btn.visible = True
             cargar_asignaciones()
+            mp_confirmacion.value = "QR vinculado y verificado: " + proposal[2]
+            mp_confirmacion.color = N.GREEN_400
         except Exception as exc:
-            mp_bindings_info.value = "No se pudo asignar: " + str(exc)
-            mp_bindings_info.color = N.RED_400
+            mp_confirmacion.value = "No se pudo vincular: " + str(exc)
+            mp_confirmacion.color = N.RED_400
+        finally:
+            mp_guardando["value"] = False
+            mp_progreso.visible = False
+            mp_confirmar_btn.disabled = False
+            mp_cancelar_btn.disabled = False
             page.update()
+
+    mp_guardar_btn.on_click = revisar_asignacion
+    mp_confirmar_btn.on_click = confirmar_asignacion
+    mp_cancelar_btn.on_click = cancelar_asignacion
 
     seccion_mp_terminales = ft.Container(
         content=ft.Column([
@@ -1010,7 +1090,8 @@ def ConfigModal(page: ft.Page):
             ft.Row([ft.OutlinedButton("Detectar tótems y POS", icon=ft.Icons.SEARCH,
                 on_click=lambda e: (obtener_pos(), cargar_asignaciones()))], wrap=True),
             mp_terminal, mp_asignado,
-            ft.FilledButton("Asignar QR al dispositivo", icon=ft.Icons.CHECK, on_click=guardar_asignacion),
+            ft.Row([mp_guardar_btn, mp_confirmar_btn, mp_cancelar_btn, mp_progreso], wrap=True),
+            mp_confirmacion,
             mp_pending, mp_bindings_info, mp_bindings_list,
         ], spacing=8),
         padding=12, border_radius=8,
