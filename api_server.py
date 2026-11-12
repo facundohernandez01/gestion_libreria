@@ -504,3 +504,142 @@ def _montar_flet_web() -> None:
 
 if os.getenv("POS_API_ONLY", "").lower() not in ("1", "true", "yes"):
     _montar_flet_web()
+
+
+# Reposición y proveedores. Nunca se abre una SQLite en el proceso cliente.
+# Las mutaciones se serializan con el mismo lock del servidor.
+def _gestor_reposicion():
+    from database_manager import DatabaseManager
+    return DatabaseManager()
+
+
+@app.get("/proveedores")
+def api_proveedores(termino: str = "", limit: int = 500, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().listar_proveedores(termino, min(max(limit, 1), 1000))
+
+
+@app.get("/proveedores/{proveedor_id}")
+def api_proveedor(proveedor_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_proveedor(proveedor_id)
+
+
+@app.post("/proveedores")
+def api_guardar_proveedor(body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"id": _gestor_reposicion().guardar_proveedor(body["datos"], body.get("contactos"))}
+
+
+@app.post("/proveedores/obtener-o-crear")
+def api_obtener_o_crear_proveedor(body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"id": _gestor_reposicion().obtener_o_crear_proveedor(body["nombre"])}
+
+
+@app.post("/proveedores/{proveedor_id}/eliminar")
+def api_eliminar_proveedor(proveedor_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"ok": _gestor_reposicion().eliminar_proveedor(proveedor_id)}
+
+
+@app.get("/reposicion/stock")
+def api_stock_reposicion(x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_stock_productos()
+
+
+@app.get("/reposicion/movimientos")
+def api_movimientos_reposicion(producto_id: int | None = None, limit: int = 100, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_movimientos_stock(producto_id, min(max(limit, 1), 1000))
+
+
+@app.get("/reposicion/movimientos/detallados")
+def api_movimientos_detallados(producto_id: int | None = None, limit: int = 500, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_movimientos_stock_detallado(producto_id, min(max(limit, 1), 1000))
+
+
+@app.get("/reposicion/productos/{producto_id}/resumen")
+def api_resumen_movimientos(producto_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().resumen_movimientos_producto(producto_id)
+
+
+@app.get("/reposicion/productos/{producto_id}/pendientes")
+def api_ordenes_pendientes_producto(producto_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().buscar_ordenes_pendientes_producto(producto_id)
+
+
+@app.post("/reposicion/productos/{producto_id}/ingresar")
+def api_ingresar_stock(producto_id: int, body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        ok, mensaje = _gestor_reposicion().ingresar_stock_directo(producto_id, body["cantidad"], body.get("remito", ""), body.get("observaciones", ""))
+    return {"ok": ok, "mensaje": mensaje}
+
+
+@app.get("/reposicion/ordenes/contar")
+def api_contar_ordenes(estado: str = "en_proceso", x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return {"total": _gestor_reposicion().contar_ordenes_compra(estado)}
+
+
+@app.get("/reposicion/ordenes/pendientes")
+def api_contar_pendientes(x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return {"total": _gestor_reposicion().contar_ordenes_pendientes()}
+
+
+@app.get("/reposicion/ordenes")
+def api_listar_ordenes(estado: str | None = None, proveedor: str = "", desde: str = "", hasta: str = "", ordenar: str = "fecha", ascendente: bool = False, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().listar_ordenes_compra(estado, proveedor, desde, hasta, ordenar, ascendente)
+
+
+@app.post("/reposicion/ordenes")
+def api_crear_orden(body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"id": _gestor_reposicion().crear_orden_compra(body["items"], body.get("observaciones", ""))}
+
+
+@app.get("/reposicion/ordenes/{orden_id}")
+def api_obtener_orden(orden_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_orden_compra(orden_id)
+
+
+@app.post("/reposicion/ordenes/{orden_id}/actualizar")
+def api_actualizar_orden(orden_id: int, body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"ok": _gestor_reposicion().actualizar_orden_compra(orden_id, body["items"], body.get("observaciones"))}
+
+
+@app.post("/reposicion/ordenes/{orden_id}/confirmar")
+def api_confirmar_orden(orden_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        ok, mensaje = _gestor_reposicion().confirmar_orden_compra(orden_id)
+    return {"ok": ok, "mensaje": mensaje}
+
+
+@app.post("/reposicion/ordenes/{orden_id}/recibir")
+def api_recibir_orden(orden_id: int, body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        ok, mensaje = _gestor_reposicion().recibir_orden_compra(orden_id, body["recepciones"], body.get("remito", ""), body.get("observaciones", ""), body.get("cancelar_restante", False))
+    return {"ok": ok, "mensaje": mensaje}
+
+
+@app.post("/reposicion/ordenes/{orden_id}/cancelar")
+def api_cancelar_orden(orden_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"ok": _gestor_reposicion().cancelar_orden_compra(orden_id)}
