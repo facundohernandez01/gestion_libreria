@@ -115,6 +115,7 @@ class CheckoutIn(BaseModel):
 
 
 def _load_cart(items: list[CartItem]) -> tuple[list[dict], float]:
+    """Calcula importes desde el servidor con una única lectura de recargo."""
     ids = [i.producto_id for i in items]
     if len(set(ids)) != len(ids):
         raise HTTPException(400, "Hay productos duplicados en el carrito")
@@ -123,19 +124,20 @@ def _load_cart(items: list[CartItem]) -> tuple[list[dict], float]:
             f"SELECT id, codigo, descripcion, precio_lista, stock_actual, disponible_tienda FROM productos WHERE id IN ({','.join('?' for _ in ids)})",
             ids,
         ).fetchall()
+        surcharge = _qr_surcharge_percent(conn)
     by_id = {int(r["id"]): r for r in rows}
-    cart, total = [], 0.0
+    cart, total = [], Decimal("0.00")
     for item in items:
         p = by_id.get(item.producto_id)
         if not p or not p["disponible_tienda"]:
             raise HTTPException(400, f"Producto {item.producto_id} no disponible en la tienda")
         if int(p["stock_actual"]) < item.cantidad:
             raise HTTPException(409, f"Stock insuficiente para {p['descripcion']}")
-        price = _qr_price(p["precio_lista"], _qr_surcharge_percent(conn))
+        price = _qr_price(p["precio_lista"], surcharge)
         cart.append({"producto_id": int(p["id"]), "cantidad": item.cantidad,
                      "precio_unitario": price, "descripcion": p["descripcion"]})
-        total += price * item.cantidad
-    return cart, round(total, 2)
+        total += Decimal(str(price)) * item.cantidad
+    return cart, float(total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
 def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
