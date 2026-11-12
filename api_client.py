@@ -188,3 +188,68 @@ class ApiClient:
     @property
     def db_path(self):
         return self.base_url
+
+
+    # Proveedores y reposición: operaciones siempre en POS Server.
+    def listar_proveedores(self, termino="", limit=500):
+        return self._get("/proveedores", {"termino": termino, "limit": limit})
+
+    def obtener_proveedor(self, proveedor_id):
+        return self._get(f"/proveedores/{int(proveedor_id)}")
+
+    def guardar_proveedor(self, datos, contactos=None):
+        return self._post("/proveedores", {"datos": datos, "contactos": contactos})["id"]
+
+    def eliminar_proveedor(self, proveedor_id):
+        return self._post(f"/proveedores/{int(proveedor_id)}/eliminar")["ok"]
+
+    def obtener_o_crear_proveedor(self, nombre):
+        return self._post("/proveedores/obtener-o-crear", {"nombre": nombre})["id"]
+
+    def crear_orden_compra(self, items, observaciones=""):
+        return self._post("/reposicion/ordenes", {"items": items, "observaciones": observaciones})["id"]
+
+    def actualizar_orden_compra(self, orden_id, items, observaciones=None):
+        return self._post(f"/reposicion/ordenes/{int(orden_id)}/actualizar", {"items": items, "observaciones": observaciones})["ok"]
+
+    def confirmar_orden_compra(self, orden_id):
+        r = self._post(f"/reposicion/ordenes/{int(orden_id)}/confirmar")
+        return r["ok"], r["mensaje"]
+
+    def recibir_orden_compra(self, orden_id, recepciones, remito="", observaciones="", cancelar_restante=False):
+        r = self._post(f"/reposicion/ordenes/{int(orden_id)}/recibir", {"recepciones": recepciones, "remito": remito, "observaciones": observaciones, "cancelar_restante": cancelar_restante})
+        return r["ok"], r["mensaje"]
+
+    def cancelar_orden_compra(self, orden_id):
+        return self._post(f"/reposicion/ordenes/{int(orden_id)}/cancelar")["ok"]
+
+    def listar_ordenes_compra(self, estado=None, proveedor="", desde="", hasta="", ordenar="fecha", ascendente=False):
+        return self._get("/reposicion/ordenes", {"estado": estado, "proveedor": proveedor, "desde": desde, "hasta": hasta, "ordenar": ordenar, "ascendente": ascendente})
+
+    def obtener_orden_compra(self, orden_id):
+        return self._get(f"/reposicion/ordenes/{int(orden_id)}")
+
+    def contar_ordenes_compra(self, estado="en_proceso"):
+        return self._get("/reposicion/ordenes/contar", {"estado": estado})["total"]
+
+    def contar_ordenes_pendientes(self):
+        return self._get("/reposicion/ordenes/pendientes")["total"]
+
+    def buscar_ordenes_pendientes_producto(self, producto_id):
+        return self._get(f"/reposicion/productos/{int(producto_id)}/pendientes")
+
+    def ingresar_stock_directo(self, producto_id, cantidad, remito="", observaciones=""):
+        r = self._post(f"/reposicion/productos/{int(producto_id)}/ingresar", {"cantidad": cantidad, "remito": remito, "observaciones": observaciones})
+        return r["ok"], r["mensaje"]
+
+    def obtener_stock_productos(self):
+        return self._get("/reposicion/stock")
+
+    def obtener_movimientos_stock_detallado(self, producto_id=None, limit=500):
+        return self._get("/reposicion/movimientos/detallados", {"producto_id": producto_id, "limit": limit})
+
+    def resumen_movimientos_producto(self, producto_id):
+        return self._get(f"/reposicion/productos/{int(producto_id)}/resumen")
+
+    def obtener_movimientos_stock(self, producto_id=None, limit=100):
+        return self._get("/reposicion/movimientos", {"producto_id": producto_id, "limit": limit})
