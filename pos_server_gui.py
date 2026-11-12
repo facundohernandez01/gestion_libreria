@@ -220,13 +220,13 @@ class ServerConsole:
             menu.destroy()
 
     def configure_totem_qr(self):
-        """Guía al operador sin asignar QR de otro comercio automáticamente."""
+        """Asistente local: consulta POS autorizados y exige confirmación explícita."""
         selected = self.totems.selection()
         if not selected:
             messagebox.showinfo("Asignación QR", "Seleccioná primero un tótem.")
             return
         values = self.totems.item(selected[0], "values")
-        totem_id = values[2]
+        totem_id, totem_name = values[2], values[1]
         try:
             with sqlite3.connect(settings.db_path, timeout=5) as conn:
                 conn.row_factory = sqlite3.Row
@@ -239,17 +239,106 @@ class ServerConsole:
             return
         if existing:
             messagebox.showinfo("QR vinculado",
-                "Este tótem ya está asociado al POS de Mercado Pago " +
-                str(existing["pos_external_id"]) + ".\\nComercio: " +
+                "Tótem: " + str(totem_name) + "\\nPOS: " +
+                str(existing["pos_external_id"]) + "\\nComercio: " +
                 str(existing["store_external_id"]))
             return
-        messagebox.showinfo("QR pendiente de asignación",
-            "Tótem: " + str(values[1]) + "\\nIP: " + str(values[3]) +
-            "\\n\\n1. Abrí el POS Kiosmico y entrá a Ajustes > Mercado Pago." +
-            "\\n2. Seleccioná el comercio autorizado y su punto de venta." +
-            "\\n3. Vinculá ese punto de venta con este tótem." +
-            "\\n4. Volvé a POS Server y presioná Actualizar." +
-            "\\n\\nNo se crea un QR automáticamente sin elegir comercio y punto de venta.")
+
+        wizard = tk.Toplevel(self.root)
+        wizard.title("Vincular QR · " + str(totem_name))
+        wizard.geometry("620x390")
+        wizard.transient(self.root)
+        wizard.grab_set()
+        frame = ttk.Frame(wizard, padding=18)
+        frame.pack(fill="both", expand=True)
+        ttk.Label(frame, text="Asignar punto de venta Mercado Pago",
+                  font=("Arial", 14, "bold")).pack(anchor="w")
+        ttk.Label(frame, text="Tótem: " + str(totem_name) + "  |  IP: " + str(values[3])).pack(anchor="w", pady=(8, 12))
+        status = tk.StringVar(value="Consultando los POS de la cuenta autorizada…")
+        ttk.Label(frame, textvariable=status, wraplength=550).pack(anchor="w", pady=(0, 8))
+        choice = tk.StringVar()
+        combo = ttk.Combobox(frame, textvariable=choice, state="disabled", width=74)
+        combo.pack(fill="x", pady=5)
+        detail = tk.StringVar(value="No se enviarán credenciales ni claves en la URL.")
+        ttk.Label(frame, textvariable=detail, wraplength=550).pack(anchor="w", pady=12)
+        buttons = ttk.Frame(frame)
+        buttons.pack(side="bottom", fill="x", pady=12)
+        ttk.Button(buttons, text="Cancelar", command=wizard.destroy).pack(side="right", padx=5)
+        confirm = ttk.Button(buttons, text="Confirmar vinculación", state="disabled")
+        confirm.pack(side="right", padx=5)
+        candidates = []
+
+        def load():
+            try:
+                from services.mercadopago_service import mp_service
+                results = mp_service.listar_pos()
+                def finish():
+                    if not wizard.winfo_exists():
+                        return
+                    with sqlite3.connect(settings.db_path, timeout=5) as conn:
+                        used = {row[0] for row in conn.execute(
+                            "SELECT pos_external_id FROM intrashop_mp_bindings")}
+                    for item in results:
+                        external = str(item.get("external_id") or "").strip()
+                        store = str(item.get("external_store_id") or "").strip()
+                        if external and store and external not in used:
+                            candidates.append((external, store, str(item.get("name") or "POS")))
+                    if not candidates:
+                        status.set("No hay POS libres con comercio identificado. Revisá la conexión OAuth y los POS en Ajustes.")
+                        return
+                    combo["values"] = [name + " | " + pos + " | Store " + store
+                                       for pos, store, name in candidates]
+                    combo.configure(state="readonly")
+                    status.set(str(len(candidates)) + " POS disponibles. Elegí uno para este tótem.")
+                self.root.after(0, finish)
+            except Exception as exc:
+                error = str(exc)
+                self.root.after(0, lambda: status.set("No se pudo consultar Mercado Pago: " + error)
+                                if wizard.winfo_exists() else None)
+
+        def choose(_event=None):
+            idx = combo.current()
+            if idx >= 0:
+                pos, store, _name = candidates[idx]
+                detail.set("Se asociará el POS " + pos + " del comercio " + store +
+                           " con el tótem " + str(totem_name) + ". No se crea ningún POS nuevo.")
+                confirm.configure(state="normal")
+        combo.bind("<<ComboboxSelected>>", choose)
+
+        def save():
+            idx = combo.current()
+            if idx < 0:
+                return
+            pos, store, _name = candidates[idx]
+            if not messagebox.askyesno("Confirmar QR",
+                    "¿Vincular el tótem " + str(totem_name) + " con el POS " + pos +
+                    " del comercio " + store + "?\\n\\nNo se creará ni eliminará ningún QR.",
+                    parent=wizard):
+                return
+            confirm.configure(state="disabled")
+            try:
+                with sqlite3.connect(settings.db_path, timeout=5) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    import intrashop_checkout_store as checkout_store
+                    checkout_store.ensure_schema(conn)
+                    found = conn.execute("SELECT 1 FROM intrashop_totems WHERE id=?", (totem_id,)).fetchone()
+                    if not found:
+                        raise ValueError("El tótem ya no está registrado.")
+                    if conn.execute("SELECT 1 FROM intrashop_mp_bindings WHERE terminal_id=? OR pos_external_id=?",
+                                    (totem_id, pos)).fetchone():
+                        raise ValueError("El tótem o POS ya fue vinculado desde otra ventana.")
+                    conn.execute("""INSERT INTO intrashop_mp_bindings
+                        (terminal_id,terminal_type,pos_external_id,store_external_id,nombre)
+                        VALUES (?,'totem',?,?,?)""", (totem_id, pos, store, totem_name))
+                    conn.commit()
+                wizard.destroy()
+                self.refresh()
+                messagebox.showinfo("QR vinculado", "Asignación guardada y verificada en POS Server.")
+            except (sqlite3.Error, ValueError) as exc:
+                status.set("No se pudo vincular: " + str(exc))
+                confirm.configure(state="normal")
+        confirm.configure(command=save)
+        threading.Thread(target=load, daemon=True).start()
 
     def rename_totem(self):
         selection = self.totems.selection()
