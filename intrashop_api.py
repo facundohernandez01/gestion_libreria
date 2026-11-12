@@ -529,8 +529,11 @@ def reconcile_checkout(checkout_id: str, operador: str = Depends(require_config)
     if row["estado"] == "completed":
         return {"estado":"completed","venta_id":row["venta_id"]}
     from services.mercadopago_service import mp_service
-    if not mp_service.consultar_ultimo_pago(reference=checkout_id):
-        return {"estado":"uncertain","message":"No se confirmó pago aprobado. Reserva retenida para conciliación."}
+    verification = mp_service.verificar_pago_referencia(checkout_id, row["total"])
+    if verification["estado"] != "approved":
+        return {"estado": "uncertain",
+                "message": verification.get("motivo", "Pago sin confirmar") +
+                           ". Reserva retenida para conciliación."}
     cart = json.loads(row["items_json"])
     with _jobs_lock:
         _jobs[checkout_id] = {"status":"paid","sale_done":False,"totem_id":row["totem_id"],
