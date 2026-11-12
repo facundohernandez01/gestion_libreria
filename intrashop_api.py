@@ -312,6 +312,38 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 conn.commit()
 
 
+def recover_interrupted_checkouts() -> int:
+    """Al iniciar, inmoviliza checkouts cuyo worker ya no existe.
+
+    No consulta Mercado Pago ni presume ausencia de pago. Conserva las reservas
+    y exige conciliación explícita antes de liberar stock o registrar venta.
+    """
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        checkout_store.ensure_schema(conn)
+        rows = conn.execute(
+            "SELECT id, estado FROM intrashop_checkouts "
+            "WHERE estado IN ('reserved','creating','waiting','verifying')"
+        ).fetchall()
+        if rows:
+            conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_auditoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, checkout_id TEXT NOT NULL,
+                operador TEXT NOT NULL, accion TEXT NOT NULL,
+                fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+            for row in rows:
+                checkout_store.set_status(conn, row["id"], "uncertain")
+                conn.execute(
+                    "INSERT INTO intrashop_auditoria(checkout_id,operador,accion) "
+                    "VALUES (?,?,?)",
+                    (row["id"], "POS_SERVER_STARTUP",
+                     "RECUPERACION_REINICIO_" + row["estado"].upper()),
+                )
+        conn.commit()
+    if rows:
+        logger.warning("%d checkouts interrumpidos retenidos para conciliación", len(rows))
+    return len(rows)
+
+
 @router.get("/health")
 def tienda_health():
     _ensure_schema()
