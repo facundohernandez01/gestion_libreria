@@ -55,6 +55,15 @@ async def _lifespan(_app: FastAPI):
             logging.getLogger(__name__).warning(
                 "No se pudo iniciar Flet App Manager: %s", ex)
     try:
+        # En el arranque no quedan workers de cobro del proceso anterior.
+        # Conservar sus reservas hasta verificar el resultado en Mercado Pago.
+        try:
+            from intrashop_api import recover_interrupted_checkouts
+            recover_interrupted_checkouts()
+        except (sqlite3.Error, OSError) as exc:
+            logging.getLogger(__name__).error(
+                "No se pudo recuperar checkouts interrumpidos: %s", exc)
+            raise
         yield
     finally:
         if app_manager is not None:
