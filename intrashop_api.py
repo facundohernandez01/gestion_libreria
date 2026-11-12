@@ -665,7 +665,20 @@ def cancelar_checkout(checkout_id: str):
     with _jobs_lock:
         job = _jobs.get(checkout_id)
         if not job:
-            raise HTTPException(404, "Checkout no encontrado o servidor reiniciado")
+            # Tras un reinicio no existe el worker que verifica/cancela el QR.
+            # No liberar stock ni simular una cancelación sin consultar MP.
+            with _connect() as conn:
+                row = conn.execute(
+                    "SELECT estado FROM intrashop_checkouts WHERE id=?", (checkout_id,)
+                ).fetchone()
+            if not row:
+                raise HTTPException(404, "Checkout inexistente")
+            if row["estado"] == "cancelled":
+                return {"ok": True, "status": "cancelled"}
+            raise HTTPException(
+                409, "El servidor se reinició. Un administrador debe conciliar "
+                     "el pago en Mercado Pago antes de cancelarlo."
+            )
         if job.get("status") in {"completed", "paid", "paid_sale_error"}:
             raise HTTPException(409, "El pago ya fue confirmado; no se puede cancelar desde la tienda.")
         if job.get("status") in {"cancelled", "expired", "error", "cancel_error"}:
@@ -684,7 +697,18 @@ def estado_checkout(checkout_id: str):
                 row = conn.execute("SELECT estado,total,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
             if not row:
                 raise HTTPException(404, "Checkout inexistente")
-            return {"status": "completed" if row["estado"]=="completed" else "paid_sale_error",
-                    "total":row["total"],"venta_id":row["venta_id"],
-                    "message":"El servidor se reinició. El pago requiere conciliación del administrador." if row["estado"]!="completed" else "Venta registrada"}
+            persisted = row["estado"]
+            # Nunca presentar una reserva o pago incierto como pago confirmado.
+            if persisted == "completed":
+                status, message = "completed", "Venta registrada"
+            elif persisted == "cancelled":
+                status, message = "cancelled", "Pedido cancelado"
+            elif persisted == "failed":
+                status, message = "error", "El cobro falló; verificá el estado antes de reintentar"
+            else:
+                status = "reconciliation_required"
+                message = ("El servidor se reinició. El estado del pago no está confirmado. "
+                           "No reintentes ni liberes stock hasta que un administrador concilie en Mercado Pago.")
+            return {"status": status, "total": row["total"],
+                    "venta_id": row["venta_id"], "message": message}
         return {k: v for k, v in job.items() if k not in {"sale_done", "created_at"}}
