@@ -146,7 +146,8 @@ class MercadoPagoService:
 
     def verificar_estado(self, cb: Optional[Callable[[str], None]] = None,
                          cancelar: Optional[Callable[[], bool]] = None,
-                         pos_ext: str = "", timeout: int = 0, intervalo: int = 0, reference: str = "") -> bool:
+                         pos_ext: str = "", timeout: int = 0, intervalo: int = 0, reference: str = "",
+                         cancel_event=None) -> bool:
         from core.settings import settings
 
         token, uid, _, pos_d = self.credenciales()
@@ -167,18 +168,18 @@ class MercadoPagoService:
                 resp = requests.get(url, headers=self._headers(token), timeout=settings.mp_timeout_seg)
             except requests.RequestException as e:
                 self._log(f"⚠️ Error de red: {e}", cb)
-                time.sleep(intervalo)
+                cancel_event.wait(intervalo) if cancel_event is not None else time.sleep(intervalo)
                 continue
             if resp.status_code == 200:
                 try:
                     data = resp.json()
                 except Exception:
-                    time.sleep(intervalo)
+                    cancel_event.wait(intervalo) if cancel_event is not None else time.sleep(intervalo)
                     continue
                 # Nunca atribuir el pago de otro checkout al QR actual.
                 if reference and data.get("external_reference") not in (None, reference):
                     self._log("Referencia de pago distinta; ignorando orden del QR.", cb)
-                    time.sleep(intervalo)
+                    cancel_event.wait(intervalo) if cancel_event is not None else time.sleep(intervalo)
                     continue
                 estado = data.get("order_status", "unknown")
                 pagado = float(data.get("paid_amount") or 0)
@@ -186,7 +187,7 @@ class MercadoPagoService:
                 if estado == "paid" or (total > 0 and pagado >= total):
                     if reference and not data.get("external_reference"):
                         if not self.consultar_ultimo_pago(reference=reference):
-                            time.sleep(intervalo)
+                            cancel_event.wait(intervalo) if cancel_event is not None else time.sleep(intervalo)
                             continue
                     self._log("✅ ¡Pago recibido correctamente!", cb)
                     for p in data.get("payments", [])[:1]:
@@ -197,7 +198,7 @@ class MercadoPagoService:
                 return self.consultar_ultimo_pago(cb, reference=reference)
             elif resp.status_code >= 400:
                 self._log(f"⚠️ MP {resp.status_code}: {resp.text[:200]}", cb)
-            time.sleep(intervalo)
+            cancel_event.wait(intervalo) if cancel_event is not None else time.sleep(intervalo)
         self._log("⏰ Tiempo agotado. Orden sigue abierta.", cb)
         return False
 
