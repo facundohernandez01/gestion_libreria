@@ -1,5 +1,5 @@
 """Configuración de publicación de un artículo en IntraShop."""
-import shutil
+import base64
 from pathlib import Path
 
 import flet as ft
@@ -9,18 +9,8 @@ from utils.file_dialogs import pick_file
 
 
 def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
-    from intrashop_api import MEDIA_DIR, _ensure_schema
-
-    _ensure_schema()
     producto_id = int(producto["id"])
-    conn = db_manager.get_connection()
-    try:
-        row = conn.execute(
-            "SELECT disponible_tienda, imagen_tienda FROM productos WHERE id=?",
-            (producto_id,),
-        ).fetchone()
-    finally:
-        conn.close()
+    row = db_manager.obtener_config_tienda_producto(producto_id)
 
     disponible = ft.Checkbox(
         label="Mostrar este producto en IntraShop",
@@ -56,13 +46,12 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
     def guardar(e=None):
         destino = ""
         try:
-            _ensure_schema()
+            imagen_base64 = None
+            imagen_nombre = "producto.jpg"
             if ruta_seleccionada["path"]:
-                MEDIA_DIR.mkdir(parents=True, exist_ok=True)
                 origen = Path(ruta_seleccionada["path"])
-                destino_path = MEDIA_DIR / f"{producto_id}-{origen.name}"
-                shutil.copy2(origen, destino_path)
-                destino = str(destino_path.resolve())
+                imagen_nombre = origen.name
+                imagen_base64 = base64.b64encode(origen.read_bytes()).decode("ascii")
 
             if url_imagen.value and not destino:
                 from urllib.parse import urlparse
@@ -72,21 +61,13 @@ def ProductoTiendaModal(db_manager, producto, page, on_guardado=None):
                     return
                 destino = url_imagen.value.strip()
 
-            conn = db_manager.get_connection()
-            try:
-                if destino:
-                    conn.execute(
-                        "UPDATE productos SET disponible_tienda=?, imagen_tienda=? WHERE id=?",
-                        (int(bool(disponible.value)), destino, producto_id),
-                    )
-                else:
-                    conn.execute(
-                        "UPDATE productos SET disponible_tienda=? WHERE id=?",
-                        (int(bool(disponible.value)), producto_id),
-                    )
-                conn.commit()
-            finally:
-                conn.close()
+            db_manager.actualizar_config_tienda_producto(
+                producto_id,
+                disponible=bool(disponible.value),
+                imagen_base64=imagen_base64,
+                imagen_nombre=imagen_nombre,
+                imagen_url=destino if not imagen_base64 else None,
+            )
 
             try:
                 dialog.open = False
