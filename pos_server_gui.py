@@ -339,6 +339,12 @@ class ServerConsole:
                     if conn.execute("SELECT 1 FROM intrashop_mp_bindings WHERE terminal_id=? OR pos_external_id=?",
                                     (totem_id, pos)).fetchone():
                         raise ValueError("El tótem o POS ya fue vinculado desde otra ventana.")
+                    active = conn.execute(
+                        "SELECT 1 FROM intrashop_checkouts WHERE pos_external_id=? "
+                        "AND estado IN ('reserved','creating','waiting','verifying','uncertain','paid') LIMIT 1",
+                        (pos,)).fetchone()
+                    if active:
+                        raise ValueError("Este POS tiene un cobro activo o pendiente de conciliación.")
                     conn.execute("""INSERT INTO intrashop_mp_bindings
                         (terminal_id,terminal_type,pos_external_id,store_external_id,nombre)
                         VALUES (?,'totem',?,?,?)""", (totem_id, pos, store, totem_name))
