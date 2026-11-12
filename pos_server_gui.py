@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+import queue
 import socket
 import threading
 import time
@@ -267,34 +268,45 @@ class ServerConsole:
         confirm = ttk.Button(buttons, text="Confirmar vinculación", state="disabled")
         confirm.pack(side="right", padx=5)
         candidates = []
+        messages = queue.Queue()
 
         def load():
             try:
                 from services.mercadopago_service import mp_service
                 results = mp_service.listar_pos()
-                def finish():
-                    if not wizard.winfo_exists():
-                        return
-                    with sqlite3.connect(settings.db_path, timeout=5) as conn:
-                        used = {row[0] for row in conn.execute(
-                            "SELECT pos_external_id FROM intrashop_mp_bindings")}
-                    for item in results:
-                        external = str(item.get("external_id") or "").strip()
-                        store = str(item.get("external_store_id") or "").strip()
-                        if external and store and external not in used:
-                            candidates.append((external, store, str(item.get("name") or "POS")))
-                    if not candidates:
-                        status.set("No hay POS libres con comercio identificado. Revisá la conexión OAuth y los POS en Ajustes.")
-                        return
-                    combo["values"] = [name + " | " + pos + " | Store " + store
-                                       for pos, store, name in candidates]
-                    combo.configure(state="readonly")
-                    status.set(str(len(candidates)) + " POS disponibles. Elegí uno para este tótem.")
-                self.root.after(0, finish)
+                messages.put(("results", results))
             except Exception as exc:
-                error = str(exc)
-                self.root.after(0, lambda: status.set("No se pudo consultar Mercado Pago: " + error)
-                                if wizard.winfo_exists() else None)
+                messages.put(("error", str(exc)))
+
+        def poll_results():
+            if not wizard.winfo_exists():
+                return
+            try:
+                kind, payload = messages.get_nowait()
+            except queue.Empty:
+                wizard.after(120, poll_results)
+                return
+            if kind == "error":
+                status.set("No se pudo consultar Mercado Pago: " + payload)
+                return
+            try:
+                with sqlite3.connect(settings.db_path, timeout=5) as conn:
+                    used = {row[0] for row in conn.execute(
+                        "SELECT pos_external_id FROM intrashop_mp_bindings")}
+                for item in payload:
+                    external = str(item.get("external_id") or "").strip()
+                    store = str(item.get("external_store_id") or "").strip()
+                    if external and store and external not in used:
+                        candidates.append((external, store, str(item.get("name") or "POS")))
+                if not candidates:
+                    status.set("No hay POS libres con comercio identificado. Revisá la conexión OAuth y los POS en Ajustes.")
+                    return
+                combo["values"] = [name + " | " + pos + " | Store " + store
+                                   for pos, store, name in candidates]
+                combo.configure(state="readonly")
+                status.set(str(len(candidates)) + " POS disponibles. Elegí uno para este tótem.")
+            except (sqlite3.Error, ValueError) as exc:
+                status.set("No se pudo preparar la selección: " + str(exc))
 
         def choose(_event=None):
             idx = combo.current()
@@ -339,6 +351,7 @@ class ServerConsole:
                 confirm.configure(state="normal")
         confirm.configure(command=save)
         threading.Thread(target=load, daemon=True).start()
+        wizard.after(120, poll_results)
 
     def rename_totem(self):
         selection = self.totems.selection()
