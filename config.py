@@ -900,6 +900,7 @@ def ConfigModal(page: ft.Page):
     mp_bindings_info = ft.Text("Consultá dispositivos y POS disponibles.", size=12, color=N.GREY_500)
     mp_bindings_list = ft.Column(spacing=4)
     mp_saved_bindings = []
+    mp_pending = ft.Text("", size=12, color=N.BLUE_400)
 
     def cargar_asignaciones(e=None):
         nonlocal mp_saved_bindings
@@ -916,6 +917,16 @@ def ConfigModal(page: ft.Page):
                 key="caja:" + terminal_id(), text="Esta caja POS · " + terminal_id()[:14]))
             bindings = listar()
             mp_saved_bindings = bindings
+            linked = {x["terminal_id"] for x in bindings if x["terminal_type"] == "totem"}
+            pending = [t for t in registrados if t["id"] not in linked]
+            mp_pending.value = (
+                str(len(pending)) + " tótem(s) esperando QR: " +
+                ", ".join(t["nombre"] for t in pending[:5])
+                if pending else "Todos los tótems registrados tienen QR asignado."
+            )
+            mp_pending.color = N.BLUE_400 if pending else N.GREEN_400
+            if pending and not mp_terminal.value:
+                mp_terminal.value = "totem:" + pending[0]["id"]
             mp_bindings_list.controls = [
                 ft.Text(("Tótem" if x["terminal_type"] == "totem" else "Caja")
                         + " · " + (x.get("nombre") or x["terminal_id"][:12])
@@ -930,6 +941,7 @@ def ConfigModal(page: ft.Page):
             mp_bindings_info.value = str(len(registrados)) + " tótem(s) registrados · " + str(len(bindings)) + " asignaciones"
             mp_bindings_info.color = N.GREEN_400
         except Exception as exc:
+            mp_pending.value = "No se pudo determinar qué tótems tienen QR pendiente."
             mp_bindings_info.value = "No se pudo consultar la configuración central: " + str(exc)
             mp_bindings_info.color = N.RED_400
         page.update()
@@ -999,7 +1011,7 @@ def ConfigModal(page: ft.Page):
                 on_click=lambda e: (obtener_pos(), cargar_asignaciones()))], wrap=True),
             mp_terminal, mp_asignado,
             ft.FilledButton("Asignar QR al dispositivo", icon=ft.Icons.CHECK, on_click=guardar_asignacion),
-            mp_bindings_info, mp_bindings_list,
+            mp_pending, mp_bindings_info, mp_bindings_list,
         ], spacing=8),
         padding=12, border_radius=8,
         bgcolor=ft.Colors.with_opacity(0.05,N.BLUE_GREY_800),
