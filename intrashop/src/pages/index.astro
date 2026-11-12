@@ -214,12 +214,13 @@ const title = "IntraShop · Tu tienda local";
             const state = await api("/tienda/checkout/"+encodeURIComponent(id));
             $("payment-message").textContent = state.message || "Procesando pago…";
             if (state.qr_url) { $<HTMLImageElement>("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
-            if (["completed","error","expired","paid_sale_error","cancelled","cancel_error"].includes(state.status)) {
+            if (["completed","error","expired","paid_sale_error","cancelled","cancel_error","reconciliation_required"].includes(state.status)) {
               activeCheckoutId = "";
               $("payment-cancel").hidden = true;
               $<HTMLButtonElement>("payment-cancel").disabled = false;
               if (state.status==="completed") { cart=[]; updateCart(); await loadProducts($<HTMLInputElement>("search").value.trim()); showPaymentResult("Pago confirmado. Tu venta quedó registrada en el comercio.",true); }
               else if (state.status==="cancelled") { cart=[]; updateCart(); showPaymentResult("Pedido cancelado. No se registró ninguna venta.",false); }
+              else if (state.status==="reconciliation_required") { showPaymentResult(state.message || "Pago pendiente de conciliación. Consultá al operador antes de intentar nuevamente.",false); }
               else showPaymentResult(state.message || "No se pudo completar el pago.",false);
               break;
             }
