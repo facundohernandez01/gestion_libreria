@@ -643,3 +643,73 @@ def api_cancelar_orden(orden_id: int, x_api_key: str | None = Header(default=Non
     _auth(x_api_key)
     with _write_lock:
         return {"ok": _gestor_reposicion().cancelar_orden_compra(orden_id)}
+
+
+# Paridad de consultas y operaciones generales. Los datos pertenecen al servidor.
+@app.get("/productos/por-codigo")
+def api_producto_codigo(codigo: str, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_producto_por_codigo(codigo)
+
+
+@app.get("/productos/{producto_id}")
+def api_producto_id(producto_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_producto(producto_id)
+
+
+@app.post("/productos/{producto_id}/eliminar")
+def api_eliminar_producto(producto_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"ok": _gestor_reposicion().eliminar_producto(producto_id)}
+
+
+@app.post("/productos/{producto_id}/stock")
+def api_actualizar_stock(producto_id: int, body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        ok = _gestor_reposicion().actualizar_stock(producto_id, body["cantidad"], body.get("tipo", "ajuste"), body.get("referencia_id"), body.get("observaciones", ""))
+    return {"ok": ok}
+
+
+@app.get("/reportes/ventas")
+def api_ventas_rango(desde: str, hasta: str, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_ventas_por_fechas(desde, hasta)
+
+
+@app.get("/reportes/ventas/detalle")
+def api_ventas_detalle(desde: str, hasta: str, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_detalle_ventas(desde, hasta)
+
+
+@app.get("/cajas/{caja_id}/gastos")
+def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    return _gestor_reposicion().obtener_gastos_caja(caja_id)
+
+
+@app.post("/cajas/{caja_id}/gastos")
+def api_agregar_gasto(caja_id: int, body: dict, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    with _write_lock:
+        return {"id": _gestor_reposicion().agregar_gasto(caja_id, body["monto"], body["concepto"])}
+
+
+@app.get("/admin/datos/conteos")
+def api_conteos_datos(operador: str = Depends(require_config)):
+    return _gestor_reposicion().contar_datos()
+
+
+@app.get("/admin/datos/primer-uso")
+def api_primer_uso(operador: str = Depends(require_config)):
+    return {"activo": _gestor_reposicion().es_primer_uso()}
+
+
+@app.post("/admin/datos/primer-uso")
+def api_marcar_primer_uso(body: dict, operador: str = Depends(require_config)):
+    with _write_lock:
+        _gestor_reposicion().marcar_primer_uso(bool(body["activo"]))
+    return {"ok": True}
