@@ -297,12 +297,15 @@ class ServerConsole:
                     external = str(item.get("external_id") or "").strip()
                     store = str(item.get("external_store_id") or "").strip()
                     if external and store and external not in used:
-                        candidates.append((external, store, str(item.get("name") or "POS")))
+                        qr_data = item.get("qr_response") or item.get("qr") or {}
+                        qr_url = str(qr_data.get("image") or item.get("qr_url") or "").strip() if isinstance(qr_data, dict) else ""
+                        if qr_url.startswith("https://"):
+                            candidates.append((external, store, str(item.get("name") or "POS"), qr_url))
                 if not candidates:
-                    status.set("No hay POS libres con comercio identificado. Revisá la conexión OAuth y los POS en Ajustes.")
+                    status.set("No hay POS libres con comercio y QR HTTPS válido. Revisá la configuración de QR en Ajustes.")
                     return
                 combo["values"] = [name + " | " + pos + " | Store " + store
-                                   for pos, store, name in candidates]
+                                   for pos, store, name, qr_url in candidates]
                 combo.configure(state="readonly")
                 status.set(str(len(candidates)) + " POS disponibles. Elegí uno para este tótem.")
             except (sqlite3.Error, ValueError) as exc:
@@ -311,7 +314,7 @@ class ServerConsole:
         def choose(_event=None):
             idx = combo.current()
             if idx >= 0:
-                pos, store, _name = candidates[idx]
+                pos, store, _name, qr_url = candidates[idx]
                 detail.set("Se asociará el POS " + pos + " del comercio " + store +
                            " con el tótem " + str(totem_name) + ". No se crea ningún POS nuevo.")
                 confirm.configure(state="normal")
@@ -321,7 +324,7 @@ class ServerConsole:
             idx = combo.current()
             if idx < 0:
                 return
-            pos, store, _name = candidates[idx]
+            pos, store, _name, qr_url = candidates[idx]
             if not messagebox.askyesno("Confirmar QR",
                     "¿Vincular el tótem " + str(totem_name) + " con el POS " + pos +
                     " del comercio " + store + "?\\n\\nNo se creará ni eliminará ningún QR.",
@@ -346,8 +349,8 @@ class ServerConsole:
                     if active:
                         raise ValueError("Este POS tiene un cobro activo o pendiente de conciliación.")
                     conn.execute("""INSERT INTO intrashop_mp_bindings
-                        (terminal_id,terminal_type,pos_external_id,store_external_id,nombre)
-                        VALUES (?,'totem',?,?,?)""", (totem_id, pos, store, totem_name))
+                        (terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre)
+                        VALUES (?,'totem',?,?,?,?)""", (totem_id, pos, store, qr_url, totem_name))
                     conn.commit()
                 wizard.destroy()
                 self.refresh()
