@@ -98,6 +98,7 @@ const title = "IntraShop · Tu tienda local";
       let polling = false;
       let activeCheckoutId = "";
       let checkoutPending = false;
+      let cancelRequestedDuringCreation = false;
       let selectedCategory = "";
       const money = (value:number) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(value);
       const api = async (path:string, init:RequestInit={}) => {
@@ -174,14 +175,21 @@ const title = "IntraShop · Tu tienda local";
       async function startCheckout() {
         if (checkoutPending || activeCheckoutId) return;
         checkoutPending = true;
+        cancelRequestedDuringCreation = false;
         openCart(false); openPayment();
         $("payment-message").textContent = "Generando el cobro con Mercado Pago…";
-        $("payment-order").hidden=true; $("payment-cancel").hidden=true; activeCheckoutId="";
+        $("payment-order").hidden=true; $("payment-cancel").hidden=false; activeCheckoutId="";
         try {
           await reportPresence();
           const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({totem_id:totemId,items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
           activeCheckoutId = result.checkout_id;
           checkoutPending = false;
+          if (cancelRequestedDuringCreation) {
+            $("payment-message").textContent = "Cancelando orden recién creada…";
+            void cancelCheckout();
+            pollCheckout(result.checkout_id);
+            return;
+          }
           const orderItems = result.items || cart.map(i=>({descripcion:i.product.descripcion,cantidad:i.quantity,precio_unitario:i.product.precio_lista}));
           $("payment-order-items").innerHTML = orderItems.map((item:any)=>"<div class=\"payment-order-item\"><span>"+escapeHtml(item.descripcion)+" <b>× "+item.cantidad+"</b></span><strong>"+money(item.precio_unitario*item.cantidad)+"</strong></div>").join("");
           $("payment-order-count").textContent = orderItems.reduce((sum:number,item:any)=>sum+item.cantidad,0)+" unidades";
@@ -196,7 +204,10 @@ const title = "IntraShop · Tu tienda local";
         }
       }
       async function cancelCheckout() {
-        if (!activeCheckoutId) { if (!checkoutPending) $("payment-modal").hidden=true; return; }
+        if (!activeCheckoutId) {
+          if (checkoutPending) { cancelRequestedDuringCreation = true; $("payment-message").textContent = "Se cancelará apenas el servidor responda…"; return; }
+          $("payment-modal").hidden=true; return;
+        }
         $<HTMLButtonElement>("payment-cancel").disabled = true;
         $("payment-message").textContent = "Solicitando cancelación del pedido…";
         try {
