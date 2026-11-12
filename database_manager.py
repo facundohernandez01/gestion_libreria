@@ -240,6 +240,30 @@ class DatabaseManager:
         finally:
             conn.close()
 
+
+    def obtener_config_tienda_producto(self, producto_id: int) -> dict:
+        from intrashop_api import _ensure_schema
+        _ensure_schema()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT disponible_tienda, imagen_tienda FROM productos WHERE id=?",
+                (int(producto_id),),
+            ).fetchone()
+        if row is None:
+            raise ValueError("Producto no encontrado")
+        return dict(row)
+
+    def actualizar_config_tienda_producto(self, producto_id: int, *, disponible: bool,
+                                          imagen_base64=None, imagen_nombre="producto.jpg",
+                                          imagen_url=None) -> dict:
+        from intrashop_api import ProductStoreUpdate, actualizar_producto_tienda
+        return actualizar_producto_tienda(
+            int(producto_id),
+            ProductStoreUpdate(disponible=disponible, imagen_base64=imagen_base64,
+                               imagen_nombre=imagen_nombre, imagen_url=imagen_url),
+            x_api_key=__import__("core.settings", fromlist=["settings"]).settings.api_key,
+        )
+
     def get_connection(self) -> sqlite3.Connection:
         """Compatibilidad: devuelve conexión con Row factory (cerrar manualmente)."""
         conn = sqlite3.connect(self.db_path)
