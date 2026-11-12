@@ -10,7 +10,22 @@ import os
 from core.settings import settings
 
 
+def es_edicion_intrashop() -> bool:
+    """En esta rama el POS es cliente del servidor externo por defecto.
+
+    POS_API_ONLY identifica al proceso servidor y evita aplicar esta regla allí.
+    INTRASHOP_EDITION=0 permite compatibilidad temporal y pruebas de migración.
+    """
+    if os.getenv("POS_API_ONLY", "").strip() == "1":
+        return False
+    return os.getenv("INTRASHOP_EDITION", "1").strip().lower() not in (
+        "0", "false", "no", "off"
+    )
+
+
 def _modo_red() -> str:
+    if es_edicion_intrashop():
+        return "cliente"
     modo = os.getenv("MODO_RED", "").strip().lower()
     try:
         from database_manager import DatabaseManager
@@ -25,6 +40,10 @@ def _modo_red() -> str:
 
 def _server_url() -> str:
     url = os.getenv("SERVER_URL", "").strip()
+    # IntraShop no debe leer configuración de conexión desde una SQLite
+    # potencialmente distinta de la base del servidor.
+    if es_edicion_intrashop():
+        return url or settings.server_url or "http://127.0.0.1:8000"
     try:
         from database_manager import DatabaseManager
 
