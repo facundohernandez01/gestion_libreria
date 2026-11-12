@@ -163,7 +163,7 @@ class LibreriaApp:
         external_server = os.getenv("POS_EXTERNAL_SERVER", "").strip().lower() in (
             "1", "true", "yes", "si", "sí", "on"
         )
-        if getattr(settings, "modo_red", "") == "servidor" and not external_server:
+        if self.modo == "servidor" and not external_server:
             try:
                 if os.name == "nt":
                     import windows_service as wsp
