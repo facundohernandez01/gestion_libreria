@@ -196,15 +196,30 @@ def panel_entregas(page, operador, puede_configurar=False):
         ft.Row(cabecera, alignment=ft.MainAxisAlignment.SPACE_BETWEEN, wrap=True),
         lista,
     ], expand=True)
-    refresh()
+    # La vista todavía no está montada aquí: el primer refresco se hace
+    # después de que Flet la agregue a la página.
     # Sondeo compartido: al tomar una comanda en otra caja, esta vista se actualiza.
     if hasattr(page, "run_task"):
         import asyncio
         async def auto_refresh():
+            # Esperar a que el control esté montado antes de acceder a .page.
+            for _ in range(20):
+                await asyncio.sleep(0.1)
+                try:
+                    if vista.page is page:
+                        break
+                except RuntimeError:
+                    pass
+            else:
+                return
+            refresh()
             while True:
                 await asyncio.sleep(5)
-                if vista.page is None:
-                    break
+                try:
+                    if vista.page is not page:
+                        return
+                except RuntimeError:
+                    return
                 refresh()
         page.run_task(auto_refresh)
     return vista
