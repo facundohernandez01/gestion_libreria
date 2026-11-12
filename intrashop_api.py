@@ -260,7 +260,8 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
         # esperar el ciclo de polling (que podría tardar varios minutos).
         paid = False
         if not cancel_event.is_set():
-            paid = mp_service.verificar_estado(cancelar=cancel_event.is_set, pos_ext=pos_ext, reference=job_id)
+            paid = mp_service.verificar_estado(cancelar=cancel_event.is_set, cancel_event=cancel_event,
+                                               pos_ext=pos_ext, reference=job_id)
         if cancel_event.is_set():
             # Cancelar la visualización no implica que Mercado Pago haya anulado el cobro.
             # Consultar la referencia del pago después de cerrar la orden evita
