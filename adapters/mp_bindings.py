@@ -34,6 +34,21 @@ def asignar(terminal_id, terminal_type, pos_external_id, store_external_id, qr_u
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         store.ensure_schema(conn)
+        if terminal_type not in ("totem", "caja"):
+            raise ValueError("Tipo de terminal inválido")
+        if terminal_type == "totem":
+            from intrashop_entregas import ensure_schema
+            ensure_schema(conn)
+            found = conn.execute("SELECT 1 FROM intrashop_totems WHERE id=?", (terminal_id,)).fetchone()
+            if not found:
+                raise ValueError("El tótem no está registrado en POS Server")
+        duplicate = conn.execute(
+            "SELECT nombre, terminal_id FROM intrashop_mp_bindings "
+            "WHERE pos_external_id=? AND terminal_id<>? LIMIT 1",
+            (pos_external_id, terminal_id)).fetchone()
+        if duplicate:
+            raise ValueError("Este POS de Mercado Pago ya está vinculado a " +
+                             (duplicate["nombre"] or duplicate["terminal_id"]))
         busy=conn.execute("""SELECT 1 FROM intrashop_checkouts
             WHERE pos_external_id IN (?,(SELECT pos_external_id FROM intrashop_mp_bindings WHERE terminal_id=?))
             AND estado IN ('reserved','creating','waiting','verifying','uncertain','paid') LIMIT 1""",
