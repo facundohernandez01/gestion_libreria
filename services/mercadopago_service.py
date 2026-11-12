@@ -250,6 +250,54 @@ class MercadoPagoService:
             self._log(f"⚠️ Error {resp.status_code}: {resp.text[:200]}", cb)
         return False
 
+    def verificar_pago_referencia(self, reference: str, expected_amount: float) -> dict:
+        """Consulta pagos por referencia sin confundir ausencia con rechazo.
+
+        Solo una aprobación con referencia y monto coincidentes autoriza registrar
+        una venta. Errores de red, respuestas incompletas y pagos pendientes
+        requieren conciliación; nunca implican que se pueda liberar stock.
+        """
+        from decimal import Decimal, InvalidOperation
+        from core.settings import settings
+        token, _, _, _ = self.credenciales()
+        if not token or not reference:
+            return {"estado": "uncertain", "motivo": "Credenciales o referencia ausentes"}
+        try:
+            response = requests.get(
+                f"{MP_BASE}/v1/payments/search",
+                headers=self._headers(token),
+                params={"external_reference": reference, "limit": 100},
+                timeout=settings.mp_timeout_seg,
+            )
+            if response.status_code != 200:
+                return {"estado": "uncertain", "motivo": "Mercado Pago no confirmó la consulta"}
+            payload = response.json()
+            results = payload.get("results")
+            if not isinstance(results, list):
+                return {"estado": "uncertain", "motivo": "Respuesta de pagos inválida"}
+            expected = Decimal(str(expected_amount)).quantize(Decimal("0.01"))
+            approved = []
+            for payment in results:
+                if not isinstance(payment, dict):
+                    continue
+                if str(payment.get("external_reference") or "") != reference:
+                    continue
+                if payment.get("status") != "approved":
+                    continue
+                try:
+                    amount = Decimal(str(payment.get("transaction_amount"))).quantize(Decimal("0.01"))
+                except (InvalidOperation, ValueError, TypeError):
+                    continue
+                if amount == expected:
+                    approved.append(payment)
+            if len(approved) == 1:
+                return {"estado": "approved", "payment_id": str(approved[0].get("id") or "")}
+            if len(approved) > 1:
+                return {"estado": "uncertain", "motivo": "Múltiples pagos aprobados con la misma referencia"}
+            return {"estado": "uncertain", "motivo": "No se confirmó un pago aprobado por el monto esperado"}
+        except (requests.RequestException, ValueError, TypeError):
+            return {"estado": "uncertain", "motivo": "No fue posible verificar el pago"}
+
     # ---------- store / pos ----------
     def sincronizar_store_id(self) -> Optional[str]:
         """Resuelve STORE_ID numérico desde EXTERNAL_STORE_ID y lo guarda."""
