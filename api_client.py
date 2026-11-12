@@ -253,3 +253,38 @@ class ApiClient:
 
     def obtener_movimientos_stock(self, producto_id=None, limit=100):
         return self._get("/reposicion/movimientos", {"producto_id": producto_id, "limit": limit})
+
+
+    # Paridad de consultas y operaciones generales con DatabaseManager.
+    def obtener_producto(self, producto_id):
+        return self._get(f"/productos/{int(producto_id)}")
+
+    def obtener_producto_por_codigo(self, codigo):
+        return self._get("/productos/por-codigo", {"codigo": codigo})
+
+    def eliminar_producto(self, producto_id):
+        return self._post(f"/productos/{int(producto_id)}/eliminar")["ok"]
+
+    def actualizar_stock(self, producto_id, cantidad, tipo="ajuste", referencia_id=None, observaciones=""):
+        return self._post(f"/productos/{int(producto_id)}/stock", {"cantidad": cantidad, "tipo": tipo, "referencia_id": referencia_id, "observaciones": observaciones})["ok"]
+
+    def obtener_ventas_por_fechas(self, desde_iso, hasta_iso):
+        return self._get("/reportes/ventas", {"desde": desde_iso, "hasta": hasta_iso})
+
+    def obtener_detalle_ventas(self, desde_iso, hasta_iso):
+        return self._get("/reportes/ventas/detalle", {"desde": desde_iso, "hasta": hasta_iso})
+
+    def agregar_gasto(self, caja_id, monto, concepto):
+        return self._post(f"/cajas/{int(caja_id)}/gastos", {"monto": monto, "concepto": concepto})["id"]
+
+    def obtener_gastos_caja(self, caja_id):
+        return self._get(f"/cajas/{int(caja_id)}/gastos")
+
+    def contar_datos(self):
+        return self._get("/admin/datos/conteos")
+
+    def es_primer_uso(self):
+        return self._get("/admin/datos/primer-uso")["activo"]
+
+    def marcar_primer_uso(self, activo):
+        return self._post("/admin/datos/primer-uso", {"activo": bool(activo)})
