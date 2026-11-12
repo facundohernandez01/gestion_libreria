@@ -407,6 +407,21 @@ def imagen_producto(producto_id: int):
     return FileResponse(path, media_type=mimetypes.guess_type(path.name)[0] or "application/octet-stream")
 
 
+
+@router.get("/admin/productos/{producto_id}")
+def obtener_config_producto_tienda(producto_id: int, x_api_key: str | None = Header(default=None)):
+    _auth(x_api_key)
+    _ensure_schema()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT disponible_tienda, imagen_tienda FROM productos WHERE id=?",
+            (producto_id,),
+        ).fetchone()
+    if row is None:
+        raise HTTPException(404, "Producto no encontrado")
+    return dict(row)
+
+
 @router.put("/admin/productos/{producto_id}")
 def actualizar_producto_tienda(producto_id: int, body: ProductStoreUpdate, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
