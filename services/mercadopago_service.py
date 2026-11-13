@@ -213,7 +213,10 @@ class MercadoPagoService:
         url = f"{MP_BASE}/instore/qr/seller/collectors/{uid}/stores/{store_ext}/pos/{pos_ext}/orders"
         try:
             resp = requests.delete(url, headers=self._headers(token), timeout=settings.mp_timeout_seg)
-            if resp.status_code in (200, 202, 204, 404):
+            # Un 404 no demuestra que la orden se haya cerrado: podría
+            # indicar POS/tienda incorrectos o un recurso no encontrado.
+            # En ese caso se conserva la reserva hasta verificar el pago.
+            if resp.status_code in (200, 202, 204):
                 return True
             self._log(f"⚠️ No se pudo cerrar la orden QR ({resp.status_code}): {resp.text[:200]}")
             return False
