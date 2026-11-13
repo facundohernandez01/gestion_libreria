@@ -280,15 +280,13 @@ class GestionStockView(ft.Container):
                     self.mostrar_error("La cantidad no puede ser negativa")
                     return
                 
-                diferencia = nueva_cantidad - producto['stock_actual']
-                
-                # Actualizar stock
-                exito = self.db.actualizar_stock(
+                # Ajuste absoluto: una disminución debe RESTAR stock.
+                # Se comprueba el valor original para no pisar ventas concurrentes.
+                exito = self.db.ajustar_stock_absoluto(
                     producto['id'],
-                    abs(diferencia),
-                    "ajuste",
-                    None,
-                    observaciones_field.value or "Ajuste manual de stock"
+                    nueva_cantidad,
+                    int(producto['stock_actual']),
+                    observaciones_field.value or "Ajuste manual de stock",
                 )
                 
                 if exito:
