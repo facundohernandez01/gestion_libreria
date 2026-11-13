@@ -250,7 +250,26 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
         # publicar el QR como disponible para el comprador.
         ok = mp_service.crear_orden(total, pos_ext=pos_ext, store_ext=store_ext, reference=job_id)
         if not ok:
-            raise RuntimeError("Mercado Pago no pudo crear la orden. Revisá la configuración del QR.")
+            # Un timeout en PUT no prueba que MP no haya creado el QR.
+            # Intentar cerrar únicamente si la orden remota tiene
+            # exactamente la referencia de este checkout.
+            cierre = mp_service.cerrar_orden_referencia(
+                job_id, pos_ext=pos_ext, store_ext=store_ext
+            )
+            verification = mp_service.verificar_pago_referencia(job_id, total)
+            if verification["estado"] == "approved":
+                with _jobs_lock:
+                    _jobs[job_id].update(status="paid", message="Pago confirmado tras error de creación")
+                _finalize_sale(job_id, cart, total)
+            else:
+                with _jobs_lock:
+                    _jobs[job_id].update(
+                        status="cancel_error",
+                        message="No se confirmó la creación del QR. "
+                                f"Estado de cierre: {cierre['estado']}. "
+                                "Pago incierto; reserva retenida.",
+                    )
+            return
         with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             checkout_store.set_status(conn, job_id, "waiting")
@@ -272,7 +291,9 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             # Cancelar la visualización no implica que Mercado Pago haya anulado el cobro.
             # Consultar la referencia del pago después de cerrar la orden evita
             # perder una venta aprobada justo durante la cancelación.
-            closed = mp_service.cancelar_orden(pos_ext=pos_ext, store_ext=store_ext)
+            cierre = mp_service.cerrar_orden_referencia(
+                job_id, pos_ext=pos_ext, store_ext=store_ext
+            )
             verification = mp_service.verificar_pago_referencia(job_id, total)
             # El polling por POS no prueba por sí solo referencia y monto.
             confirmed = verification["estado"] == "approved"
@@ -280,19 +301,22 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 with _jobs_lock:
                     _jobs[job_id].update(status="paid", message="Pago confirmado durante la cancelación; registrando venta")
                 _finalize_sale(job_id, cart, total)
-            elif closed and verification["estado"] == "no_payment":
+            elif cierre["estado"] == "closed" and verification["estado"] == "no_payment":
                 with _jobs_lock:
                     _jobs[job_id].update(status="cancelled", message="Orden QR cerrada y ausencia de pago verificada.")
-            elif closed:
-                with _jobs_lock:
-                    _jobs[job_id].update(status="cancel_error", message="QR cerrado; pago sin confirmar. Se retiene reserva por seguridad.")
             else:
                 with _jobs_lock:
-                    _jobs[job_id].update(status="cancel_error", message="No se pudo confirmar el cierre del QR. Revisá Mercado Pago antes de reintentar.")
+                    _jobs[job_id].update(
+                        status="cancel_error",
+                        message=f"Cancelación solicitada (QR: {cierre['estado']}). "
+                                "Pago sin confirmar. La reserva sigue retenida."
+                    )
             return
         if not paid:
             # El timeout de polling no cierra automáticamente el QR en Mercado Pago.
-            closed = mp_service.cancelar_orden(pos_ext=pos_ext, store_ext=store_ext)
+            cierre = mp_service.cerrar_orden_referencia(
+                job_id, pos_ext=pos_ext, store_ext=store_ext
+            )
             verification = mp_service.verificar_pago_referencia(job_id, total)
             confirmed = verification["estado"] == "approved"
             if confirmed:
@@ -301,7 +325,7 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 _finalize_sale(job_id, cart, total)
             else:
                 with _jobs_lock:
-                    safe_to_release = closed and verification["estado"] == "no_payment"
+                    safe_to_release = cierre["estado"] == "closed" and verification["estado"] == "no_payment"
                     _jobs[job_id].update(status="expired" if safe_to_release else "cancel_error",
                         message="Orden cerrada sin cobro." if safe_to_release else "Pago sin confirmar. Revisá Mercado Pago antes de reintentar.")
             return
