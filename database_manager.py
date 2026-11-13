@@ -1540,6 +1540,7 @@ class DatabaseManager:
             return False, "La cantidad debe ser mayor a cero"
         with self._connect() as conn:
             try:
+                conn.execute("BEGIN IMMEDIATE")
                 producto = conn.execute(
                     "SELECT descripcion, stock_actual FROM productos WHERE id=?",
                     (producto_id,),
