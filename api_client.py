@@ -321,6 +321,8 @@ class ApiClient:
         import tempfile
         ruta = Path(destino).expanduser().resolve()
         ruta.parent.mkdir(parents=True, exist_ok=True)
+        if ruta.exists():
+            raise FileExistsError(f"El destino ya existe; elegí otro nombre para no sobrescribir backups: {ruta}")
         with httpx.stream(
             "GET", self.base_url + "/admin/backups/exportar",
             headers=self._admin_headers(), timeout=180,
@@ -339,7 +341,10 @@ class ApiClient:
         try:
             from services.backup_service import validar_backup
             info = validar_backup(temporal_path)
-            os.replace(temporal_path, ruta)
+            # Creación exclusiva: nunca pisar un backup previo, incluso ante una carrera.
+            with open(ruta, "xb") as salida, open(temporal_path, "rb") as origen:
+                import shutil
+                shutil.copyfileobj(origen, salida)
             info["destino"] = str(ruta)
             return info
         finally:
