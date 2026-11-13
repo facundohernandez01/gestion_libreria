@@ -748,26 +748,31 @@ def api_validar_backup(
 
 @app.get("/admin/backups/exportar")
 def api_exportar_backup(operador: str = Depends(require_config)):
-    """Exportación consistente desde la SQLite activa, incluyendo WAL.
+    """Exporta un snapshot SQLite consistente sin cargarlo en RAM.
 
-    Se crea una copia temporal bajo el lock de escrituras del POS. La copia
-    es independiente de la base activa y se elimina tras leer sus bytes.
+    El archivo temporal persiste mientras FileResponse lo transmite y se
+    limpia al finalizar, incluso cuando hay excepciones durante su creación.
     """
     import tempfile
-    from fastapi.responses import Response
+    from fastapi.responses import FileResponse
+    from starlette.background import BackgroundTask
     from services.backup_service import exportar_backup
 
-    with tempfile.TemporaryDirectory(prefix="pos-backup-export-") as carpeta:
-        destino = Path(carpeta) / "backup.db"
+    temporal = tempfile.TemporaryDirectory(prefix="pos-backup-export-")
+    try:
+        destino = Path(temporal.name) / "backup.db"
         with _write_lock:
             exportar_backup(DB_PATH, destino)
-        contenido = destino.read_bytes()
-    return Response(
-        content=contenido,
-        media_type="application/octet-stream",
-        headers={"Content-Disposition": 'attachment; filename="backup_pos_server.db"',
-                 "Cache-Control": "no-store"},
-    )
+        return FileResponse(
+            path=str(destino),
+            filename="backup_pos_server.db",
+            media_type="application/octet-stream",
+            headers={"Cache-Control": "no-store"},
+            background=BackgroundTask(temporal.cleanup),
+        )
+    except BaseException:
+        temporal.cleanup()
+        raise
 
 
 @app.post("/productos/{producto_id}/stock-absoluto")
