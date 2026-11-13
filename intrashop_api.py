@@ -790,8 +790,17 @@ def cancelar_checkout(checkout_id: str):
             )
         if job.get("status") in {"completed", "paid", "paid_sale_error"}:
             raise HTTPException(409, "El pago ya fue confirmado; no se puede cancelar desde la tienda.")
-        if job.get("status") in {"cancelled", "expired", "error", "cancel_error"}:
+        if job.get("status") in {"cancelled", "expired"}:
             return {"ok": True, "status": job["status"]}
+        if job.get("status") in {"error", "cancel_error"}:
+            # Una excepción o verificación ambigua no demuestra que MP
+            # haya cerrado la orden. Nunca responder cancelación exitosa.
+            raise HTTPException(
+                409, "El pago o cierre del QR no está confirmado. "
+                     "La reserva sigue retenida hasta conciliar Mercado Pago."
+            )
+        if job.get("status") == "cancelling":
+            return {"ok": True, "status": "cancelling"}
         _cancel_events.setdefault(checkout_id, threading.Event()).set()
         job.update(status="cancelling", message="Cancelando el pedido y cerrando el QR…")
     return {"ok": True, "status": "cancelling"}
