@@ -57,6 +57,13 @@ def reserve(conn, checkout_id, totem_id, items, total):
         LIMIT 1""", (assigned["pos_external_id"],)).fetchone()
     if occupied:
         raise ValueError("El QR de este tótem ya tiene un pago activo o pendiente de conciliación.")
+    # Validar también al nivel de persistencia: no confiar únicamente en
+    # el validador HTTP, porque otros clientes pueden llamar reserve().
+    ids = [int(item["producto_id"]) for item in items]
+    if len(ids) != len(set(ids)):
+        raise ValueError("El carrito contiene productos duplicados")
+    if not ids or any(int(item["cantidad"]) <= 0 for item in items):
+        raise ValueError("El carrito debe contener cantidades positivas")
     for item in items:
         row = conn.execute("""SELECT p.stock_actual, p.disponible_tienda,
             COALESCE((SELECT SUM(r.cantidad) FROM intrashop_reservas r
