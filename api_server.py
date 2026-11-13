@@ -12,7 +12,7 @@ import threading
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Header, Body
+from fastapi import FastAPI, HTTPException, Header, Request
 from pydantic import BaseModel
 
 DB_PATH = os.getenv("DB_PATH", "libreria.db")
@@ -719,19 +719,26 @@ def api_marcar_primer_uso(body: dict, operador: str = Depends(require_config)):
 # FastAPI y los cobros puedan mantener conexiones abiertas.
 # El archivo viaja en el cuerpo HTTP; jamás en parámetros de URL.
 @app.post("/admin/backups/validar")
-def api_validar_backup(
-    payload: bytes = Body(..., media_type="application/octet-stream"),
+async def api_validar_backup(
+    request: Request,
     operador: str = Depends(require_config),
 ):
+    """Vista previa únicamente: transmisión por fragmentos y límite de 100 MiB."""
     import tempfile
     from services.backup_service import validar_backup
 
     MAX_BACKUP_BYTES = 100 * 1024 * 1024
-    if not payload or len(payload) > MAX_BACKUP_BYTES:
-        raise HTTPException(413, "Backup vacío o superior a 100 MiB")
     with tempfile.TemporaryDirectory(prefix="pos-backup-preview-") as folder:
         archivo = Path(folder) / "backup.db"
-        archivo.write_bytes(payload)
+        recibido = 0
+        with archivo.open("wb") as salida:
+            async for bloque in request.stream():
+                recibido += len(bloque)
+                if recibido > MAX_BACKUP_BYTES:
+                    raise HTTPException(413, "Backup vacío o superior a 100 MiB")
+                salida.write(bloque)
+        if recibido == 0:
+            raise HTTPException(413, "Backup vacío o superior a 100 MiB")
         try:
             info = validar_backup(archivo)
         except (ValueError, sqlite3.DatabaseError) as exc:
