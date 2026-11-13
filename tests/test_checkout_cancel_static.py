@@ -28,5 +28,5 @@ def test_cancelacion_durante_creacion_no_republica_qr():
     code = ast.get_source_segment(source, node)
     assert 'if cancel_event.is_set():' in code
     assert 'status="cancelling"' in code
-    assert "mp_service.cancelar_orden(" in code
+    assert "_cerrar_qr_checkout(" in code
     assert 'verification["estado"] == "no_payment"' in code
