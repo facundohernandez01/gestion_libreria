@@ -1822,6 +1822,7 @@ class DatabaseManager:
                 # validar stock y calcular total
                 total = 0.0
                 stocks: dict[int, int] = {}
+                cantidades: dict[int, int] = {}
                 for it in items:
                     pid = int(it["producto_id"])
                     cant = int(it["cantidad"])
@@ -1830,7 +1831,8 @@ class DatabaseManager:
                         return 0, False
                     cur = conn.execute("SELECT stock_actual FROM productos WHERE id=?", (pid,))
                     row = cur.fetchone()
-                    if not row or __import__("intrashop_checkout_store").available(conn, pid) < cant:
+                    cantidades[pid] = cantidades.get(pid, 0) + cant
+                    if not row or __import__("intrashop_checkout_store").available(conn, pid) < cantidades[pid]:
                         logger.warning("stock insuficiente prod=%s", pid)
                         return 0, False
                     stocks[pid] = int(row["stock_actual"])
@@ -1855,6 +1857,7 @@ class DatabaseManager:
                     )
                     anterior = stocks[pid]
                     nuevo = anterior - cant
+                    stocks[pid] = nuevo
                     conn.execute("UPDATE productos SET stock_actual=?, fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?", (nuevo, pid))
                     conn.execute(
                         """INSERT INTO movimientos_stock
