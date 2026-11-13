@@ -342,13 +342,15 @@ class ApiClient:
             info = validar_backup(temporal_path)
             # O_EXCL evita pisar archivos previos, incluso si otro proceso
             # creó el destino mientras se descargaba el backup.
-            try:
-                with open(ruta, "xb") as salida, open(temporal_path, "rb") as origen:
-                    shutil.copyfileobj(origen, salida)
-            except BaseException:
-                # Si falló la escritura, no dejar una copia incompleta.
-                ruta.unlink(missing_ok=True)
-                raise
+            with open(ruta, "xb") as salida:
+                try:
+                    with open(temporal_path, "rb") as origen:
+                        shutil.copyfileobj(origen, salida)
+                except BaseException:
+                    # Solo borrar un archivo que esta llamada creó.
+                    salida.close()
+                    ruta.unlink(missing_ok=True)
+                    raise
             info["destino"] = str(ruta)
             return info
         finally:
