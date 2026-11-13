@@ -64,6 +64,7 @@ def database(tmp_path, monkeypatch):
         store.ensure_schema(conn)
         from intrashop_entregas import ensure_schema as ensure_deliveries
         ensure_deliveries(conn)
+        conn.execute("INSERT INTO intrashop_totems (id,nombre) VALUES ('totem-test','Tótem prueba')")
         conn.execute(
             "INSERT INTO intrashop_mp_bindings "
             "(terminal_id,terminal_type,pos_external_id,store_external_id,qr_url) "
@@ -209,3 +210,67 @@ def test_liberacion_manual_v1_no_libera_orden_incierta(database, monkeypatch):
     assert error.value.status_code == 409
     with database[0]() as conn:
         assert store.available(conn, database[1]) == 3
+
+
+def test_checkout_http_selecciona_orders_v1_solo_con_flag(database, monkeypatch):
+    from threading import Event
+
+    event = Event()
+    calls = []
+    monkeypatch.setenv("INTRASHOP_MP_ORDERS_V1", "1")
+    monkeypatch.setattr(api.settings, "mp_activo", True)
+
+    def fake_worker(ref, cart, total):
+        calls.append((ref, total))
+        event.set()
+
+    monkeypatch.setattr(api, "_run_checkout_orders_v1", fake_worker)
+    monkeypatch.setattr(
+        api, "_run_checkout",
+        lambda *args: (_ for _ in ()).throw(AssertionError("Se llamó legacy")),
+    )
+    result = api.iniciar_checkout(
+        api.CheckoutIn(
+            totem_id="totem-test",
+            items=[api.CartItem(producto_id=database[1], cantidad=2)],
+        )
+    )
+    assert result["mp_api"] == "orders_v1"
+    assert event.wait(5)
+    assert calls == [(result["checkout_id"], 50.0)]
+    with database[0]() as conn:
+        row = conn.execute(
+            "SELECT mp_api,estado FROM intrashop_checkouts WHERE id=?",
+            (result["checkout_id"],),
+        ).fetchone()
+        assert row["mp_api"] == "orders_v1"
+        assert row["estado"] == "reserved"
+
+
+def test_checkout_http_no_migra_legacy_por_defecto(database, monkeypatch):
+    from threading import Event
+
+    event = Event()
+    monkeypatch.setenv("INTRASHOP_MP_ORDERS_V1", "0")
+    monkeypatch.setattr(api.settings, "mp_activo", True)
+    monkeypatch.setattr(
+        api, "_run_checkout",
+        lambda ref, cart, total: event.set(),
+    )
+    monkeypatch.setattr(
+        api, "_run_checkout_orders_v1",
+        lambda *args: (_ for _ in ()).throw(AssertionError("Se llamó Orders v1")),
+    )
+    result = api.iniciar_checkout(
+        api.CheckoutIn(
+            totem_id="totem-test",
+            items=[api.CartItem(producto_id=database[1], cantidad=2)],
+        )
+    )
+    assert result["mp_api"] == "legacy"
+    assert event.wait(5)
+    with database[0]() as conn:
+        assert conn.execute(
+            "SELECT mp_api FROM intrashop_checkouts WHERE id=?",
+            (result["checkout_id"],),
+        ).fetchone()["mp_api"] == "legacy"
