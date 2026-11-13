@@ -170,3 +170,79 @@ def test_reinicio_con_intento_remoto_retiene_stock(recovery_db):
         ).fetchone()
         assert row["estado"] == "uncertain"
         assert checkout.available(conn, 1) == 2
+
+
+def _solicitar_liberacion():
+    return api.release_checkout(
+        "checkout-1",
+        api.ReleaseRequest(confirmacion="VERIFIQUE EN MERCADO PAGO QUE NO EXISTE COBRO"),
+        operador="TEST_ADMIN",
+    )
+
+
+def test_admin_no_libera_si_pago_ya_aprobado(recovery_db, monkeypatch):
+    monkeypatch.setattr(
+        mp_service, "verificar_pago_referencia",
+        lambda *args, **kwargs: {"estado": "approved"},
+    )
+    with pytest.raises(api.HTTPException) as exc:
+        _solicitar_liberacion()
+    assert exc.value.status_code == 409
+    with _connection(recovery_db) as conn:
+        assert checkout.available(conn, 1) == 2
+
+
+def test_admin_no_libera_si_otra_orden_ocupa_el_qr(recovery_db, monkeypatch):
+    monkeypatch.setattr(
+        mp_service, "verificar_pago_referencia",
+        lambda *args, **kwargs: {"estado": "uncertain"},
+    )
+    monkeypatch.setattr(
+        mp_service, "cerrar_orden_referencia",
+        lambda *args, **kwargs: {"estado": "different_order"},
+    )
+    with pytest.raises(api.HTTPException) as exc:
+        _solicitar_liberacion()
+    assert exc.value.status_code == 409
+    with _connection(recovery_db) as conn:
+        assert checkout.available(conn, 1) == 2
+
+
+def test_admin_con_cierre_y_confirmacion_manual_libera_y_audita(recovery_db, monkeypatch):
+    monkeypatch.setattr(
+        mp_service, "verificar_pago_referencia",
+        lambda *args, **kwargs: {"estado": "uncertain"},
+    )
+    monkeypatch.setattr(
+        mp_service, "cerrar_orden_referencia",
+        lambda *args, **kwargs: {"estado": "closed"},
+    )
+    result = _solicitar_liberacion()
+    assert result["liberacion"] == "manual_auditada"
+    with _connection(recovery_db) as conn:
+        assert checkout.available(conn, 1) == 5
+        assert conn.execute(
+            "SELECT estado FROM intrashop_checkouts WHERE id='checkout-1'"
+        ).fetchone()["estado"] == "cancelled"
+        row = conn.execute(
+            "SELECT operador,accion FROM intrashop_auditoria WHERE checkout_id='checkout-1'"
+        ).fetchone()
+        assert row["operador"] == "TEST_ADMIN"
+        assert row["accion"] == "LIBERACION_MANUAL_SIN_PAGO_CONFIRMADO"
+
+
+def test_admin_reconsulta_pago_tras_cerrar_antes_de_liberar(recovery_db, monkeypatch):
+    respuestas = iter([{"estado": "uncertain"}, {"estado": "approved"}])
+    monkeypatch.setattr(
+        mp_service, "verificar_pago_referencia",
+        lambda *args, **kwargs: next(respuestas),
+    )
+    monkeypatch.setattr(
+        mp_service, "cerrar_orden_referencia",
+        lambda *args, **kwargs: {"estado": "closed"},
+    )
+    with pytest.raises(api.HTTPException) as exc:
+        _solicitar_liberacion()
+    assert exc.value.status_code == 409
+    with _connection(recovery_db) as conn:
+        assert checkout.available(conn, 1) == 2
