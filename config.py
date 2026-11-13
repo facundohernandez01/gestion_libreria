@@ -1441,8 +1441,7 @@ def ConfigModal(page: ft.Page):
     backup_tab = _tab_content([
         ft.Text("Copia de seguridad", size=15, weight=ft.FontWeight.BOLD,
                 color=N.BLUE_300),
-        ft.Text("Exportá la base completa o restaurá un backup. "
-                "En modo fusionar se evitan productos y ventas duplicadas.",
+        ft.Text(("IntraShop: validá backups contra POS Server. La restauración requiere detener el servidor; nunca modifica la base local." if _backup_remoto else "Exportá la base completa o restaurá un backup. En modo fusionar se evitan productos y ventas duplicadas."),
                 size=11, color=N.GREY_400),
         backup_base,
         ft.Row([
