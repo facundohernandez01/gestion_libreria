@@ -12,7 +12,7 @@ import threading
 from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Header
+from fastapi import FastAPI, HTTPException, Header, Body
 from pydantic import BaseModel
 
 DB_PATH = os.getenv("DB_PATH", "libreria.db")
@@ -720,7 +720,7 @@ def api_marcar_primer_uso(body: dict, operador: str = Depends(require_config)):
 # El archivo viaja en el cuerpo HTTP; jamás en parámetros de URL.
 @app.post("/admin/backups/validar")
 def api_validar_backup(
-    payload: bytes = __import__("fastapi").Body(..., media_type="application/octet-stream"),
+    payload: bytes = Body(..., media_type="application/octet-stream"),
     operador: str = Depends(require_config),
 ):
     import tempfile
