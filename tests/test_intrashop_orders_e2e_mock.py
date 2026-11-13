@@ -277,3 +277,69 @@ def test_checkout_http_no_migra_legacy_por_defecto(database, monkeypatch):
             "SELECT mp_api FROM intrashop_checkouts WHERE id=?",
             (result["checkout_id"],),
         ).fetchone()["mp_api"] == "legacy"
+
+
+def test_admin_recupera_order_id_perdido_solo_por_get_valido(database, monkeypatch):
+    ref, cart = checkout(database)
+    with database[0]() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        store.set_status(conn, ref, "uncertain")
+        conn.commit()
+    fake = FakeOrders(state="pending")
+    monkeypatch.setattr(api, "_orders_client", lambda: fake)
+    result = api.resolve_mp_order_id(
+        ref, api.ResolveMpOrderIn(order_id="ORDTEST01"), operador="TEST_ADMIN",
+    )
+    assert result["estado"] == "pending"
+    with database[0]() as conn:
+        row = conn.execute(
+            "SELECT mp_order_id,estado FROM intrashop_checkouts WHERE id=?",
+            (ref,),
+        ).fetchone()
+        assert row["mp_order_id"] == "ORDTEST01"
+        assert row["estado"] == "uncertain"
+        audit = conn.execute(
+            "SELECT accion FROM intrashop_auditoria WHERE checkout_id=?", (ref,),
+        ).fetchone()
+        assert audit["accion"] == "ASOCIACION_MANUAL_ORDER_ID_VERIFICADO"
+
+
+def test_admin_no_asocia_order_id_sin_validacion(database, monkeypatch):
+    ref, cart = checkout(database)
+    fake = FakeOrders(state="uncertain")
+    monkeypatch.setattr(api, "_orders_client", lambda: fake)
+    with pytest.raises(api.HTTPException) as exc:
+        api.resolve_mp_order_id(
+            ref, api.ResolveMpOrderIn(order_id="ORDTEST01"), operador="TEST_ADMIN",
+        )
+    assert exc.value.status_code == 409
+    with database[0]() as conn:
+        assert conn.execute(
+            "SELECT mp_order_id FROM intrashop_checkouts WHERE id=?",
+            (ref,),
+        ).fetchone()["mp_order_id"] is None
+        assert store.available(conn, database[1]) == 3
+
+
+def test_conciliacion_periodica_procesa_inciertos_sin_webhook(database, monkeypatch):
+    ref, cart = checkout(database)
+    with database[0]() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        store.set_status(conn, ref, "uncertain")
+        conn.commit()
+    seen = []
+    monkeypatch.setattr(
+        api, "_recover_checkout_after_restart",
+        lambda checkout_id: seen.append(checkout_id) or {"estado": "uncertain"},
+    )
+
+    class StopAfterOneCycle:
+        calls = 0
+        def wait(self, seconds):
+            self.calls += 1
+            return self.calls > 1
+        def is_set(self):
+            return False
+
+    api.reconcile_orders_v1_periodically(StopAfterOneCycle(), interval=10)
+    assert seen == [ref]
