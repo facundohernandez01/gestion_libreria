@@ -1299,14 +1299,20 @@ def ConfigModal(page: ft.Page):
                                          restaurar_backup as _restaurar_backup,
                                          validar_backup as _validar_backup)
 
+    from core.db_factory import es_edicion_intrashop as _es_intrashop
+    from api_client import ApiClient as _ApiClient
+
+    _backup_remoto = _es_intrashop()
     backup_archivo = {"ruta": None, "info": None}
     backup_estado = ft.Text("", size=12, color=N.GREY_400)
     backup_info = ft.Text("", size=11, color=N.GREY_500)
-    backup_base = ft.Text(f"Ruta de la base de datos actual: {settings.db_path}", size=11,
+    backup_base = ft.Text(("Base activa: POS Server (HTTP), no SQLite local" if _backup_remoto else f"Ruta de la base de datos actual: {settings.db_path}"), size=11,
                           color=N.GREY_500, selectable=True)
 
     async def exportar_backup(e=None):
         try:
+            if _backup_remoto:
+                raise RuntimeError("En IntraShop la exportación debe realizarse desde POS Server; no se exportará una base local desactualizada.")
             from datetime import datetime as _dt
             destino = await save_file(
                 page, title="Guardar copia de seguridad",
@@ -1330,13 +1336,18 @@ def ConfigModal(page: ft.Page):
             ruta = await pick_file(page, title="Seleccionar copia de seguridad")
             if not ruta:
                 return
-            info = await asyncio.to_thread(_validar_backup, ruta)
+            if _backup_remoto:
+                from core.db_factory import crear_acceso_datos as _crear_acceso_datos
+                cliente, _ = _crear_acceso_datos()
+                info = await asyncio.to_thread(cliente.validar_backup_servidor, ruta)
+            else:
+                info = await asyncio.to_thread(_validar_backup, ruta)
             backup_archivo["ruta"] = ruta
             backup_archivo["info"] = info
             backup_info.value = (f"Backup válido · {_Path(ruta).name} · "
-                                 f"{info.get('conteos')}")
+                                 f"{info.get('conteos_backup', info.get('conteos'))}")
             backup_info.color = N.GREEN_400
-            backup_estado.value = "Elegí cómo restaurar: Fusionar o Reemplazar."
+            backup_estado.value = ("Backup validado en POS Server. Para restaurar, detené el servidor y utilizá la herramienta offline." if _backup_remoto else "Elegí cómo restaurar: Fusionar o Reemplazar.")
             backup_estado.color = N.BLUE_300
             page.update()
         except Exception as ex:  # noqa: BLE001
@@ -1346,6 +1357,11 @@ def ConfigModal(page: ft.Page):
             page.update()
 
     async def _restaurar(modo: str):
+        if _backup_remoto:
+            backup_estado.value = "Restauración bloqueada en el cliente. Detené POS Server y utilizá la herramienta offline en el servidor."
+            backup_estado.color = N.RED_400
+            page.update()
+            return
         ruta = backup_archivo.get("ruta")
         if not ruta:
             backup_estado.value = "Primero elegí un archivo de backup."
@@ -1379,6 +1395,9 @@ def ConfigModal(page: ft.Page):
             page.update()
 
     def preguntar_restaurar(modo: str):
+        if _backup_remoto:
+            snack(page, "En IntraShop solo se restaura offline desde POS Server. Nunca en la SQLite del cliente.", ok=False)
+            return
         if not backup_archivo.get("ruta"):
             snack(page, "Primero elegí un archivo de backup", ok=False)
             return
