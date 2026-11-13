@@ -843,8 +843,8 @@ def pending_checkouts(operador: str = Depends(require_config)):
     with _connect() as conn:
         checkout_store.ensure_schema(conn)
         return [dict(row) for row in conn.execute("""SELECT id,totem_id,pos_external_id,
-            estado,total,created_at,updated_at,qr_close_status,qr_close_checked_at
-            FROM intrashop_checkouts
+            estado,total,created_at,updated_at,qr_close_status,qr_close_checked_at,
+            mp_api,mp_order_id,mp_cancel_requested FROM intrashop_checkouts
             WHERE estado NOT IN ('completed','cancelled','failed')
             ORDER BY created_at DESC LIMIT 100""")]
 
@@ -873,6 +873,8 @@ def _reconcile_checkout_impl(checkout_id: str):
         return {"estado":"completed","venta_id":row["venta_id"]}
     if row["estado"] in ("cancelled", "failed"):
         raise HTTPException(409, "Checkout cerrado. Requiere revisión manual; no se registra otra venta.")
+    if row["mp_api"] == "orders_v1":
+        return _orders_reconcile(checkout_id)
     from services.mercadopago_service import mp_service
     verification = mp_service.verificar_pago_referencia(checkout_id, row["total"])
     if verification["estado"] != "approved":
@@ -901,6 +903,12 @@ def _recover_checkout_after_restart(checkout_id: str) -> dict:
             return {"estado": "processing", "message": "Conciliación en curso"}
         _reconciling.add(checkout_id)
     try:
+        with _connect() as conn:
+            provider = conn.execute(
+                "SELECT mp_api FROM intrashop_checkouts WHERE id=?", (checkout_id,),
+            ).fetchone()
+        if provider and provider["mp_api"] == "orders_v1":
+            return _orders_reconcile(checkout_id, close_pending=True)
         result = _reconcile_checkout_impl(checkout_id)
         if result.get("estado") != "uncertain":
             return result
@@ -1100,29 +1108,69 @@ def iniciar_checkout(body: CheckoutIn):
     if not body.totem_id:
         raise HTTPException(400, "El checkout requiere un tótem registrado")
     job_id = uuid.uuid4().hex
+    # El flag se evalúa solo para nuevos checkouts. Cada pedido conserva
+    # su proveedor; los pagos legacy no se migran durante una actualización.
+    mp_api = "orders_v1" if os.getenv("INTRASHOP_MP_ORDERS_V1", "0").strip() == "1" else "legacy"
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
             checkout_store.ensure_schema(conn)
-            binding = checkout_store.reserve(conn, job_id, body.totem_id, cart, total)
+            binding = checkout_store.reserve(
+                conn, job_id, body.totem_id, cart, total, mp_api=mp_api
+            )
             conn.commit()
         except ValueError as exc:
             raise HTTPException(409, str(exc))
     with _jobs_lock:
         _jobs[job_id] = {"status": "queued", "message": "Stock reservado; preparando cobro",
                          "total": total, "items": cart, "created_at": time.time(),
-                         "sale_done": False, "totem_id": body.totem_id,
+                         "sale_done": False, "mp_api": mp_api, "totem_id": body.totem_id,
                          "totem_nombre": totem_nombre,
                          "pos_ext": binding["pos_external_id"],
                          "store_ext": binding["store_external_id"],
                          "qr_url": binding["qr_url"]}
         _cancel_events[job_id] = threading.Event()
-    threading.Thread(target=_run_checkout, args=(job_id, cart, total), daemon=True).start()
-    return {"checkout_id": job_id, "status": "queued", "total": total, "items": cart}
+    worker = _run_checkout_orders_v1 if mp_api == "orders_v1" else _run_checkout
+    threading.Thread(target=worker, args=(job_id, cart, total), daemon=True).start()
+    return {"checkout_id": job_id, "status": "queued", "total": total,
+            "items": cart, "mp_api": mp_api}
 
 
 @router.post("/checkout/{checkout_id}/cancel")
 def cancelar_checkout(checkout_id: str):
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        provider = conn.execute(
+            "SELECT mp_api,estado FROM intrashop_checkouts WHERE id=?",
+            (checkout_id,),
+        ).fetchone()
+    if provider and provider["mp_api"] == "orders_v1":
+        if provider["estado"] == "completed":
+            raise HTTPException(409, "Pago confirmado; no se puede cancelar")
+        if provider["estado"] == "cancelled":
+            return {"ok": True, "status": "cancelled"}
+        # Persistir intención antes de avisar al worker: sobrevive reinicios.
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT estado FROM intrashop_checkouts WHERE id=?",
+                (checkout_id,),
+            ).fetchone()
+            if not current or current["estado"] in ("completed", "cancelled"):
+                raise HTTPException(409, "El checkout ya fue finalizado")
+            checkout_store.request_mp_cancel(conn, checkout_id)
+            conn.commit()
+        with _jobs_lock:
+            job = _jobs.get(checkout_id)
+            if job:
+                _cancel_events.setdefault(checkout_id, threading.Event()).set()
+                if job.get("status") not in ("paid", "completed"):
+                    job.update(status="cancelling", message="Cancelando orden por ID…")
+            else:
+                threading.Thread(
+                    target=_recover_checkout_after_restart, args=(checkout_id,), daemon=True
+                ).start()
+        return {"ok": True, "status": "cancelling"}
     with _jobs_lock:
         job = _jobs.get(checkout_id)
         if not job:
