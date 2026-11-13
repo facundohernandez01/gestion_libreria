@@ -1134,6 +1134,38 @@ def reconcile_pending_after_startup() -> None:
         logger.exception("No se pudo consultar la cola de conciliación inicial")
 
 
+def reconcile_orders_v1_periodically(stop_event: threading.Event, interval: int = 60) -> None:
+    """Resuelve órdenes inciertas sin esperar reinicio ni webhook público.
+
+    Solo revisa checkouts Orders API fuera del worker activo; los resultados
+    ambiguos conservan reserva. El lock impide conciliaciones superpuestas.
+    """
+    while not stop_event.wait(max(10, interval)):
+        try:
+            with _connect() as conn:
+                checkout_store.ensure_schema(conn)
+                ids = [row["id"] for row in conn.execute(
+                    "SELECT id FROM intrashop_checkouts "
+                    "WHERE mp_api='orders_v1' AND estado='uncertain' "
+                    "ORDER BY updated_at ASC LIMIT 20"
+                )]
+            for checkout_id in ids:
+                if stop_event.is_set():
+                    return
+                try:
+                    result = _recover_checkout_after_restart(checkout_id)
+                    logger.debug(
+                        "Reconciliación periódica %s: %s",
+                        checkout_id, result.get("estado"),
+                    )
+                except Exception:
+                    logger.exception(
+                        "No se pudo conciliar periódicamente checkout %s", checkout_id
+                    )
+        except Exception:
+            logger.exception("Error consultando cola Orders API para conciliación")
+
+
 class ReleaseRequest(BaseModel):
     confirmacion: str
 
