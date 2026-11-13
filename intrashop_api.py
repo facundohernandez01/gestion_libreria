@@ -319,9 +319,6 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 with _jobs_lock:
                     _jobs[job_id].update(status="paid", message="Pago confirmado durante la cancelación; registrando venta")
                 _finalize_sale(job_id, cart, total)
-            elif cierre["estado"] == "closed" and verification["estado"] == "no_payment":
-                with _jobs_lock:
-                    _jobs[job_id].update(status="cancelled", message="Orden QR cerrada y ausencia de pago verificada.")
             else:
                 with _jobs_lock:
                     _jobs[job_id].update(
@@ -343,9 +340,14 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                 _finalize_sale(job_id, cart, total)
             else:
                 with _jobs_lock:
-                    safe_to_release = cierre["estado"] == "closed" and verification["estado"] == "no_payment"
-                    _jobs[job_id].update(status="expired" if safe_to_release else "cancel_error",
-                        message="Orden cerrada sin cobro." if safe_to_release else "Pago sin confirmar. Revisá Mercado Pago antes de reintentar.")
+                    # La API legacy no ofrece evidencia definitiva de
+                    # ausencia de pago, aunque el DELETE haya dado 204.
+                    # No liberar stock por una búsqueda de pagos vacía.
+                    _jobs[job_id].update(
+                        status="cancel_error",
+                        message=f"QR: {cierre['estado']}. Pago sin confirmar; "
+                                "reserva retenida hasta conciliación.",
+                    )
             return
         # El polling del POS no basta para atribuir un pago a este checkout:
         # confirmar referencia y monto antes de registrar venta y descontar stock.
