@@ -19,9 +19,9 @@ from utils.file_dialogs import agregar_extension, pick_file, pick_folder, save_f
 
 
 def ConfigModal(page: ft.Page):
-    from database_manager import DatabaseManager
+    from core.db_factory import crear_acceso_datos
 
-    db = DatabaseManager()
+    db, _modo_datos = crear_acceso_datos()
     try:
         mp_service.sincronizar_store_id()
     except Exception:
