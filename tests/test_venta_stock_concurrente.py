@@ -14,7 +14,7 @@ def _preparar(tmp_path):
             "VALUES ('TEST-VENTA', 'Venta concurrente', 10, 5)"
         ).lastrowid
         caja = conn.execute(
-            "INSERT INTO cajas (estado, saldo_inicial) VALUES ('abierta', 0)"
+            "INSERT INTO cajas (fecha_apertura, importe_apertura, estado) VALUES (CURRENT_TIMESTAMP, 0, 'abierta')"
         ).lastrowid
     return ruta, producto, caja
 
