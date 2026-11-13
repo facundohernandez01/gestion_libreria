@@ -203,26 +203,67 @@ class MercadoPagoService:
         return False
 
     def cancelar_orden(self, pos_ext: str = "", store_ext: str = "") -> bool:
-        """Solicita a Mercado Pago cerrar la orden QR activa, si la API lo permite."""
-        token, uid, store_d, pos_d = self.credenciales()
-        store_ext = store_ext or store_d
+        """Cierra la orden activa del POS en la API QR legacy.
+
+        El endpoint DELETE documentado no incluye STORE_ID. Un 404 no
+        equivale a una cancelación confirmada.
+        """
+        token, uid, _, pos_d = self.credenciales()
         pos_ext = pos_ext or pos_d
-        if not (token and uid and store_ext and pos_ext):
+        if not (token and uid and pos_ext):
             return False
         from core.settings import settings
-        url = f"{MP_BASE}/instore/qr/seller/collectors/{uid}/stores/{store_ext}/pos/{pos_ext}/orders"
+        from urllib.parse import quote
+        url = (f"{MP_BASE}/instore/qr/seller/collectors/{quote(str(uid), safe='')}"
+               f"/pos/{quote(str(pos_ext), safe='')}/orders")
         try:
             resp = requests.delete(url, headers=self._headers(token), timeout=settings.mp_timeout_seg)
-            # Un 404 no demuestra que la orden se haya cerrado: podría
-            # indicar POS/tienda incorrectos o un recurso no encontrado.
-            # En ese caso se conserva la reserva hasta verificar el pago.
-            if resp.status_code in (200, 202, 204):
+            if resp.status_code == 204:
                 return True
             self._log(f"⚠️ No se pudo cerrar la orden QR ({resp.status_code}): {resp.text[:200]}")
             return False
         except requests.RequestException as exc:
             self._log(f"⚠️ Error de red al cerrar la orden QR: {exc}")
             return False
+
+    def cerrar_orden_referencia(self, reference: str, pos_ext: str, store_ext: str = "") -> dict:
+        """Intenta cerrar *solo* la orden que coincide con esta referencia.
+
+        'closed' acredita el DELETE, pero NO ausencia de pago. Cualquier
+        otro estado exige conservar reserva y conciliar pagos por referencia.
+        """
+        from core.settings import settings
+        from urllib.parse import quote
+
+        token, uid, _, pos_d = self.credenciales()
+        pos_ext = pos_ext or pos_d
+        if not (token and uid and pos_ext and reference):
+            return {"estado": "uncertain", "motivo": "Faltan credenciales, caja o referencia"}
+        url = (f"{MP_BASE}/instore/qr/seller/collectors/{quote(str(uid), safe='')}"
+               f"/pos/{quote(str(pos_ext), safe='')}/orders")
+        try:
+            response = requests.get(url, headers=self._headers(token), timeout=settings.mp_timeout_seg)
+            if response.status_code == 404:
+                # No hay orden activa visible en el POS. Podría haberse
+                # cobrado o expirado: NO habilita liberar la reserva.
+                return {"estado": "not_active", "motivo": "Mercado Pago no informa una orden activa"}
+            if response.status_code != 200:
+                return {"estado": "uncertain", "motivo": f"Consulta QR HTTP {response.status_code}"}
+            data = response.json()
+            if not isinstance(data, dict):
+                return {"estado": "uncertain", "motivo": "Respuesta de orden inválida"}
+            active_ref = str(data.get("external_reference") or "")
+            if not active_ref:
+                return {"estado": "uncertain", "motivo": "La orden activa no informa referencia"}
+            if active_ref != reference:
+                # Nunca borrar órdenes ajenas en la caja compartida.
+                return {"estado": "different_order", "motivo": "La caja tiene otra orden activa"}
+            if self.cancelar_orden(pos_ext=pos_ext, store_ext=store_ext):
+                return {"estado": "closed", "motivo": "Orden QR cerrada por Mercado Pago"}
+            return {"estado": "uncertain", "motivo": "Mercado Pago no confirmó el cierre"}
+        except (requests.RequestException, ValueError, TypeError) as exc:
+            self._log(f"⚠️ No se pudo verificar/cerrar la orden QR: {exc}")
+            return {"estado": "uncertain", "motivo": "Error consultando orden activa"}
 
     def consultar_ultimo_pago(self, cb: Optional[Callable[[str], None]] = None, reference: str = "") -> bool:
         token, _, _, _ = self.credenciales()
