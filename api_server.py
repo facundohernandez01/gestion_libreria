@@ -744,3 +744,27 @@ def api_validar_backup(
         "restauracion": "offline_obligatoria",
         "mensaje": "Vista previa solamente. Para aplicar, detener POS Server y usar la herramienta offline.",
     }
+
+
+@app.get("/admin/backups/exportar")
+def api_exportar_backup(operador: str = Depends(require_config)):
+    """Exportación consistente desde la SQLite activa, incluyendo WAL.
+
+    Se crea una copia temporal bajo el lock de escrituras del POS. La copia
+    es independiente de la base activa y se elimina tras leer sus bytes.
+    """
+    import tempfile
+    from fastapi.responses import Response
+    from services.backup_service import exportar_backup
+
+    with tempfile.TemporaryDirectory(prefix="pos-backup-export-") as carpeta:
+        destino = Path(carpeta) / "backup.db"
+        with _write_lock:
+            exportar_backup(DB_PATH, destino)
+        contenido = destino.read_bytes()
+    return Response(
+        content=contenido,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": 'attachment; filename="backup_pos_server.db"',
+                 "Cache-Control": "no-store"},
+    )
