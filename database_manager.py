@@ -1175,26 +1175,16 @@ class DatabaseManager:
                 return False
 
     def confirmar_orden_compra(self, orden_id: int) -> Tuple[bool, str]:
-        """Recibe la totalidad de lo pendiente y confirma la orden."""
-        detalle = self.obtener_orden_compra(int(orden_id))
-        if not detalle:
-            return False, "La orden no existe"
-        if detalle.get("estado") not in ("en_proceso", "parcial"):
-            return False, (f"La orden está {detalle.get('estado')} "
-                           "y no se puede confirmar")
-        recepciones = {
-            int(it["id"]): int(it["cantidad"]) - int(it.get("cantidad_recibida") or 0)
-            for it in (detalle.get("items") or [])
-            if int(it["cantidad"]) - int(it.get("cantidad_recibida") or 0) > 0
-        }
-        if not recepciones:
-            return False, "La orden no tiene cantidades pendientes"
+        """Confirma todo el pendiente calculándolo bajo el lock de SQLite."""
         return self.recibir_orden_compra(
-            int(orden_id), recepciones, observaciones="Confirmación total")
+            int(orden_id), {}, observaciones="Confirmación total",
+            _confirmar_todo=True,
+        )
 
     def recibir_orden_compra(self, orden_id: int, recepciones,
                              remito: str = "", observaciones: str = "",
-                             cancelar_restante: bool = False) -> Tuple[bool, str]:
+                             cancelar_restante: bool = False,
+                             *, _confirmar_todo: bool = False) -> Tuple[bool, str]:
         """Registra una recepción (parcial o total) de una orden de compra.
 
         ``recepciones`` puede ser un dict ``{item_id: cantidad}`` o una lista de
@@ -1239,6 +1229,17 @@ class DatabaseManager:
                     (orden_id,)).fetchall()}
                 if not items:
                     return False, "La orden no tiene artículos"
+
+                if _confirmar_todo:
+                    # Se calcula dentro de BEGIN IMMEDIATE; ningún otro proceso
+                    # puede recepcionar o alterar la orden entre lectura y escritura.
+                    cantidades = {
+                        item_id: int(item["cantidad"]) - int(item["cantidad_recibida"] or 0)
+                        for item_id, item in items.items()
+                        if int(item["cantidad"]) > int(item["cantidad_recibida"] or 0)
+                    }
+                    if not cantidades:
+                        return False, "La orden no tiene cantidades pendientes"
 
                 for item_id, cant in cantidades.items():
                     item = items.get(item_id)
