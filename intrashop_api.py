@@ -314,7 +314,8 @@ def _orders_apply_status(checkout_id: str, result: dict) -> dict:
             if not current or current["venta_id"] is not None or current["estado"] == "completed":
                 return {"estado": "completed", "venta_id": current["venta_id"] if current else None}
             if current["mp_order_id"] != result.get("order_id"):
-                return _orders_uncertain(checkout_id, "El identificador de la orden cambió")
+                conn.rollback()
+                return {"estado": "uncertain", "message": "El identificador de la orden cambió"}
             checkout_store.set_status(conn, checkout_id, "cancelled")
             checkout_store.set_qr_close_status(conn, checkout_id, "closed")
             conn.commit()
