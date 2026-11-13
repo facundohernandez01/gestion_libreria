@@ -768,3 +768,25 @@ def api_exportar_backup(operador: str = Depends(require_config)):
         headers={"Content-Disposition": 'attachment; filename="backup_pos_server.db"',
                  "Cache-Control": "no-store"},
     )
+
+
+@app.post("/productos/{producto_id}/stock-absoluto")
+def api_ajustar_stock_absoluto(
+    producto_id: int, body: dict,
+    operador: str = Depends(require_config),
+):
+    """Ajuste manual autorizado; falla si cambió el stock desde que se abrió el diálogo."""
+    try:
+        nuevo = int(body["nuevo_stock"])
+        esperado = int(body["stock_esperado"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(422, "nuevo_stock y stock_esperado deben ser enteros") from exc
+    if min(nuevo, esperado) < 0:
+        raise HTTPException(422, "El stock no puede ser negativo")
+    with _write_lock:
+        ok = _gestor_reposicion().ajustar_stock_absoluto(
+            producto_id, nuevo, esperado, str(body.get("observaciones") or ""),
+        )
+    if not ok:
+        raise HTTPException(409, "Stock modificado por otra operación o producto inexistente; actualizá la pantalla")
+    return {"ok": True}
