@@ -131,9 +131,10 @@ class MercadoPagoOrdersV1:
                 return {"estado": "uncertain", "motivo": "La orden no coincide con la venta"}
             estado = data.get("status")
             detalle = data.get("status_detail")
-            if estado == "processed" and detalle == "processed":
-                # El status_detail de la order es 'processed'. La
-                # acreditación corresponde al pago dentro de transactions.
+            if estado == "processed" and detalle in ("processed", "accredited"):
+                # La documentación presenta 'processed' y 'accredited' según
+                # el payload; en ambos casos exigimos la acreditación real
+                # de la transacción de pago dentro de transactions.
                 pagos = (data.get("transactions") or {}).get("payments")
                 if not isinstance(pagos, list) or len(pagos) != 1:
                     return {"estado": "uncertain", "motivo": "Transacción de pago no verificable"}
