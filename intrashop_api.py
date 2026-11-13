@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException, Depends, Request
+from fastapi import APIRouter, Header, HTTPException, Depends, Request, BackgroundTasks
 from pos_auth import require_config
 import intrashop_checkout_store as checkout_store
 from fastapi.responses import FileResponse
@@ -624,6 +624,68 @@ def recover_interrupted_checkouts() -> int:
     if rows:
         logger.warning("%d checkouts interrumpidos recuperados (sin QR o a conciliar)", len(rows))
     return len(rows)
+
+
+def _reconcile_signed_order_notification(checkout_id: str, order_id: str) -> None:
+    """Webhook verificado: la fuente de verdad es GET Orders API, no el body."""
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT mp_order_id,mp_api FROM intrashop_checkouts WHERE id=?",
+                (checkout_id,),
+            ).fetchone()
+        if not row or row["mp_api"] != "orders_v1" or row["mp_order_id"] != order_id:
+            return
+        reconcile_checkout(checkout_id, operador="MP_SIGNED_WEBHOOK")
+    except Exception:
+        logger.exception("No se pudo conciliar notificación Orders %s", checkout_id)
+
+
+@router.post("/webhooks/mercadopago/orders")
+async def webhook_mp_orders(request: Request, background_tasks: BackgroundTasks):
+    """Recibe evento firmado y agenda GET de la order. No modifica pagos por body."""
+    from services.mp_orders_webhook import verify_orders_signature
+
+    secret = os.getenv("MP_ORDERS_WEBHOOK_SECRET", "").strip()
+    if not secret:
+        raise HTTPException(503, "Webhook de Orders sin firma secreta configurada")
+    data_id = (request.query_params.get("data.id") or "").strip()
+    request_id = (request.headers.get("x-request-id") or "").strip()
+    signature = (request.headers.get("x-signature") or "").strip()
+    if (
+        not data_id or len(data_id) > 100 or
+        not verify_orders_signature(secret, data_id, request_id, signature)
+    ):
+        raise HTTPException(401, "Firma Mercado Pago inválida")
+    raw = await request.body()
+    if len(raw) > 65536:
+        raise HTTPException(413, "Notificación demasiado grande")
+    try:
+        payload = json.loads(raw)
+    except (ValueError, UnicodeDecodeError) as exc:
+        raise HTTPException(400, "JSON inválido") from exc
+    if (
+        not isinstance(payload, dict)
+        or payload.get("type") != "order"
+        or request.query_params.get("type") != "order"
+        or not isinstance(payload.get("data"), dict)
+        or str(payload["data"].get("id") or "") != data_id
+    ):
+        raise HTTPException(400, "Notificación Orders inconsistente")
+    # Solo órdenes conocidas del comercio y de la nueva API. Los datos
+    # indicados por MP sirven para ubicar el checkout, no para aprobarlo.
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        row = conn.execute(
+            "SELECT id FROM intrashop_checkouts "
+            "WHERE mp_api='orders_v1' AND mp_order_id=?",
+            (data_id,),
+        ).fetchone()
+    if row:
+        background_tasks.add_task(
+            _reconcile_signed_order_notification, row["id"], data_id
+        )
+    return {"ok": True}
 
 
 @router.get("/health")
