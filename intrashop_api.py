@@ -247,6 +247,203 @@ def _cerrar_qr_checkout(checkout_id: str, pos_ext: str, store_ext: str) -> dict:
     return cierre
 
 
+def _orders_client():
+    """Orders API con credenciales activas, también en recuperaciones por reinicio."""
+    from services.mp_orders_v1_client import MercadoPagoOrdersV1
+    return MercadoPagoOrdersV1(timeout=settings.mp_timeout_seg)
+
+
+def _orders_row(checkout_id: str):
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        return conn.execute(
+            "SELECT * FROM intrashop_checkouts WHERE id=?", (checkout_id,),
+        ).fetchone()
+
+
+def _orders_uncertain(checkout_id: str, message: str) -> dict:
+    """Mantiene la reserva ante cualquier resultado no verificable."""
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            "SELECT estado FROM intrashop_checkouts WHERE id=?", (checkout_id,),
+        ).fetchone()
+        if row and row["estado"] not in ("completed", "cancelled"):
+            checkout_store.set_status(conn, checkout_id, "uncertain")
+        conn.commit()
+    with _jobs_lock:
+        if checkout_id in _jobs and _jobs[checkout_id].get("status") not in ("completed", "cancelled"):
+            _jobs[checkout_id].update(status="cancel_error", message=message)
+    return {"estado": "uncertain", "message": message}
+
+
+def _orders_apply_status(checkout_id: str, result: dict) -> dict:
+    """Efectos transaccionales solo de estados terminales verificados por GET."""
+    row = _orders_row(checkout_id)
+    if not row or row["mp_api"] != "orders_v1":
+        raise HTTPException(404, "Checkout Orders API inexistente")
+    if row["estado"] == "completed":
+        return {"estado": "completed", "venta_id": row["venta_id"]}
+    if row["estado"] == "cancelled":
+        return {"estado": "cancelled"}
+    state = result.get("estado", "uncertain")
+    if state == "approved":
+        cart = json.loads(row["items_json"])
+        with _jobs_lock:
+            job = _jobs.setdefault(checkout_id, {})
+            job.update(
+                status="paid", sale_done=False,
+                totem_id=row["totem_id"],
+                totem_nombre=job.get("totem_nombre"),
+                total=row["total"], items=cart,
+            )
+        _finalize_sale(checkout_id, cart, row["total"])
+        after = _orders_row(checkout_id)
+        if after and after["estado"] == "completed":
+            return {"estado": "completed", "venta_id": after["venta_id"]}
+        return _orders_uncertain(
+            checkout_id, "Pago acreditado; no se pudo registrar la venta. Reserva retenida."
+        )
+    if state in ("cancelled", "expired"):
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT estado,venta_id,mp_order_id FROM intrashop_checkouts WHERE id=?",
+                (checkout_id,),
+            ).fetchone()
+            if not current or current["venta_id"] is not None or current["estado"] == "completed":
+                return {"estado": "completed", "venta_id": current["venta_id"] if current else None}
+            if current["mp_order_id"] != result.get("order_id"):
+                return _orders_uncertain(checkout_id, "El identificador de la orden cambió")
+            checkout_store.set_status(conn, checkout_id, "cancelled")
+            checkout_store.set_qr_close_status(conn, checkout_id, "closed")
+            conn.commit()
+        with _jobs_lock:
+            if checkout_id in _jobs:
+                _jobs[checkout_id].update(
+                    status="cancelled", message="Orden Mercado Pago cancelada o expirada."
+                )
+        return {"estado": "cancelled", "motivo": state}
+    return {"estado": state, "message": result.get("motivo", "Orden pendiente de verificar")}
+
+
+def _orders_crear_y_persistir(checkout_id: str) -> dict:
+    """Reintento idempotente: mismo carrito, referencia y clave de operación."""
+    row = _orders_row(checkout_id)
+    if not row or row["mp_api"] != "orders_v1":
+        return {"estado": "uncertain", "motivo": "Checkout Orders API inexistente"}
+    if row["mp_order_id"]:
+        return {"estado": "created", "order_id": row["mp_order_id"]}
+    # Evita recrear después de que MP pudiera haber expirado su ventana
+    # de idempotencia. Pedidos antiguos requieren revisión manual.
+    if int(time.time()) - int(row["created_at"]) > 600:
+        return {"estado": "uncertain", "motivo": "Sin ID tras reinicio; revisión manual requerida"}
+    cart = json.loads(row["items_json"])
+    result = _orders_client().crear(
+        checkout_id, row["pos_external_id"], cart, row["total"],
+    )
+    if result.get("estado") != "created":
+        return result
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT estado FROM intrashop_checkouts WHERE id=?", (checkout_id,),
+        ).fetchone()
+        if not current or current["estado"] in ("cancelled", "completed"):
+            # Aun con la respuesta creada, no se muestra QR ni se libera
+            # stock hasta revisar una orden creada tras un cierre local.
+            return {"estado": "uncertain", "motivo": "Checkout cerrado durante la creación"}
+        checkout_store.set_mp_order_id(conn, checkout_id, result["order_id"])
+        checkout_store.set_status(conn, checkout_id, "waiting")
+        conn.commit()
+    with _jobs_lock:
+        if checkout_id in _jobs and _jobs[checkout_id].get("status") != "cancelling":
+            _jobs[checkout_id].update(
+                status="waiting_payment", message="Escaneá el QR asignado al tótem."
+            )
+    return result
+
+
+def _orders_reconcile(checkout_id: str, close_pending: bool = False) -> dict:
+    """Consulta siempre la order por ID. Cancela solo el ID del checkout."""
+    row = _orders_row(checkout_id)
+    if not row or row["mp_api"] != "orders_v1":
+        raise HTTPException(404, "Checkout Orders API inexistente")
+    if row["estado"] == "completed":
+        return {"estado": "completed", "venta_id": row["venta_id"]}
+    if row["estado"] == "cancelled":
+        return {"estado": "cancelled"}
+    if not row["mp_order_id"]:
+        creation = _orders_crear_y_persistir(checkout_id)
+        if creation.get("estado") != "created":
+            return _orders_uncertain(
+                checkout_id, creation.get("motivo", "Sin ID de orden verificable")
+            )
+        row = _orders_row(checkout_id)
+    client = _orders_client()
+    status = client.consultar(row["mp_order_id"], checkout_id, row["total"])
+    if status.get("estado") in ("approved", "cancelled", "expired"):
+        return _orders_apply_status(checkout_id, status)
+    if close_pending or row["mp_cancel_requested"]:
+        status = client.cancelar(row["mp_order_id"], checkout_id, row["total"])
+        if status.get("estado") in ("approved", "cancelled", "expired"):
+            return _orders_apply_status(checkout_id, status)
+        return _orders_uncertain(
+            checkout_id, "No se confirmó la cancelación de la orden por ID; reserva retenida."
+        )
+    return {"estado": status.get("estado", "uncertain"),
+            "message": status.get("motivo", "Pago pendiente de confirmación")}
+
+
+def _run_checkout_orders_v1(job_id: str, cart: list[dict], total: float) -> None:
+    """Worker Orders API: creación, polling por order_id y cierre verificable."""
+    try:
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT estado,mp_cancel_requested FROM intrashop_checkouts WHERE id=?",
+                (job_id,),
+            ).fetchone()
+            if not row or row["estado"] != "reserved":
+                return
+            if row["mp_cancel_requested"] or _cancel_events[job_id].is_set():
+                checkout_store.set_status(conn, job_id, "cancelled")
+                conn.commit()
+                with _jobs_lock:
+                    _jobs[job_id].update(status="cancelled", message="Cancelado antes de crear el QR.")
+                return
+            checkout_store.set_status(conn, job_id, "creating")
+            conn.commit()
+        with _jobs_lock:
+            _jobs[job_id].update(status="creating_order")
+        creation = _orders_crear_y_persistir(job_id)
+        if creation.get("estado") != "created":
+            _orders_uncertain(
+                job_id, creation.get("motivo", "No fue posible confirmar la creación del QR")
+            )
+            return
+        order_id = creation["order_id"]
+        client = _orders_client()
+        event = _cancel_events[job_id]
+        until = time.monotonic() + max(1, settings.mp_poll_timeout_seg)
+        while time.monotonic() < until and not event.is_set():
+            result = client.consultar(order_id, job_id, total)
+            if result.get("estado") in ("approved", "cancelled", "expired"):
+                _orders_apply_status(job_id, result)
+                return
+            event.wait(max(1, settings.mp_poll_interval_seg))
+        result = client.cancelar(order_id, job_id, total)
+        if result.get("estado") in ("approved", "cancelled", "expired"):
+            _orders_apply_status(job_id, result)
+            return
+        _orders_uncertain(
+            job_id, "Mercado Pago no confirmó el cierre del QR. Reserva retenida."
+        )
+    except Exception:
+        logger.exception("Checkout Orders API fallido %s", job_id)
+        _orders_uncertain(job_id, "Error del proceso QR. Revisá Mercado Pago.")
+
+
 def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
     from services.mercadopago_service import mp_service
     try:
