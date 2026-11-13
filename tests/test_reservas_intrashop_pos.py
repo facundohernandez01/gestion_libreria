@@ -10,7 +10,9 @@ def _preparar(tmp_path):
     ruta = str(tmp_path / "reservas.db")
     db = DatabaseManager(ruta)
     with sqlite3.connect(ruta) as conn:
-        conn.execute("ALTER TABLE productos ADD COLUMN disponible_tienda INTEGER DEFAULT 0")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(productos)")}
+        if "disponible_tienda" not in columns:
+            conn.execute("ALTER TABLE productos ADD COLUMN disponible_tienda INTEGER DEFAULT 0")
         producto = conn.execute(
             "INSERT INTO productos (codigo, descripcion, precio_lista, stock_actual, disponible_tienda) "
             "VALUES ('TEST-RESERVA', 'Producto reservado', 10, 5, 1)"
