@@ -1311,8 +1311,6 @@ def ConfigModal(page: ft.Page):
 
     async def exportar_backup(e=None):
         try:
-            if _backup_remoto:
-                raise RuntimeError("En IntraShop la exportación debe realizarse desde POS Server; no se exportará una base local desactualizada.")
             from datetime import datetime as _dt
             destino = await save_file(
                 page, title="Guardar copia de seguridad",
@@ -1321,7 +1319,10 @@ def ConfigModal(page: ft.Page):
             if not destino:
                 return
             ruta = agregar_extension(destino, "db")
-            info = await asyncio.to_thread(_exportar_backup, settings.db_path, ruta)
+            if _backup_remoto:
+                info = await asyncio.to_thread(db.exportar_backup_servidor, ruta)
+            else:
+                info = await asyncio.to_thread(_exportar_backup, settings.db_path, ruta)
             backup_estado.value = f"Backup generado: {ruta}"
             backup_estado.color = N.GREEN_400
             backup_info.value = f"Tablas: {info.get('conteos')} · {info.get('bytes', 0):,} bytes"
@@ -1441,7 +1442,7 @@ def ConfigModal(page: ft.Page):
     backup_tab = _tab_content([
         ft.Text("Copia de seguridad", size=15, weight=ft.FontWeight.BOLD,
                 color=N.BLUE_300),
-        ft.Text(("IntraShop: validá backups contra POS Server. La restauración requiere detener el servidor; nunca modifica la base local." if _backup_remoto else "Exportá la base completa o restaurá un backup. En modo fusionar se evitan productos y ventas duplicadas."),
+        ft.Text(("IntraShop: exportá y validá backups desde POS Server. Para restaurar es obligatorio detener el servidor." if _backup_remoto else "Exportá la base completa o restaurá un backup. En modo fusionar se evitan productos y ventas duplicadas."),
                 size=11, color=N.GREY_400),
         backup_base,
         ft.Row([
