@@ -291,3 +291,24 @@ class ApiClient:
 
     def marcar_primer_uso(self, activo):
         return self._post("/admin/datos/primer-uso", {"activo": bool(activo)})
+
+
+    def validar_backup_servidor(self, archivo):
+        """Envía un backup para inspección sin modificar la base del servidor.
+
+        Requiere sesión de administrador; no transmite rutas ni credenciales por URL.
+        Acepta bytes o ruta local de un archivo .db.
+        """
+        from pathlib import Path
+        contenido = Path(archivo).read_bytes() if isinstance(archivo, (str, Path)) else bytes(archivo)
+        if not contenido or len(contenido) > 100 * 1024 * 1024:
+            raise ValueError("El backup debe tener entre 1 byte y 100 MiB")
+        headers = {**self._admin_headers(), "Content-Type": "application/octet-stream"}
+        respuesta = httpx.post(
+            self.base_url + "/admin/backups/validar",
+            content=contenido,
+            headers=headers,
+            timeout=120,
+        )
+        respuesta.raise_for_status()
+        return respuesta.json()
