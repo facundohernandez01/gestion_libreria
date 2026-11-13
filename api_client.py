@@ -315,40 +315,45 @@ class ApiClient:
 
 
     def exportar_backup_servidor(self, destino):
-        """Descarga una copia consistente del POS Server, nunca de SQLite local."""
+        """Descarga, valida y guarda sin sobrescribir backups anteriores."""
         from pathlib import Path
-        import os
+        import shutil
         import tempfile
+
         ruta = Path(destino).expanduser().resolve()
         ruta.parent.mkdir(parents=True, exist_ok=True)
         if ruta.exists():
-            raise FileExistsError(f"El destino ya existe; elegí otro nombre para no sobrescribir backups: {ruta}")
-        with httpx.stream(
-            "GET", self.base_url + "/admin/backups/exportar",
-            headers=self._admin_headers(), timeout=180,
-        ) as respuesta:
-            respuesta.raise_for_status()
-            with tempfile.NamedTemporaryFile(
-                mode="wb", dir=str(ruta.parent), prefix=".backup-pos-", delete=False
-            ) as temporal:
-                temporal_path = Path(temporal.name)
-                try:
+            raise FileExistsError(f"El destino ya existe: {ruta}")
+        temporal_path = None
+        try:
+            with httpx.stream(
+                "GET", self.base_url + "/admin/backups/exportar",
+                headers=self._admin_headers(), timeout=180,
+            ) as respuesta:
+                respuesta.raise_for_status()
+                with tempfile.NamedTemporaryFile(
+                    mode="wb", dir=str(ruta.parent), prefix=".backup-pos-", delete=False
+                ) as temporal:
+                    temporal_path = Path(temporal.name)
                     for bloque in respuesta.iter_bytes(chunk_size=1024 * 1024):
                         temporal.write(bloque)
-                except BaseException:
-                    temporal_path.unlink(missing_ok=True)
-                    raise
-        try:
+
             from services.backup_service import validar_backup
             info = validar_backup(temporal_path)
-            # Creación exclusiva: nunca pisar un backup previo, incluso ante una carrera.
-            with open(ruta, "xb") as salida, open(temporal_path, "rb") as origen:
-                import shutil
-                shutil.copyfileobj(origen, salida)
+            # O_EXCL evita pisar archivos previos, incluso si otro proceso
+            # creó el destino mientras se descargaba el backup.
+            try:
+                with open(ruta, "xb") as salida, open(temporal_path, "rb") as origen:
+                    shutil.copyfileobj(origen, salida)
+            except BaseException:
+                # Si falló la escritura, no dejar una copia incompleta.
+                ruta.unlink(missing_ok=True)
+                raise
             info["destino"] = str(ruta)
             return info
         finally:
-            temporal_path.unlink(missing_ok=True)
+            if temporal_path is not None:
+                temporal_path.unlink(missing_ok=True)
 
 
     def ajustar_stock_absoluto(self, producto_id, nuevo_stock, stock_esperado, observaciones=""):
