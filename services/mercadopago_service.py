@@ -298,6 +298,9 @@ class MercadoPagoService:
                 return {"estado": "approved", "payment_id": str(approved[0].get("id") or "")}
             if len(approved) > 1:
                 return {"estado": "uncertain", "motivo": "Múltiples pagos aprobados con la misma referencia"}
+            # Un pago aprobado con monto distinto es una anomalía, no ausencia.
+            # Tampoco se puede inferir ausencia definitiva a partir de una
+            # búsqueda vacía: puede haber demoras de indexación en MP.
             return {"estado": "uncertain", "motivo": "No se confirmó un pago aprobado por el monto esperado"}
         except (requests.RequestException, ValueError, TypeError):
             return {"estado": "uncertain", "motivo": "No fue posible verificar el pago"}
