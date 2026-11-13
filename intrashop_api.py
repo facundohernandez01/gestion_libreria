@@ -1046,13 +1046,33 @@ def release_checkout(checkout_id: str, body: ReleaseRequest, operador: str = Dep
     try:
         with _connect() as conn:
             row = conn.execute(
-                "SELECT estado,total,venta_id,pos_external_id,store_external_id,qr_close_status "
-                "FROM intrashop_checkouts WHERE id=?", (checkout_id,),
+                "SELECT estado,total,venta_id,pos_external_id,store_external_id,qr_close_status, "
+                "mp_api,mp_order_id FROM intrashop_checkouts WHERE id=?", (checkout_id,),
             ).fetchone()
         if not row:
             raise HTTPException(404, "Checkout inexistente")
         if row["estado"] != "uncertain" or row["venta_id"] is not None:
             raise HTTPException(409, "Solo se liberan reservas inciertas sin venta registrada")
+        if row["mp_api"] == "orders_v1":
+            if not row["mp_order_id"]:
+                raise HTTPException(
+                    409, "La orden no tiene ID recuperado; conciliá antes de liberar stock"
+                )
+            orders = _orders_client()
+            resultado = orders.consultar(row["mp_order_id"], checkout_id, row["total"])
+            if resultado.get("estado") == "pending":
+                resultado = orders.cancelar(row["mp_order_id"], checkout_id, row["total"])
+            if resultado.get("estado") in ("cancelled", "expired"):
+                return {**_orders_apply_status(checkout_id, resultado),
+                        "liberacion": "estado_orders_verificado"}
+            if resultado.get("estado") == "approved":
+                _orders_apply_status(checkout_id, resultado)
+                raise HTTPException(
+                    409, "Mercado Pago acreditó la orden; no se puede liberar stock"
+                )
+            raise HTTPException(
+                409, "Mercado Pago no confirmó cancelación/expiración por ID; reserva retenida"
+            )
         from services.mercadopago_service import mp_service
 
         antes = mp_service.verificar_pago_referencia(checkout_id, row["total"])
