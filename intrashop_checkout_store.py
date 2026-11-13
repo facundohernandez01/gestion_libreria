@@ -30,8 +30,17 @@ def ensure_schema(conn):
         items_json TEXT NOT NULL,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
-        venta_id INTEGER UNIQUE
+        venta_id INTEGER UNIQUE,
+        qr_close_status TEXT NOT NULL DEFAULT 'not_checked',
+        qr_close_checked_at INTEGER
     )""")
+    # Migración aditiva para instalaciones anteriores.
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_checkouts)")}
+    if "qr_close_status" not in cols:
+        conn.execute("ALTER TABLE intrashop_checkouts "
+                     "ADD COLUMN qr_close_status TEXT NOT NULL DEFAULT 'not_checked'")
+    if "qr_close_checked_at" not in cols:
+        conn.execute("ALTER TABLE intrashop_checkouts ADD COLUMN qr_close_checked_at INTEGER")
     conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_reservas (
         checkout_id TEXT NOT NULL REFERENCES intrashop_checkouts(id),
         producto_id INTEGER NOT NULL,
@@ -88,6 +97,20 @@ def reserve(conn, checkout_id, totem_id, items, total):
 def set_status(conn, checkout_id, status, venta_id=None):
     conn.execute("""UPDATE intrashop_checkouts SET estado=?, updated_at=?,
         venta_id=COALESCE(?,venta_id) WHERE id=?""", (status,int(time.time()),venta_id,checkout_id))
+
+
+QR_CLOSE_STATES = frozenset({"not_checked", "closed", "not_active", "different_order", "uncertain"})
+
+
+def set_qr_close_status(conn, checkout_id, state):
+    """Solo registra evidencia del QR; no cambia el estado de cobro ni reservas."""
+    if state not in QR_CLOSE_STATES:
+        raise ValueError("Estado de cierre QR inválido")
+    conn.execute(
+        "UPDATE intrashop_checkouts SET qr_close_status=?, qr_close_checked_at=?, updated_at=? "
+        "WHERE id=?",
+        (state, int(time.time()), int(time.time()), checkout_id),
+    )
 
 
 def available(conn, producto_id):
