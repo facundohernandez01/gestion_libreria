@@ -89,3 +89,36 @@ def test_reserva_y_venta_simultaneas_no_sobrevenden(tmp_path):
     with sqlite3.connect(ruta) as conn:
         conn.row_factory = sqlite3.Row
         assert checkout.available(conn, producto) >= 0
+
+
+def test_reserva_rechaza_productos_duplicados_sin_guardar_checkout(tmp_path):
+    ruta, producto, _ = _preparar(tmp_path)
+    with sqlite3.connect(ruta) as conn:
+        conn.row_factory = sqlite3.Row
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            checkout.reserve(conn, "duplicado", "totem-test", [
+                {"producto_id": producto, "cantidad": 3, "descripcion": "Producto"},
+                {"producto_id": producto, "cantidad": 3, "descripcion": "Producto"},
+            ], 60)
+        except ValueError:
+            conn.rollback()
+        else:
+            raise AssertionError("Se aceptaron líneas duplicadas")
+    with sqlite3.connect(ruta) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM intrashop_checkouts WHERE id='duplicado'"
+        ).fetchone()[0] == 0
+
+
+def test_pago_incierto_mantiene_reserva(tmp_path):
+    ruta, producto, caja = _preparar(tmp_path)
+    _reservar(ruta, producto, "incierto", 4)
+    with sqlite3.connect(ruta) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        checkout.set_status(conn, "incierto", "uncertain")
+        conn.commit()
+    db = DatabaseManager(ruta)
+    assert db.crear_venta(caja, [
+        {"producto_id": producto, "cantidad": 2, "precio_unitario": 10}
+    ]) == (0, False)
