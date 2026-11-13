@@ -685,23 +685,67 @@ def _reconcile_checkout_impl(checkout_id: str):
             "message":result.get("message","")}
 
 
+def _recover_checkout_after_restart(checkout_id: str) -> dict:
+    """Recupera un checkout sin cerrar el QR de otra referencia ni liberar stock.
+
+    Antes y después de un cierre consulta pagos aprobados. Si Mercado Pago
+    no puede probar el cobro, el estado sigue 'uncertain'.
+    """
+    with _reconcile_lock:
+        if checkout_id in _reconciling:
+            return {"estado": "processing", "message": "Conciliación en curso"}
+        _reconciling.add(checkout_id)
+    try:
+        result = _reconcile_checkout_impl(checkout_id)
+        if result.get("estado") != "uncertain":
+            return result
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT estado,pos_external_id,store_external_id,qr_close_status "
+                "FROM intrashop_checkouts WHERE id=?",
+                (checkout_id,),
+            ).fetchone()
+        if not row or row["estado"] != "uncertain":
+            return result
+        # Si MP ya confirmó el cierre anteriormente, no ejecutar otro
+        # DELETE contra el POS: podría haber un checkout nuevo activo.
+        if row["qr_close_status"] == "closed":
+            return {**result, "qr_close_status": "closed"}
+        cierre = _cerrar_qr_checkout(
+            checkout_id, pos_ext=row["pos_external_id"],
+            store_ext=row["store_external_id"],
+        )
+        # Entre la consulta inicial y el DELETE puede haberse acreditado
+        # el pago. Repetir la verificación antes de terminar la recuperación.
+        result = _reconcile_checkout_impl(checkout_id)
+        return {**result, "qr_close_status": cierre["estado"]}
+    finally:
+        with _reconcile_lock:
+            _reconciling.discard(checkout_id)
+
+
 def reconcile_pending_after_startup() -> None:
-    """Revisa operaciones retenidas, sin liberar reservas por ausencia de pago."""
+    """Recuperación tras reinicio: conciliación + cierre dirigido por referencia.
+
+    Nunca clasificar pagos ausentes por una búsqueda vacía; no liberar
+    reservas ni restaurar stock salvo con evidencia verificable.
+    """
     try:
         with _connect() as conn:
             checkout_store.ensure_schema(conn)
             ids = [row["id"] for row in conn.execute(
                 "SELECT id FROM intrashop_checkouts "
-                "WHERE estado IN ('uncertain','paid') ORDER BY created_at LIMIT 100"
+                "WHERE estado IN ('uncertain','paid') ORDER BY created_at LIMIT 250"
             )]
         for checkout_id in ids:
             try:
-                # La ruta interna conserva el bloqueo anti-conciliación
-                # duplicada y no libera stock por ausencia de respuesta.
-                result = reconcile_checkout(checkout_id, operador="POS_SERVER_STARTUP")
-                logger.info("Conciliación inicial %s: %s", checkout_id, result.get("estado"))
+                result = _recover_checkout_after_restart(checkout_id)
+                logger.info(
+                    "Recuperación inicial checkout %s: %s, cierre QR=%s",
+                    checkout_id, result.get("estado"), result.get("qr_close_status", "sin_dato"),
+                )
             except Exception:
-                logger.exception("Error conciliando checkout %s en arranque", checkout_id)
+                logger.exception("Error recuperando checkout %s en arranque", checkout_id)
     except Exception:
         logger.exception("No se pudo consultar la cola de conciliación inicial")
 
