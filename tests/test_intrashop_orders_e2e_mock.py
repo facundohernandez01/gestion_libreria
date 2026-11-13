@@ -237,7 +237,10 @@ def test_checkout_http_selecciona_orders_v1_solo_con_flag(database, monkeypatch)
     )
     assert result["mp_api"] == "orders_v1"
     assert event.wait(5)
-    assert calls == [(result["checkout_id"], 50.0)]
+    assert calls == [(result["checkout_id"], result["total"])]
+    assert result["total"] == sum(
+        item["precio_unitario"] * item["cantidad"] for item in result["items"]
+    )
     with database[0]() as conn:
         row = conn.execute(
             "SELECT mp_api,estado FROM intrashop_checkouts WHERE id=?",
