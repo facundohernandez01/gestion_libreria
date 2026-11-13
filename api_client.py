@@ -312,3 +312,35 @@ class ApiClient:
         )
         respuesta.raise_for_status()
         return respuesta.json()
+
+
+    def exportar_backup_servidor(self, destino):
+        """Descarga una copia consistente del POS Server, nunca de SQLite local."""
+        from pathlib import Path
+        import os
+        import tempfile
+        ruta = Path(destino).expanduser().resolve()
+        ruta.parent.mkdir(parents=True, exist_ok=True)
+        with httpx.stream(
+            "GET", self.base_url + "/admin/backups/exportar",
+            headers=self._admin_headers(), timeout=180,
+        ) as respuesta:
+            respuesta.raise_for_status()
+            with tempfile.NamedTemporaryFile(
+                mode="wb", dir=str(ruta.parent), prefix=".backup-pos-", delete=False
+            ) as temporal:
+                temporal_path = Path(temporal.name)
+                try:
+                    for bloque in respuesta.iter_bytes(chunk_size=1024 * 1024):
+                        temporal.write(bloque)
+                except BaseException:
+                    temporal_path.unlink(missing_ok=True)
+                    raise
+        try:
+            from services.backup_service import validar_backup
+            info = validar_backup(temporal_path)
+            os.replace(temporal_path, ruta)
+            info["destino"] = str(ruta)
+            return info
+        finally:
+            temporal_path.unlink(missing_ok=True)
