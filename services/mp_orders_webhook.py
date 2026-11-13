@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import re
+import time
 
 
 def verify_orders_signature(
@@ -22,6 +23,11 @@ def verify_orders_signature(
             fields[key.strip()] = value.strip()
     ts, given = fields.get("ts", ""), fields.get("v1", "")
     if not re.fullmatch(r"\d{10,16}", ts) or not re.fullmatch(r"[a-fA-F0-9]{64}", given):
+        return False
+    # Rechazar replays fuera de la ventana habitual del SDK (5 min).
+    # La firma puede traer timestamp en segundos o milisegundos.
+    instant = int(ts) / (1000 if len(ts) > 10 else 1)
+    if abs(time.time() - instant) > 300:
         return False
     manifest = f"id:{data_id};request-id:{request_id};ts:{ts};"
     expected = hmac.new(
