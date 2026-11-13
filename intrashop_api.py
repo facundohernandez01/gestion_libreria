@@ -392,8 +392,9 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
 def recover_interrupted_checkouts() -> int:
     """Al iniciar, inmoviliza checkouts cuyo worker ya no existe.
 
-    No consulta Mercado Pago ni presume ausencia de pago. Conserva las reservas
-    y exige conciliación explícita antes de liberar stock o registrar venta.
+    Libera solo las reservas previas al primer intento remoto ('reserved').
+    Los demás estados pudieron crear un QR y retienen stock hasta la
+    verificación del pago por referencia.
     """
     with _connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -408,16 +409,21 @@ def recover_interrupted_checkouts() -> int:
                 operador TEXT NOT NULL, accion TEXT NOT NULL,
                 fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
             for row in rows:
-                checkout_store.set_status(conn, row["id"], "uncertain")
+                # 'reserved' se guarda antes de lanzar el worker, cuyo
+                # primer paso persiste 'creating' ANTES del PUT remoto.
+                # El proceso anterior no llegó a intentar crear un QR.
+                nuevo_estado = "cancelled" if row["estado"] == "reserved" else "uncertain"
+                checkout_store.set_status(conn, row["id"], nuevo_estado)
                 conn.execute(
                     "INSERT INTO intrashop_auditoria(checkout_id,operador,accion) "
                     "VALUES (?,?,?)",
                     (row["id"], "POS_SERVER_STARTUP",
-                     "RECUPERACION_REINICIO_" + row["estado"].upper()),
+                     "RECUPERACION_REINICIO_" + row["estado"].upper() +
+                     ("_SIN_QR" if nuevo_estado == "cancelled" else "")),
                 )
         conn.commit()
     if rows:
-        logger.warning("%d checkouts interrumpidos retenidos para conciliación", len(rows))
+        logger.warning("%d checkouts interrumpidos recuperados (sin QR o a conciliar)", len(rows))
     return len(rows)
 
 
