@@ -229,6 +229,24 @@ def _save_internal_receipt(venta_id: int, cart: list[dict], total: float, job_id
         logger.exception("No se pudo guardar el comprobante interno de IntraShop")
 
 
+def _cerrar_qr_checkout(checkout_id: str, pos_ext: str, store_ext: str) -> dict:
+    """Cierra solo el QR de esta referencia y guarda el resultado auditable.
+
+    La evidencia de cierre nunca equivale a evidencia de ausencia de pago.
+    """
+    from services.mercadopago_service import mp_service
+
+    cierre = mp_service.cerrar_orden_referencia(
+        checkout_id, pos_ext=pos_ext, store_ext=store_ext
+    )
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        checkout_store.ensure_schema(conn)
+        checkout_store.set_qr_close_status(conn, checkout_id, cierre["estado"])
+        conn.commit()
+    return cierre
+
+
 def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
     from services.mercadopago_service import mp_service
     try:
@@ -253,7 +271,7 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             # Un timeout en PUT no prueba que MP no haya creado el QR.
             # Intentar cerrar únicamente si la orden remota tiene
             # exactamente la referencia de este checkout.
-            cierre = mp_service.cerrar_orden_referencia(
+            cierre = _cerrar_qr_checkout(
                 job_id, pos_ext=pos_ext, store_ext=store_ext
             )
             verification = mp_service.verificar_pago_referencia(job_id, total)
@@ -291,7 +309,7 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             # Cancelar la visualización no implica que Mercado Pago haya anulado el cobro.
             # Consultar la referencia del pago después de cerrar la orden evita
             # perder una venta aprobada justo durante la cancelación.
-            cierre = mp_service.cerrar_orden_referencia(
+            cierre = _cerrar_qr_checkout(
                 job_id, pos_ext=pos_ext, store_ext=store_ext
             )
             verification = mp_service.verificar_pago_referencia(job_id, total)
@@ -314,7 +332,7 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             return
         if not paid:
             # El timeout de polling no cierra automáticamente el QR en Mercado Pago.
-            cierre = mp_service.cerrar_orden_referencia(
+            cierre = _cerrar_qr_checkout(
                 job_id, pos_ext=pos_ext, store_ext=store_ext
             )
             verification = mp_service.verificar_pago_referencia(job_id, total)
@@ -620,7 +638,8 @@ def pending_checkouts(operador: str = Depends(require_config)):
     with _connect() as conn:
         checkout_store.ensure_schema(conn)
         return [dict(row) for row in conn.execute("""SELECT id,totem_id,pos_external_id,
-            estado,total,created_at,updated_at FROM intrashop_checkouts
+            estado,total,created_at,updated_at,qr_close_status,qr_close_checked_at
+            FROM intrashop_checkouts
             WHERE estado NOT IN ('completed','cancelled','failed')
             ORDER BY created_at DESC LIMIT 100""")]
 
