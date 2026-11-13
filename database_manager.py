@@ -873,6 +873,41 @@ class DatabaseManager:
                 logger.warning("no se puede eliminar producto %s: tiene movimientos", producto_id)
                 return False
 
+    def ajustar_stock_absoluto(self, producto_id: int, nuevo_stock: int, stock_esperado: int, observaciones: str = "") -> bool:
+        """Ajuste absoluto con control optimista de concurrencia y auditoría."""
+        if int(nuevo_stock) < 0 or int(stock_esperado) < 0:
+            return False
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                fila = conn.execute(
+                    "SELECT stock_actual FROM productos WHERE id=?", (int(producto_id),)
+                ).fetchone()
+                if fila is None or int(fila["stock_actual"]) != int(stock_esperado):
+                    conn.rollback()
+                    return False
+                anterior = int(fila["stock_actual"])
+                nuevo = int(nuevo_stock)
+                if anterior != nuevo:
+                    conn.execute(
+                        "UPDATE productos SET stock_actual=?, fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?",
+                        (nuevo, int(producto_id)),
+                    )
+                    conn.execute(
+                        """INSERT INTO movimientos_stock
+                           (producto_id, tipo, cantidad, stock_anterior, stock_nuevo,
+                            referencia_id, observaciones, usuario)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (int(producto_id), "ajuste", abs(nuevo - anterior), anterior,
+                         nuevo, None, observaciones or "Ajuste manual", self._usuario()),
+                    )
+                conn.commit()
+                return True
+            except Exception:
+                conn.rollback()
+                logger.exception("ajustar_stock_absoluto")
+                return False
+
     def actualizar_stock(
         self,
         producto_id: int,
