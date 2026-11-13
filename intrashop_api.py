@@ -684,9 +684,10 @@ async def webhook_mp_orders(request: Request, background_tasks: BackgroundTasks)
     secret = os.getenv("MP_ORDERS_WEBHOOK_SECRET", "").strip()
     if not secret:
         raise HTTPException(503, "Webhook de Orders sin firma secreta configurada")
-    data_id = (request.query_params.get("data.id") or "").strip()
-    request_id = (request.headers.get("x-request-id") or "").strip()
-    signature = (request.headers.get("x-signature") or "").strip()
+    # Los campos firmados se verifican sin normalizarlos.
+    data_id = request.query_params.get("data.id") or ""
+    request_id = request.headers.get("x-request-id") or ""
+    signature = request.headers.get("x-signature") or ""
     if (
         not data_id or len(data_id) > 100 or
         not verify_orders_signature(secret, data_id, request_id, signature)
