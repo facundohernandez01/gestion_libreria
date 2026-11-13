@@ -344,3 +344,12 @@ class ApiClient:
             return info
         finally:
             temporal_path.unlink(missing_ok=True)
+
+
+    def ajustar_stock_absoluto(self, producto_id, nuevo_stock, stock_esperado, observaciones=""):
+        resultado = self._admin_request(
+            "POST", f"/productos/{int(producto_id)}/stock-absoluto",
+            json={"nuevo_stock": int(nuevo_stock), "stock_esperado": int(stock_esperado),
+                  "observaciones": observaciones},
+        )
+        return bool(resultado["ok"])
