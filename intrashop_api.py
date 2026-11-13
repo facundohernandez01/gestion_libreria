@@ -245,6 +245,9 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             with _jobs_lock:
                 _jobs[job_id].update(status="cancelled", message="Pedido cancelado antes de abrir el QR.")
             return
+        # La creación remota puede tardar; cualquier cancelación durante
+        # esta llamada se atiende inmediatamente al regresar, antes de
+        # publicar el QR como disponible para el comprador.
         ok = mp_service.crear_orden(total, pos_ext=pos_ext, store_ext=store_ext, reference=job_id)
         if not ok:
             raise RuntimeError("Mercado Pago no pudo crear la orden. Revisá la configuración del QR.")
@@ -253,9 +256,12 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             checkout_store.set_status(conn, job_id, "waiting")
             conn.commit()
         with _jobs_lock:
-            _jobs[job_id]["status"] = "waiting_payment"
-            _jobs[job_id]["message"] = "Escaneá el QR del local para pagar"
-            _jobs[job_id]["qr_url"] = _jobs[job_id]["qr_url"] or ""
+            if cancel_event.is_set():
+                _jobs[job_id].update(status="cancelling", message="Cerrando QR cancelado durante su creación…")
+            else:
+                _jobs[job_id]["status"] = "waiting_payment"
+                _jobs[job_id]["message"] = "Escaneá el QR del local para pagar"
+                _jobs[job_id]["qr_url"] = _jobs[job_id]["qr_url"] or ""
         # Si el cliente canceló durante el PUT, cerrar inmediatamente sin
         # esperar el ciclo de polling (que podría tardar varios minutos).
         paid = False
