@@ -62,3 +62,50 @@ def test_dos_recepciones_simultaneas_no_duplican_stock(tmp_path):
     with sqlite3.connect(ruta) as conn:
         assert conn.execute("SELECT stock_actual FROM productos WHERE id=?", (producto,)).fetchone()[0] == 5
         assert conn.execute("SELECT COUNT(*) FROM movimientos_stock WHERE producto_id=? AND tipo='ingreso'", (producto,)).fetchone()[0] == 1
+
+
+def test_confirmar_total_tras_recepcion_parcial(tmp_path):
+    ruta, producto, orden, item = _preparar(tmp_path)
+    db = DatabaseManager(ruta)
+    assert db.recibir_orden_compra(orden, {item: 2})[0]
+    assert db.confirmar_orden_compra(orden)[0]
+    assert not db.confirmar_orden_compra(orden)[0]
+    with sqlite3.connect(ruta) as conn:
+        assert conn.execute(
+            "SELECT stock_actual FROM productos WHERE id=?", (producto,)
+        ).fetchone()[0] == 5
+        assert conn.execute(
+            "SELECT cantidad_recibida FROM orden_compra_items WHERE id=?", (item,)
+        ).fetchone()[0] == 5
+
+
+def test_confirmacion_total_y_recepcion_simultaneas_no_duplican(tmp_path):
+    ruta, producto, orden, item = _preparar(tmp_path)
+    barrera = threading.Barrier(2)
+    resultados = []
+
+    def confirmar():
+        db = DatabaseManager(ruta)
+        barrera.wait(timeout=10)
+        resultados.append(db.confirmar_orden_compra(orden)[0])
+
+    def recibir():
+        db = DatabaseManager(ruta)
+        barrera.wait(timeout=10)
+        resultados.append(db.recibir_orden_compra(orden, {item: 5})[0])
+
+    hilos = [threading.Thread(target=confirmar), threading.Thread(target=recibir)]
+    for hilo in hilos:
+        hilo.start()
+    for hilo in hilos:
+        hilo.join(timeout=15)
+        assert not hilo.is_alive()
+    assert sorted(resultados) == [False, True]
+    with sqlite3.connect(ruta) as conn:
+        assert conn.execute(
+            "SELECT stock_actual FROM productos WHERE id=?", (producto,)
+        ).fetchone()[0] == 5
+        assert conn.execute(
+            "SELECT COUNT(*) FROM movimientos_stock WHERE producto_id=? AND tipo='ingreso'",
+            (producto,),
+        ).fetchone()[0] == 1
