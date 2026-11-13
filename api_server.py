@@ -713,3 +713,34 @@ def api_marcar_primer_uso(body: dict, operador: str = Depends(require_config)):
     with _write_lock:
         _gestor_reposicion().marcar_primer_uso(bool(body["activo"]))
     return {"ok": True}
+
+
+# Vista previa de backup en el servidor. No restaura una SQLite mientras
+# FastAPI y los cobros puedan mantener conexiones abiertas.
+# El archivo viaja en el cuerpo HTTP; jamás en parámetros de URL.
+@app.post("/admin/backups/validar")
+def api_validar_backup(
+    payload: bytes = __import__("fastapi").Body(..., media_type="application/octet-stream"),
+    operador: str = Depends(require_config),
+):
+    import tempfile
+    from services.backup_service import validar_backup
+
+    MAX_BACKUP_BYTES = 100 * 1024 * 1024
+    if not payload or len(payload) > MAX_BACKUP_BYTES:
+        raise HTTPException(413, "Backup vacío o superior a 100 MiB")
+    with tempfile.TemporaryDirectory(prefix="pos-backup-preview-") as folder:
+        archivo = Path(folder) / "backup.db"
+        archivo.write_bytes(payload)
+        try:
+            info = validar_backup(archivo)
+        except (ValueError, sqlite3.DatabaseError) as exc:
+            raise HTTPException(422, f"Backup inválido: {exc}") from exc
+    return {
+        "valido": True,
+        "bytes": info["bytes"],
+        "conteos_backup": info["conteos"],
+        "conteos_servidor": _gestor_reposicion().contar_datos(),
+        "restauracion": "offline_obligatoria",
+        "mensaje": "Vista previa solamente. Para aplicar, detener POS Server y usar la herramienta offline.",
+    }
