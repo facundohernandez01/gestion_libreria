@@ -36,16 +36,18 @@ def main() -> int:
     parser.add_argument("--modo", choices=("fusionar", "reemplazar"), default="fusionar")
     parser.add_argument("--aplicar", action="store_true", help="Habilita restauración después de confirmación")
     args = parser.parse_args()
-    backup = args.backup.expanduser().resolve(strict=True)
-    destino = args.db.expanduser().resolve(strict=True)
+    backup_original = args.backup.expanduser()
+    destino_original = args.db.expanduser()
+    if backup_original.is_symlink() or destino_original.is_symlink():
+        parser.error("No se admiten enlaces simbólicos como origen o destino")
+    if not destino_original.is_absolute():
+        parser.error("--db debe ser una ruta absoluta para evitar restaurar otra SQLite")
+    backup = backup_original.resolve(strict=True)
+    destino = destino_original.resolve(strict=True)
     if backup == destino:
         parser.error("Origen y destino son el mismo archivo")
     if not destino.is_file():
         parser.error("La base del servidor no existe")
-    if backup.is_symlink() or destino.is_symlink():
-        parser.error("No se admiten enlaces simbólicos como origen o destino")
-    if not os.path.isabs(str(args.db.expanduser())):
-        parser.error("--db debe ser una ruta absoluta para evitar restaurar otra SQLite")
     print("BACKUP:", backup)
     print("DESTINO:", destino)
     print("MODO:", args.modo)
