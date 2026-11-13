@@ -304,6 +304,17 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                     _jobs[job_id].update(status="expired" if safe_to_release else "cancel_error",
                         message="Orden cerrada sin cobro." if safe_to_release else "Pago sin confirmar. Revisá Mercado Pago antes de reintentar.")
             return
+        # El polling del POS no basta para atribuir un pago a este checkout:
+        # confirmar referencia y monto antes de registrar venta y descontar stock.
+        verification = mp_service.verificar_pago_referencia(job_id, total)
+        if verification["estado"] != "approved":
+            with _jobs_lock:
+                _jobs[job_id].update(
+                    status="cancel_error",
+                    message="El QR indicó un pago, pero no se pudo validar referencia y monto. "
+                            "Reserva retenida hasta conciliar Mercado Pago.",
+                )
+            return
         with _jobs_lock:
             _jobs[job_id].update(status="paid", message="Pago confirmado; registrando venta")
         _finalize_sale(job_id, cart, total)
