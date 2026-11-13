@@ -284,13 +284,13 @@ class ApiClient:
         return self._get(f"/cajas/{int(caja_id)}/gastos")
 
     def contar_datos(self):
-        return self._get("/admin/datos/conteos")
+        return self._admin_request("GET", "/admin/datos/conteos")
 
     def es_primer_uso(self):
-        return self._get("/admin/datos/primer-uso")["activo"]
+        return self._admin_request("GET", "/admin/datos/primer-uso")["activo"]
 
     def marcar_primer_uso(self, activo):
-        return self._post("/admin/datos/primer-uso", {"activo": bool(activo)})
+        return self._admin_request("POST", "/admin/datos/primer-uso", json={"activo": bool(activo)})
 
 
     def validar_backup_servidor(self, archivo):
