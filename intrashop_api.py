@@ -642,6 +642,40 @@ def _reconcile_signed_order_notification(checkout_id: str, order_id: str) -> Non
         logger.exception("No se pudo conciliar notificación Orders %s", checkout_id)
 
 
+def _recover_missing_order_id_from_webhook(checkout_id: str, order_id: str) -> None:
+    """La firma permite descubrir el ID, pero solo un GET lo autoriza."""
+    with _reconcile_lock:
+        if checkout_id in _reconciling:
+            return
+        _reconciling.add(checkout_id)
+    try:
+        row = _orders_row(checkout_id)
+        if not row or row["mp_api"] != "orders_v1":
+            return
+        if row["mp_order_id"] and row["mp_order_id"] != order_id:
+            return
+        if not row["mp_order_id"]:
+            verified = _orders_client().consultar(order_id, checkout_id, row["total"])
+            if verified.get("estado") not in ("approved", "pending", "cancelled", "expired"):
+                return
+            with _connect() as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                latest = conn.execute(
+                    "SELECT estado FROM intrashop_checkouts WHERE id=?",
+                    (checkout_id,),
+                ).fetchone()
+                if not latest or latest["estado"] in ("completed", "cancelled"):
+                    return
+                checkout_store.set_mp_order_id(conn, checkout_id, order_id)
+                conn.commit()
+        _orders_reconcile(checkout_id)
+    except Exception:
+        logger.exception("No se pudo recuperar order_id firmado para checkout %s", checkout_id)
+    finally:
+        with _reconcile_lock:
+            _reconciling.discard(checkout_id)
+
+
 @router.post("/webhooks/mercadopago/orders")
 async def webhook_mp_orders(request: Request, background_tasks: BackgroundTasks):
     """Recibe evento firmado y agenda GET de la order. No modifica pagos por body."""
@@ -686,6 +720,24 @@ async def webhook_mp_orders(request: Request, background_tasks: BackgroundTasks)
         background_tasks.add_task(
             _reconcile_signed_order_notification, row["id"], data_id
         )
+    else:
+        # Si POS Server cayó entre POST y persistencia del order_id,
+        # la firma permite ubicar por referencia. El ID se asocia
+        # ÚNICAMENTE después de consultar la order con credenciales
+        # y verificar importe y referencia.
+        reference = str(payload["data"].get("external_reference") or "")
+        if reference and len(reference) <= 64:
+            with _connect() as conn:
+                pending = conn.execute(
+                    "SELECT id FROM intrashop_checkouts "
+                    "WHERE id=? AND mp_api='orders_v1' AND mp_order_id IS NULL "
+                    "AND estado NOT IN ('completed','cancelled')",
+                    (reference,),
+                ).fetchone()
+            if pending:
+                background_tasks.add_task(
+                    _recover_missing_order_id_from_webhook, reference, data_id
+                )
     return {"ok": True}
 
 
