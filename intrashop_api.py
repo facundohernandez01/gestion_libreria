@@ -641,7 +641,9 @@ def reconcile_pending_after_startup() -> None:
             )]
         for checkout_id in ids:
             try:
-                result = reconcile_checkout(checkout_id, operador="POS_SERVER_STARTUP")
+                # Primero recuperar pagos aprobados, sin cancelar una orden
+                # potencialmente pagada ni liberar reservas por timeout.
+                result = _reconcile_checkout_impl(checkout_id)
                 logger.info("Conciliación inicial %s: %s", checkout_id, result.get("estado"))
             except Exception:
                 logger.exception("Error conciliando checkout %s en arranque", checkout_id)
