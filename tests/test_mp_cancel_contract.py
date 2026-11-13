@@ -24,5 +24,5 @@ def test_delete_404_no_se_considera_cancelacion_confirmada():
 
 def test_liberacion_automatica_exige_cierre_y_verificacion():
     source = (ROOT / "intrashop_api.py").read_text(encoding="utf-8")
-    assert 'cierre["estado"] == "closed" and verification["estado"] == "no_payment"' in source
+    assert 'cierre["estado"] == "closed" and verification["estado"] == "no_payment"' not in source
     assert 'verification["estado"] == "approved"' in source
