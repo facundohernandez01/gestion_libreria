@@ -912,6 +912,61 @@ def pending_checkouts(operador: str = Depends(require_config)):
             ORDER BY created_at DESC LIMIT 100""")]
 
 
+class ResolveMpOrderIn(BaseModel):
+    order_id: str = Field(min_length=8, max_length=64, pattern=r"^ORD[A-Za-z0-9]+$")
+
+
+@router.post("/admin/checkouts/{checkout_id}/resolve-mp-order")
+def resolve_mp_order_id(
+    checkout_id: str, body: ResolveMpOrderIn,
+    operador: str = Depends(require_config),
+):
+    """Recupera ID perdido solo tras GET autenticado con referencia/importe.
+
+    Permite al administrador resolver operaciones creadas justo antes de
+    una caída en la que el POST de MP no devolvió su order_id.
+    """
+    with _reconcile_lock:
+        if checkout_id in _reconciling:
+            raise HTTPException(409, "Otra conciliación ya está en curso")
+        _reconciling.add(checkout_id)
+    try:
+        row = _orders_row(checkout_id)
+        if not row or row["mp_api"] != "orders_v1":
+            raise HTTPException(404, "Checkout Orders API inexistente")
+        if row["estado"] in ("completed", "cancelled"):
+            raise HTTPException(409, "Checkout ya finalizado")
+        if row["mp_order_id"] and row["mp_order_id"] != body.order_id:
+            raise HTTPException(409, "El checkout ya tiene asociada otra order")
+        verification = _orders_client().consultar(body.order_id, checkout_id, row["total"])
+        if verification.get("estado") not in ("approved", "pending", "cancelled", "expired"):
+            raise HTTPException(409, "No se verificó la orden por ID, referencia e importe")
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT estado FROM intrashop_checkouts WHERE id=?", (checkout_id,),
+            ).fetchone()
+            if not current or current["estado"] in ("completed", "cancelled"):
+                raise HTTPException(409, "Checkout ya finalizado durante la validación")
+            checkout_store.set_mp_order_id(conn, checkout_id, body.order_id)
+            conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_auditoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, checkout_id TEXT NOT NULL,
+                operador TEXT NOT NULL, accion TEXT NOT NULL,
+                fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+            conn.execute(
+                "INSERT INTO intrashop_auditoria(checkout_id,operador,accion) VALUES (?,?,?)",
+                (checkout_id, operador, "ASOCIACION_MANUAL_ORDER_ID_VERIFICADO"),
+            )
+            conn.commit()
+        if verification["estado"] in ("approved", "cancelled", "expired"):
+            return _orders_apply_status(checkout_id, verification)
+        return {"estado": "pending", "mp_order_id": body.order_id,
+                "message": "Orden asociada. Volvé a conciliar hasta confirmar su resultado."}
+    finally:
+        with _reconcile_lock:
+            _reconciling.discard(checkout_id)
+
+
 @router.post("/admin/checkouts/{checkout_id}/reconcile")
 def reconcile_checkout(checkout_id: str, operador: str = Depends(require_config)):
     """Evita que la recuperación y un operador concilien el mismo checkout a la vez."""
