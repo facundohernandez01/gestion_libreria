@@ -1,54 +1,80 @@
-# Migración segura de QR IntraShop / POS a Mercado Pago Orders API
+# Mercado Pago QR: circuito IntraShop y migración a Orders API
 
-Estado: **adaptador implementado y probado con HTTP simulado, NO habilitado en producción**.
+Estado: **circuito de código implementado y verificado con SQLite/HTTP simulado**. La nueva Orders API está **desactivada por defecto** y falta validar credenciales, webhooks HTTPS y pagos con una cuenta real de pruebas antes de habilitarla en producción.
 
-El flujo actual usa Instore Orders V2 (legacy), que crea el cobro por `PUT` y devuelve 204 sin `order_id`. El GET por caja no permite consultar un pedido histórico concreto. Por tanto, **no se debe inferir ausencia definitiva de pago de una búsqueda vacía de Payments**, aunque el DELETE del QR haya respondido 204.
+## 1. Compatibilidad con operaciones existentes
 
-Referencias oficiales:
-- https://www.mercadopago.com.ar/developers/es/docs/qr-code/resources/migrate-instore-orders-v2-to-orders
-- https://www.mercadopago.com.ar/developers/es/docs/qr-code/payment-processing
+- La API legacy sigue atendiendo cobros de POS escritorio y checkouts previos de IntraShop.
+- La base incorpora una migración aditiva en `intrashop_checkouts`: `mp_api` (default `legacy`), `mp_order_id` (índice único parcial) y `mp_cancel_requested`.
+- La opción `INTRASHOP_MP_ORDERS_V1=1` solo afecta **nuevos checkouts de los tótems IntraShop**. No cambia pagos abiertos ni la caja del POS escritorio.
+- El carrito, las cantidades y el monto se calculan en POS Server. La reserva de stock permanece mientras MP no confirme un estado terminal.
 
-## Cambios seguros ya activos (legacy)
+## 2. Configuración y habilitación
 
-- Cada cobro QR del POS e IntraShop tiene una referencia única.
-- Antes de finalizar una venta se consulta pago por referencia e importe.
-- Al cancelar se consulta la orden activa del POS y únicamente se elimina si coincide con la referencia.
-- El DELETE legacy utiliza el endpoint **por colector y POS**, sin segmento `stores`.
-- La caída de red, la respuesta 404 o un payment search vacío se consideran incertidumbre, **no éxito de cancelación**.
-- POS Server recupera cobros interrumpidos y reconsulta pagos. Guarda evidencia del cierre en `qr_close_status`; no libera stock si pudo haberse intentado un QR.
-- Las reservas en estado `reserved` sin worker iniciado se pueden cancelar tras reinicio porque el worker persiste `creating` antes del PUT.
-- La liberación manual exige sesión autorizada, confirmación explícita, QR sin orden activa, doble consulta de pagos y auditoría.
+1. Actualizar POS Server y guardar una copia de seguridad de su SQLite.
+2. Verificar que cada tótem esté registrado, con caja abierta y un POS de Mercado Pago exclusivo correctamente asociado a la misma cuenta del token.
+3. Verificar credenciales OAuth o Access Token válidos en el servidor. Nunca enviarlos al frontend ni guardarlos en URLs.
+4. En `.env` del POS Server configurar:
+   ```env
+   MP_ACTIVO=true
+   INTRASHOP_MP_ORDERS_V1=1
+   MP_ORDERS_WEBHOOK_SECRET=LA_FIRMA_SECRETA_DEL_PANEL
+   MP_TIMEOUT_SEG=15
+   MP_POLL_INTERVAL_SEG=5
+   MP_POLL_TIMEOUT_SEG=300
+   ```
+5. Reiniciar POS Server para que cargue las variables de entorno y ejecute migraciones.
+6. Usar inicialmente credenciales de prueba y comprobar el circuito completo antes de operar en producción.
 
-## Nueva Orders API: adaptador aislado
+Para volver a usar el flujo legacy en nuevos checkouts: `INTRASHOP_MP_ORDERS_V1=0` y reiniciar. Los pedidos guardados como `orders_v1` mantienen ese proveedor para conciliaciones.
 
-`services/mp_orders_v1_client.py` contiene `MercadoPagoOrdersV1`:
+## 3. Circuito QR implementado
 
-- `crear(reference, pos_external_id, items, total)` → POST /v1/orders
-- `consultar(order_id, reference, total)` → GET /v1/orders/{order_id}
-- `cancelar(order_id, reference, total)` → POST /v1/orders/{order_id}/cancel y luego GET por ID
+- **Crear:** `POST /v1/orders` con `external_pos_id`, total y referencia única del checkout. Reutiliza una `X-Idempotency-Key` determinística para reintentos de la misma operación.
+- **Persistir:** guarda `mp_order_id` antes de publicar `waiting_payment`. La caja sigue mostrando su QR estático asignado.
+- **Cobrar:** consulta `GET /v1/orders/{order_id}`. Exige ID, referencia, total e importe acreditado de la transacción. El body de un webhook no acredita ninguna venta.
+- **Registrar:** inserta `ventas`, `venta_items`, descuento de productos, `movimientos_stock` y comanda de entrega en una transacción SQLite. Los reintentos no duplican ventas.
+- **Cancelar:** el botón del tótem guarda `mp_cancel_requested`, solicita `POST /v1/orders/{order_id}/cancel` y consulta de nuevo la orden. Solo `canceled/canceled` o `expired/expired` confirmados liberan la reserva.
+- **Incidencia:** una respuesta HTTP incierta, error de red, timeout o estado no acreditado conserva la reserva para conciliación.
+- **Reinicio:** operaciones legacy siguen su procedimiento anterior; las Orders v1 se verifican por ID y, si quedaron abiertas, se cierran por ID. La creación cuyo POST perdió la respuesta solo se reintenta idempotentemente durante una ventana corta de recuperación; después requiere localizar el `order_id` por webhook o un administrador.
 
-Incluye idempotency keys determinísticas por referencia y operación, validación de referencia e importe, credenciales solo en el header Authorization y estados conservadores. Probado con respuestas simuladas en `tests/test_mp_orders_v1_mock.py`.
+## 4. Webhook firmado
 
-**No conectar directamente este adaptador al checkout legacy.** La Orders API crea la orden con ID y necesita persistencia e integración de estado distintas.
+- Ruta FastAPI: `POST /tienda/webhooks/mercadopago/orders`.
+- En Mercado Pago Developers > aplicación > Webhooks, seleccionar **Order (Mercado Pago)** y configurar una URL HTTPS pública a esta ruta. Guardar la firma secreta en `MP_ORDERS_WEBHOOK_SECRET`.
+- Se verifica HMAC-SHA256 con `data.id`, `x-request-id` y `x-signature`, comparación constante y una tolerancia temporal de cinco minutos.
+- Se valida que el ID del body coincida con el parámetro firmado. Solo se concilian IDs asociados a checkouts locales; cada conciliación realiza **GET autenticado** antes de modificar ventas.
+- Si un POST creó la orden pero el ID se perdió por una caída, el webhook firmado puede aportar la referencia. POS Server verifica el ID, referencia y total en MP mediante GET antes de asociarlo.
+- **Un servidor exclusivamente LAN no es alcanzable desde Mercado Pago.** Se necesita una ruta HTTPS expuesta con proxy/túnel o relay seguro. No publicar todo POS Server en Internet. Sin webhook, el polling y la recuperación tras reinicio siguen disponibles, pero no hay notificaciones en tiempo real del exterior.
+- Sin `MP_ORDERS_WEBHOOK_SECRET` el endpoint devuelve 503; firmas inválidas devuelven 401.
 
-## Criterios para activar la nueva integración
+## 5. Recuperación administrativa
 
-1. Añadir columnas `mp_order_id`, `mp_api` y claves de operación a la tabla de checkouts. Conservar `legacy` para registros previos.
-2. Persistir el proveedor elegido antes de crear una orden. Guardar el `order_id` antes de mostrar el QR al comprador.
-3. Si un POST pierde la respuesta por timeout, reintentar **la misma petición** con la misma idempotency key; nunca generar otra referencia ni cambiar el total.
-4. Usar GET /v1/orders/{order_id} más webhook del tópico `orders` verificado en backend. Una orden `processed` con detalle `accredited`, misma referencia e importe, conduce a venta idempotente.
-5. Para cancelar, POST por el `order_id` exacto y luego GET por ese mismo ID. Solo el estado `canceled` confirmado, con referencia e importe correctos, autoriza liberar stock automáticamente. Un `409` de cancelación exige GET: puede significar un pago ya procesado.
-6. Para reinicios, recuperar cada checkout según su campo `mp_api`. No cambiar automáticamente el proveedor de una orden pendiente.
-7. Habilitar mediante opción explícita de configuración únicamente tras probar creación, pago, cancelación durante creación, pago durante cancelación, reinicio y red caída con credenciales de prueba. Verificar webhooks y procesamiento con cuenta real antes de producción.
+Los endpoints siguientes requieren un **Bearer de un administrador POS**, no solo la API key general:
 
-## Ejecutar pruebas automáticas
+- `GET /tienda/admin/checkouts-pending` muestra proveedor (`mp_api`), `mp_order_id`, cancelación pendiente y estado de la reserva.
+- `POST /tienda/admin/checkouts/{id}/reconcile` consulta la order identificada y aplica estados acreditados/cancelados verificados.
+- `POST /tienda/admin/checkouts/{id}/resolve-mp-order` con `{"order_id":"ORD..."}` asocia un ID recuperado del panel de Mercado Pago **solo tras GET autenticado y comprobación de referencia/total**; audita al operador.
+- `POST /tienda/admin/checkouts/{id}/release` exige confirmación del administrador. En Orders v1, la liberación requiere `canceled` o `expired` confirmado mediante GET; si está pendiente, solicita cancelación por ID.
 
-GitHub Actions: `.github/workflows/qr-stock-regression.yml`
+No se permite liberar una reserva por buscar pagos y no encontrar ninguno.
 
-Local:
+## 6. Pruebas y estado de producción
+
+CI: `.github/workflows/qr-stock-regression.yml` (compilación Python y pruebas SQLite/HTTP simuladas).
 
 ```bash
-python -m pytest -q tests/test_mp_orders_v1_mock.py tests/test_mp_qr_network_mock.py tests/test_intrashop_startup_recovery_mock.py tests/test_pos_qr_cancel_static.py
+python -m pytest -q \
+  tests/test_intrashop_orders_e2e_mock.py \
+  tests/test_mp_orders_v1_mock.py \
+  tests/test_mp_orders_webhook.py \
+  tests/test_mp_qr_network_mock.py \
+  tests/test_reservas_intrashop_pos.py
 ```
 
-La nueva Orders API **todavía no cobra ni cancela pedidos reales en IntraShop**. El adaptador no se activa hasta cumplir los criterios anteriores para evitar un cambio accidental de proveedor de pagos sobre un comercio existente.
+**Antes del cambio productivo** validar con la cuenta de pruebas del comercio: QR real escaneado, cobro aprobado, monto con recargo, cancelación antes/durante el POST, intento de pago durante la cancelación, reinicio de POS Server, entrega, webhook HMAC, y operación sin conectividad. Verificar además las credenciales OAuth de cada comercio y el proxy HTTPS.
+
+Fuentes oficiales:
+- https://www.mercadopago.com.ar/developers/es/docs/qr-code/payment-processing
+- https://www.mercadopago.com.ar/developers/es/docs/qr-code/notifications
+- https://www.mercadopago.com.ar/developers/es/docs/qr-code/resources/status-order-transaction
