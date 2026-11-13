@@ -16,7 +16,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from services.backup_service import validar_backup, restaurar_backup, crear_backup_seguridad
+from services.backup_service import validar_backup, restaurar_backup
 
 
 def _conteos(path: Path) -> dict:
@@ -42,11 +42,18 @@ def main() -> int:
         parser.error("Origen y destino son el mismo archivo")
     if not destino.is_file():
         parser.error("La base del servidor no existe")
+    if backup.is_symlink() or destino.is_symlink():
+        parser.error("No se admiten enlaces simbólicos como origen o destino")
+    if not os.path.isabs(str(args.db.expanduser())):
+        parser.error("--db debe ser una ruta absoluta para evitar restaurar otra SQLite")
     print("BACKUP:", backup)
     print("DESTINO:", destino)
     print("MODO:", args.modo)
     print("VALIDACIÓN:", validar_backup(backup)["conteos"])
     print("ACTUAL:", _conteos(destino))
+    if args.modo == "fusionar":
+        print("ADVERTENCIA: fusionar omite productos con el mismo código; NO actualiza su stock, precio ni descripción.")
+        print("Para recuperar exactamente el estado del backup, usá reemplazar con el servidor detenido.")
     if not args.aplicar:
         print("SIMULACIÓN: no se modificó ninguna base. Para aplicar, agregá --aplicar.")
         return 0
@@ -68,6 +75,12 @@ def main() -> int:
             continue
     if abiertos:
         parser.error(f"La base está abierta por procesos {abiertos}. Detené POS Server primero.")
+    # psutil puede no tener permisos para enumerar todos los procesos.
+    # En Linux, comprobar además los puertos del servidor antes de aplicar.
+    if sys.platform.startswith("linux") and os.geteuid() != 0:
+        print("ATENCIÓN: ejecutando sin privilegios; no se garantiza detectar conexiones SQLite de otros usuarios.")
+        if input("Confirmá que detuviste TODOS los POS Server escribiendo DETENIDO: ").strip() != "DETENIDO":
+            return 1
     if input("Escribí RESTAURAR para continuar: ").strip() != "RESTAURAR":
         print("Cancelado; no se modificó la base.")
         return 1
