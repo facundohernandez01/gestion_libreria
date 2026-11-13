@@ -32,7 +32,10 @@ def ensure_schema(conn):
         updated_at INTEGER NOT NULL,
         venta_id INTEGER UNIQUE,
         qr_close_status TEXT NOT NULL DEFAULT 'not_checked',
-        qr_close_checked_at INTEGER
+        qr_close_checked_at INTEGER,
+        mp_api TEXT NOT NULL DEFAULT 'legacy',
+        mp_order_id TEXT,
+        mp_cancel_requested INTEGER NOT NULL DEFAULT 0
     )""")
     # Migración aditiva para instalaciones anteriores.
     cols = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_checkouts)")}
@@ -41,6 +44,17 @@ def ensure_schema(conn):
                      "ADD COLUMN qr_close_status TEXT NOT NULL DEFAULT 'not_checked'")
     if "qr_close_checked_at" not in cols:
         conn.execute("ALTER TABLE intrashop_checkouts ADD COLUMN qr_close_checked_at INTEGER")
+    for name, sql in (
+        ("mp_api", "TEXT NOT NULL DEFAULT 'legacy'"),
+        ("mp_order_id", "TEXT"),
+        ("mp_cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if name not in cols:
+            conn.execute(f"ALTER TABLE intrashop_checkouts ADD COLUMN {name} {sql}")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_intrashop_order_id "
+        "ON intrashop_checkouts(mp_order_id) WHERE mp_order_id IS NOT NULL"
+    )
     conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_reservas (
         checkout_id TEXT NOT NULL REFERENCES intrashop_checkouts(id),
         producto_id INTEGER NOT NULL,
@@ -54,8 +68,10 @@ def binding(conn, terminal_id):
     return conn.execute("SELECT * FROM intrashop_mp_bindings WHERE terminal_id=? AND terminal_type='totem'", (terminal_id,)).fetchone()
 
 
-def reserve(conn, checkout_id, totem_id, items, total):
+def reserve(conn, checkout_id, totem_id, items, total, mp_api="legacy"):
     """Invocar con BEGIN IMMEDIATE; evita sobreventa y cobros simultáneos sobre el mismo QR."""
+    if mp_api not in ("legacy", "orders_v1"):
+        raise ValueError("Proveedor QR desconocido")
     assigned = binding(conn, totem_id)
     if not assigned:
         raise ValueError("Asigná un POS Mercado Pago exclusivo a este tótem desde Ajustes.")
@@ -84,10 +100,10 @@ def reserve(conn, checkout_id, totem_id, items, total):
             raise ValueError("Stock disponible insuficiente: " + item["descripcion"])
     now = int(time.time())
     conn.execute("""INSERT INTO intrashop_checkouts
-        (id,totem_id,pos_external_id,store_external_id,estado,total,items_json,created_at,updated_at)
-        VALUES (?,?,?,?,?,?,?,?,?)""",
+        (id,totem_id,pos_external_id,store_external_id,estado,total,items_json,created_at,updated_at,mp_api)
+        VALUES (?,?,?,?,?,?,?,?,?,?)""",
         (checkout_id,totem_id,assigned["pos_external_id"],assigned["store_external_id"],
-         "reserved",total,json.dumps(items,ensure_ascii=False),now,now))
+         "reserved",total,json.dumps(items,ensure_ascii=False),now,now,mp_api))
     for item in items:
         conn.execute("INSERT INTO intrashop_reservas VALUES (?,?,?)",
                      (checkout_id,item["producto_id"],item["cantidad"]))
@@ -110,6 +126,33 @@ def set_qr_close_status(conn, checkout_id, state):
         "UPDATE intrashop_checkouts SET qr_close_status=?, qr_close_checked_at=?, updated_at=? "
         "WHERE id=?",
         (state, int(time.time()), int(time.time()), checkout_id),
+    )
+
+
+def set_mp_order_id(conn, checkout_id, order_id):
+    """No permite asociar una segunda orden distinta al mismo checkout."""
+    if not order_id:
+        raise ValueError("Falta ID de orden")
+    row = conn.execute(
+        "SELECT mp_api,mp_order_id FROM intrashop_checkouts WHERE id=?",
+        (checkout_id,),
+    ).fetchone()
+    if not row or row["mp_api"] != "orders_v1":
+        raise ValueError("Checkout Orders v1 inexistente")
+    if row["mp_order_id"] and row["mp_order_id"] != order_id:
+        raise ValueError("El checkout ya tiene otra orden Mercado Pago")
+    conn.execute(
+        "UPDATE intrashop_checkouts SET mp_order_id=?,updated_at=? WHERE id=?",
+        (order_id, int(time.time()), checkout_id),
+    )
+
+
+def request_mp_cancel(conn, checkout_id):
+    """Persistir el pedido de cancelación antes de avisar al worker."""
+    conn.execute(
+        "UPDATE intrashop_checkouts SET mp_cancel_requested=1,updated_at=? "
+        "WHERE id=? AND mp_api='orders_v1' AND estado NOT IN ('completed','cancelled')",
+        (int(time.time()), checkout_id),
     )
 
 
