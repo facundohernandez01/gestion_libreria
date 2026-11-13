@@ -762,25 +762,71 @@ class ReleaseRequest(BaseModel):
 
 @router.post("/admin/checkouts/{checkout_id}/release")
 def release_checkout(checkout_id: str, body: ReleaseRequest, operador: str = Depends(require_config)):
-    """Liberación excepcional, auditada; requiere verificar pago manualmente en MP."""
+    """Liberación manual auditada; rechaza pagos aprobados y QR aún abiertos.
+
+    La API legacy no demuestra ausencia definitiva de pago. Por ello
+    mantiene la confirmación explícita del operador y registra su decisión.
+    """
     if body.confirmacion != "VERIFIQUE EN MERCADO PAGO QUE NO EXISTE COBRO":
         raise HTTPException(400, "Confirmación de conciliación requerida")
-    with _connect() as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute("SELECT estado FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
+    with _reconcile_lock:
+        if checkout_id in _reconciling:
+            raise HTTPException(409, "Ya hay una conciliación de este checkout en curso")
+        _reconciling.add(checkout_id)
+    try:
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT estado,total,venta_id,pos_external_id,store_external_id,qr_close_status "
+                "FROM intrashop_checkouts WHERE id=?", (checkout_id,),
+            ).fetchone()
         if not row:
             raise HTTPException(404, "Checkout inexistente")
-        if row["estado"] != "uncertain":
-            raise HTTPException(409, "Solo se pueden liberar reservas pendientes de conciliación")
-        conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_auditoria (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, checkout_id TEXT NOT NULL,
-            operador TEXT NOT NULL, accion TEXT NOT NULL,
-            fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
-        conn.execute("INSERT INTO intrashop_auditoria(checkout_id,operador,accion) VALUES (?,?,?)",
-                     (checkout_id,operador,"LIBERACION_MANUAL_SIN_PAGO_CONFIRMADO"))
-        checkout_store.set_status(conn,checkout_id,"cancelled")
-        conn.commit()
-    return {"ok":True,"estado":"cancelled"}
+        if row["estado"] != "uncertain" or row["venta_id"] is not None:
+            raise HTTPException(409, "Solo se liberan reservas inciertas sin venta registrada")
+        from services.mercadopago_service import mp_service
+
+        antes = mp_service.verificar_pago_referencia(checkout_id, row["total"])
+        if antes["estado"] == "approved":
+            raise HTTPException(409, "Mercado Pago aprobó el cobro; conciliá la venta antes de liberar stock")
+
+        if row["qr_close_status"] != "closed":
+            cierre = _cerrar_qr_checkout(
+                checkout_id, pos_ext=row["pos_external_id"],
+                store_ext=row["store_external_id"],
+            )
+            if cierre["estado"] not in {"closed", "not_active"}:
+                raise HTTPException(
+                    409, "No se confirmó que el QR de este checkout esté cerrado o inactivo",
+                )
+
+        # Reconsultar después del intento de cierre por posibles pagos
+        # aprobados en la ventana entre ambas operaciones.
+        despues = mp_service.verificar_pago_referencia(checkout_id, row["total"])
+        if despues["estado"] == "approved":
+            raise HTTPException(409, "Pago aprobado durante el cierre; conciliá antes de liberar stock")
+
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT estado,venta_id FROM intrashop_checkouts WHERE id=?",
+                (checkout_id,),
+            ).fetchone()
+            if not current or current["estado"] != "uncertain" or current["venta_id"] is not None:
+                raise HTTPException(409, "Checkout modificado durante la conciliación")
+            conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_auditoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, checkout_id TEXT NOT NULL,
+                operador TEXT NOT NULL, accion TEXT NOT NULL,
+                fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+            conn.execute(
+                "INSERT INTO intrashop_auditoria(checkout_id,operador,accion) VALUES (?,?,?)",
+                (checkout_id, operador, "LIBERACION_MANUAL_SIN_PAGO_CONFIRMADO"),
+            )
+            checkout_store.set_status(conn, checkout_id, "cancelled")
+            conn.commit()
+        return {"ok": True, "estado": "cancelled", "liberacion": "manual_auditada"}
+    finally:
+        with _reconcile_lock:
+            _reconciling.discard(checkout_id)
 
 
 class TotemRegisterIn(BaseModel):
