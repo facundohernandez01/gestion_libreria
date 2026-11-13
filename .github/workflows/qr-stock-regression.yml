@@ -1,0 +1,45 @@
+name: QR and stock regression
+
+on:
+  push:
+    branches: [feature/mercadopago-oauth]
+  pull_request:
+    paths:
+      - "intrashop_api.py"
+      - "intrashop_checkout_store.py"
+      - "services/mercadopago_service.py"
+      - "database_manager.py"
+      - "tests/**"
+      - ".github/workflows/qr-stock-regression.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  qr-stock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install lightweight test dependencies
+        run: python -m pip install pytest fastapi requests python-dotenv httpx
+      - name: Compile backend modules and regression tests
+        run: python -m compileall -q intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py database_manager.py tests/
+      - name: Run isolated QR, stock and backup tests
+        env:
+          POS_API_ONLY: "1"
+        run: |
+          python -m pytest -q \
+            tests/test_mp_qr_network_mock.py \
+            tests/test_intrashop_startup_recovery_mock.py \
+            tests/test_mp_cancel_contract.py \
+            tests/test_checkout_cancel_static.py \
+            tests/test_mp_payment_attribution.py \
+            tests/test_reservas_intrashop_pos.py \
+            tests/test_venta_stock_concurrente.py \
+            tests/test_recepcion_concurrente.py \
+            tests/test_stock_absolute.py \
+            tests/test_backup_roundtrip.py
