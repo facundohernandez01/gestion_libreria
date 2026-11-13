@@ -41,6 +41,11 @@ def order(status, detail):
     return {
         "id": ORDER_ID, "external_reference": REFERENCE,
         "total_amount": "100.00", "status": status, "status_detail": detail,
+        "transactions": {"payments": [{
+            "id": "PAY01", "amount": "100.00",
+            "status": "processed" if status == "processed" else status,
+            "status_detail": "accredited" if status == "processed" else detail,
+        }]},
     }
 
 
@@ -78,10 +83,10 @@ def test_respuesta_de_creacion_con_referencia_distinta_es_incierta():
 
 
 @pytest.mark.parametrize("status,detail,result", [
-    ("processed", "accredited", "approved"),
+    ("processed", "processed", "approved"),
     ("canceled", "canceled", "cancelled"),
     ("created", "created", "pending"),
-    ("expired", "expired", "uncertain"),
+    ("expired", "expired", "expired"),
 ])
 def test_consultar_orden_y_estado(status, detail, result):
     fake = FakeHTTP(gets=[response(200, order(status, detail))])
@@ -90,8 +95,8 @@ def test_consultar_orden_y_estado(status, detail, result):
 
 def test_consulta_no_aprueba_otra_referencia_o_importe():
     for data in (
-        {**order("processed", "accredited"), "external_reference": "OTRO"},
-        {**order("processed", "accredited"), "total_amount": "10.00"},
+        {**order("processed", "processed"), "external_reference": "OTRO"},
+        {**order("processed", "processed"), "total_amount": "10.00"},
     ):
         fake = FakeHTTP(gets=[response(200, data)])
         assert client(fake).consultar(ORDER_ID, REFERENCE, 100)["estado"] == "uncertain"
@@ -100,7 +105,7 @@ def test_consulta_no_aprueba_otra_referencia_o_importe():
 def test_cancelacion_409_se_concilia_como_pago_aprobado():
     fake = FakeHTTP(
         posts=[response(409, {"error": "already_processed"})],
-        gets=[response(200, order("processed", "accredited"))],
+        gets=[response(200, order("processed", "processed"))],
     )
     assert client(fake).cancelar(ORDER_ID, REFERENCE, 100)["estado"] == "approved"
     assert fake.calls[0][2]["headers"]["X-Idempotency-Key"]
