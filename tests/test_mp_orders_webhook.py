@@ -68,7 +68,7 @@ def webhook(tmp_path, monkeypatch):
 
 
 def _send(client, order_id="ORDTEST01", secret="SECRET_TEST",
-          body_order="ORDTEST01", signature=True):
+          body_order="ORDTEST01", signature=True, reference=None):
     req = "request-1"
     ts = str(int(time.time() * 1000))
     headers = {"x-request-id": req}
@@ -79,7 +79,8 @@ def _send(client, order_id="ORDTEST01", secret="SECRET_TEST",
         params={"type": "order", "data.id": order_id},
         headers=headers,
         json={"type": "order", "action": "order.processed",
-              "data": {"id": body_order, "status": "processed"}},
+              "data": {"id": body_order, "status": "processed",
+                       "external_reference": reference}},
     )
 
 
@@ -107,3 +108,67 @@ def test_webhook_firmado_de_orden_desconocida_no_toca_ventas(webhook):
     client, reconciliations = webhook
     assert _send(client, order_id="ORDUNKNOWN", body_order="ORDUNKNOWN").status_code == 200
     assert reconciliations == []
+
+
+def test_webhook_con_referencia_firmada_recupera_id_perdido(webhook, monkeypatch):
+    client, reconciliations = webhook
+    with api._connect() as conn:
+        conn.execute(
+            "UPDATE intrashop_checkouts SET mp_order_id=NULL WHERE id='checkout-1'"
+        )
+        conn.commit()
+    recovered = []
+    monkeypatch.setattr(
+        api, "_recover_missing_order_id_from_webhook",
+        lambda ref, order_id: recovered.append((ref, order_id)),
+    )
+    assert _send(client, reference="checkout-1").status_code == 200
+    assert recovered == [("checkout-1", "ORDTEST01")]
+    assert reconciliations == []
+
+
+def test_webhook_no_asocia_order_sin_get_verificado(webhook, monkeypatch):
+    client, reconciliations = webhook
+    with api._connect() as conn:
+        conn.execute(
+            "UPDATE intrashop_checkouts SET mp_order_id=NULL WHERE id='checkout-1'"
+        )
+        conn.commit()
+
+    class FakeOrders:
+        def consultar(self, order_id, reference, total):
+            return {"estado": "uncertain", "motivo": "Importe incorrecto"}
+
+    monkeypatch.setattr(api, "_orders_client", lambda: FakeOrders())
+    api._recover_missing_order_id_from_webhook("checkout-1", "ORDTEST01")
+    with api._connect() as conn:
+        assert conn.execute(
+            "SELECT mp_order_id FROM intrashop_checkouts WHERE id='checkout-1'"
+        ).fetchone()[0] is None
+
+
+def test_webhook_recupera_id_tras_get_valido(webhook, monkeypatch):
+    client, reconciliations = webhook
+    with api._connect() as conn:
+        conn.execute(
+            "UPDATE intrashop_checkouts SET mp_order_id=NULL WHERE id='checkout-1'"
+        )
+        conn.commit()
+
+    class FakeOrders:
+        def consultar(self, order_id, reference, total):
+            assert (order_id, reference, total) == ("ORDTEST01", "checkout-1", 50)
+            return {"estado": "pending", "order_id": order_id}
+
+    done = []
+    monkeypatch.setattr(api, "_orders_client", lambda: FakeOrders())
+    monkeypatch.setattr(
+        api, "_orders_reconcile",
+        lambda ref: done.append(ref) or {"estado": "pending"},
+    )
+    api._recover_missing_order_id_from_webhook("checkout-1", "ORDTEST01")
+    with api._connect() as conn:
+        assert conn.execute(
+            "SELECT mp_order_id FROM intrashop_checkouts WHERE id='checkout-1'"
+        ).fetchone()[0] == "ORDTEST01"
+    assert done == ["checkout-1"]
