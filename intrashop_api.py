@@ -274,7 +274,8 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             # perder una venta aprobada justo durante la cancelación.
             closed = mp_service.cancelar_orden(pos_ext=pos_ext, store_ext=store_ext)
             verification = mp_service.verificar_pago_referencia(job_id, total)
-            confirmed = paid or verification["estado"] == "approved"
+            # El polling por POS no prueba por sí solo referencia y monto.
+            confirmed = verification["estado"] == "approved"
             if confirmed:
                 with _jobs_lock:
                     _jobs[job_id].update(status="paid", message="Pago confirmado durante la cancelación; registrando venta")
