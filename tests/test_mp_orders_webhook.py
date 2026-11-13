@@ -22,13 +22,17 @@ def _signature(secret, order_id, request_id, timestamp):
 
 
 def test_firma_contrato_hmac():
-    secret, order_id, req, ts = "SECRET_TEST", "ORDTEST01", "request-1", "1763000000000"
+    secret, order_id, req, ts = "SECRET_TEST", "ORDTEST01", "request-1", str(int(time.time() * 1000))
     sig = _signature(secret, order_id, req, ts)
     assert verify_orders_signature(secret, order_id, req, sig)
     assert not verify_orders_signature(secret, order_id, "alterado", sig)
     assert not verify_orders_signature(secret, "ORDOTRA", req, sig)
     assert not verify_orders_signature("OTRA_CLAVE", order_id, req, sig)
     assert not verify_orders_signature(secret, order_id, req, "ts=1,v1=123")
+    old_ts = str(int((time.time() - 900) * 1000))
+    assert not verify_orders_signature(
+        secret, order_id, req, _signature(secret, order_id, req, old_ts)
+    )
 
 
 @pytest.fixture
