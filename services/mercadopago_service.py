@@ -536,7 +536,7 @@ class MercadoPagoService:
 
     # ---------- util ----------
     @staticmethod
-    def _log(msg: str, cb) -> None:
+    def _log(msg: str, cb=None) -> None:
         if cb:
             try:
                 cb(msg)
