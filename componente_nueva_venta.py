@@ -706,8 +706,13 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         on_confirmar()
 
     def abortar(e=None):
+        if pagando_qr["activo"]:
+            # ABORTAR también cancela el QR remoto, no solo el diálogo.
+            cancelar = getattr(pagar_con_qr, "_cancelar", None)
+            if callable(cancelar):
+                cancelar()
+            return
         pagando_qr["cancelado"] = True
-        pagando_qr["activo"] = False
         _unregister_shortcuts()
         _cerrar_dialogo()
 
@@ -767,39 +772,40 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
         if not (token and store_ext and pos_ext):
             mostrar_error("MP sin configurar: complete .env o Ajustes → Mercado Pago")
             return
+        import threading
+        import uuid
+
         items_qr = _aplicar_recargo(carrito, recargo_mp) if recargo_mp else carrito
         total = round(sum(i["subtotal"] for i in items_qr), 2)
+        referencia = uuid.uuid4().hex
+        cancel_event = threading.Event()
         pagando_qr.update(activo=True, cancelado=False)
         qr_spin.visible = True
-        qr_estado.value = (f"Creando orden por ${_fmt_ars(total)} (incluye recargo {recargo_mp:g}%)… "
-                           if recargo_mp else
-                           f"Creando orden por ${_fmt_ars(total)}… El cliente debe escanear el QR estático.")
-        col_izquierda.content = ft.Container(
-            content=ft.Column([qr_spin, qr_estado,
-                               ft.TextButton("CANCELAR COBRO QR", icon=ft.Icons.CANCEL,
-                                             on_click=lambda _: cancelar_qr())],
-                              horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-            padding=10, border_radius=8)
+        qr_estado.value = f"Preparando orden por ${_fmt_ars(total)}…"
+        btn_cancelar_qr = ft.TextButton(
+            "CANCELAR COBRO QR", icon=ft.Icons.CANCEL,
+            on_click=lambda _: cancelar_qr(),
+        )
+        detalle = ft.Column([
+            ft.Text("Pedido Mercado Pago", weight=ft.FontWeight.BOLD),
+            *[
+                ft.Text(
+                    f"{item['descripcion']} × {item['cantidad']} · ${_fmt_ars(item['subtotal'])}",
+                    size=12,
+                )
+                for item in items_qr
+            ],
+            ft.Text(f"TOTAL QR: ${_fmt_ars(total)}", weight=ft.FontWeight.BOLD),
+            qr_spin,
+            qr_estado,
+            btn_cancelar_qr,
+        ], spacing=5, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+        col_izquierda.content = ft.Container(content=detalle, padding=10, border_radius=8)
         page.update()
 
-        def proceso():
-            ok = mp_service.crear_orden(total, cb=lambda m: _set_qr(m),
-                                        pos_ext=pos_ext, store_ext=store_ext)
-            if not ok:
-                _fin_qr("Error al crear la orden en Mercado Pago")
-                return
-            ok = mp_service.verificar_estado(cb=lambda m: _set_qr(m),
-                                             cancelar=lambda: pagando_qr["cancelado"],
-                                             pos_ext=pos_ext)
-            if ok and not pagando_qr["cancelado"]:
-                pagando_qr["activo"] = False
-                col_izquierda.content = log_box
-                page.update()
-                confirmar_venta(metodo_pago="mercadopago_qr", emitir_factura=auto_qr)
-            elif not pagando_qr["cancelado"]:
-                _fin_qr("Tiempo agotado o pago no detectado")
-
         def _set_qr(m):
+            if pagando_qr["cancelado"]:
+                return
             qr_estado.value = m
             try:
                 page.update()
@@ -808,20 +814,91 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
 
         def _fin_qr(m):
             pagando_qr["activo"] = False
+            qr_spin.visible = False
             col_izquierda.content = log_box
-            page.update()
+            try:
+                page.update()
+            except Exception:
+                pass
             mostrar_error(m)
 
-        def cancelar_qr():
-            pagando_qr["cancelado"] = True
+        def _registrar_pago_confirmado():
+            # No declarar un cobro cancelado si MP lo aprobó durante el cierre.
             pagando_qr["activo"] = False
-            col_izquierda.content = log_box
             qr_spin.visible = False
+            col_izquierda.content = log_box
             page.update()
-            mostrar_error("Pago QR cancelado")
+            confirmar_venta(metodo_pago="mercadopago_qr", emitir_factura=auto_qr)
 
-        # exponer cancelar para el botón creado arriba
-        pagar_con_qr._cancelar = cancelar_qr  # type: ignore
+        def _cerrar_y_verificar():
+            # Nunca cancelar a ciegas la orden de otra referencia en el POS.
+            cierre = mp_service.cerrar_orden_referencia(
+                referencia, pos_ext=pos_ext, store_ext=store_ext
+            )
+            pago = mp_service.verificar_pago_referencia(referencia, total)
+            if pago["estado"] == "approved":
+                _registrar_pago_confirmado()
+            elif cierre["estado"] == "closed":
+                _fin_qr(
+                    "Mercado Pago cerró el QR. No se confirmó un pago para esta referencia; "
+                    "verificá el movimiento antes de generar otro cobro."
+                )
+            else:
+                _fin_qr(
+                    f"No se pudo confirmar el cierre del QR ({cierre['estado']}). "
+                    "Revisá Mercado Pago antes de reintentar el cobro."
+                )
+
+        def proceso():
+            try:
+                creado = mp_service.crear_orden(
+                    total, cb=_set_qr, pos_ext=pos_ext,
+                    store_ext=store_ext, reference=referencia,
+                )
+                if not creado:
+                    # Un timeout en PUT podría haber creado la orden remota.
+                    _cerrar_y_verificar()
+                    return
+                if cancel_event.is_set():
+                    _cerrar_y_verificar()
+                    return
+                pagado = mp_service.verificar_estado(
+                    cb=_set_qr, cancelar=cancel_event.is_set,
+                    cancel_event=cancel_event, pos_ext=pos_ext,
+                    reference=referencia,
+                )
+                if cancel_event.is_set() or not pagado:
+                    _cerrar_y_verificar()
+                    return
+                pago = mp_service.verificar_pago_referencia(referencia, total)
+                if pago["estado"] == "approved":
+                    _registrar_pago_confirmado()
+                else:
+                    # El polling por POS no demuestra que este checkout esté pagado.
+                    _cerrar_y_verificar()
+            except Exception:
+                try:
+                    _cerrar_y_verificar()
+                except Exception:
+                    _fin_qr(
+                        "Error durante el cierre del QR. Verificá Mercado Pago "
+                        "antes de reintentar el cobro."
+                    )
+
+        def cancelar_qr():
+            if not pagando_qr["activo"] or cancel_event.is_set():
+                return
+            pagando_qr["cancelado"] = True
+            cancel_event.set()
+            btn_cancelar_qr.disabled = True
+            qr_estado.value = "Cancelando la orden en Mercado Pago…"
+            try:
+                page.update()
+            except Exception:
+                pass
+
+        # La cancelación se solicita; el worker confirma el cierre remoto.
+        pagar_con_qr._cancelar = cancelar_qr  # type: ignore[attr-defined]
         page.run_thread(proceso)
 
     acciones = [ft.TextButton("ABORTAR", on_click=abortar, height=44)]
