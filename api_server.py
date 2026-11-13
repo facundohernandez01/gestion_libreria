@@ -45,6 +45,7 @@ _flet_web_montado = False
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
     app_manager = None
+    orders_reconcile_stop = threading.Event()
     if _flet_web_montado:
         try:
             from flet_web.fastapi import app_manager
@@ -68,12 +69,22 @@ async def _lifespan(_app: FastAPI):
                 name="intrashop-startup-reconciliation",
                 daemon=True,
             ).start()
+            # La conciliación continua no depende de disponer de
+            # webhook público (POS Server puede operar solo en LAN).
+            from intrashop_api import reconcile_orders_v1_periodically
+            threading.Thread(
+                target=reconcile_orders_v1_periodically,
+                args=(orders_reconcile_stop,),
+                name="intrashop-orders-v1-reconciliation",
+                daemon=True,
+            ).start()
         except (sqlite3.Error, OSError) as exc:
             logging.getLogger(__name__).error(
                 "No se pudo recuperar checkouts interrumpidos: %s", exc)
             raise
         yield
     finally:
+        orders_reconcile_stop.set()
         if app_manager is not None:
             try:
                 await app_manager.shutdown()
