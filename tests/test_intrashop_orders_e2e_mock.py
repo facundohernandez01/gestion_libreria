@@ -62,6 +62,8 @@ def database(tmp_path, monkeypatch):
             "VALUES(CURRENT_TIMESTAMP,0,'abierta')"
         )
         store.ensure_schema(conn)
+        from intrashop_entregas import ensure_schema as ensure_deliveries
+        ensure_deliveries(conn)
         conn.execute(
             "INSERT INTO intrashop_mp_bindings "
             "(terminal_id,terminal_type,pos_external_id,store_external_id,qr_url) "
