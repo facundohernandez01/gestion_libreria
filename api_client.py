@@ -294,15 +294,33 @@ class ApiClient:
 
 
     def validar_backup_servidor(self, archivo):
-        """Envía un backup para inspección sin modificar la base del servidor.
+        """Vista previa remota sin modificar datos ni poner secretos en URLs.
 
-        Requiere sesión de administrador; no transmite rutas ni credenciales por URL.
-        Acepta bytes o ruta local de un archivo .db.
+        Archivos locales se transmiten en fragmentos de 1 MiB, sin cargarlos
+        completos en RAM; el servidor vuelve a aplicar el límite de tamaño.
         """
         from pathlib import Path
-        contenido = Path(archivo).read_bytes() if isinstance(archivo, (str, Path)) else bytes(archivo)
-        if not contenido or len(contenido) > 100 * 1024 * 1024:
-            raise ValueError("El backup debe tener entre 1 byte y 100 MiB")
+
+        limite = 100 * 1024 * 1024
+        if isinstance(archivo, (str, Path)):
+            ruta = Path(archivo).expanduser()
+            tam = ruta.stat().st_size
+            if not (0 < tam <= limite):
+                raise ValueError("El backup debe tener entre 1 byte y 100 MiB")
+
+            def fragmentos():
+                with ruta.open("rb") as fuente:
+                    while True:
+                        bloque = fuente.read(1024 * 1024)
+                        if not bloque:
+                            break
+                        yield bloque
+
+            contenido = fragmentos()
+        else:
+            contenido = bytes(archivo)
+            if not (0 < len(contenido) <= limite):
+                raise ValueError("El backup debe tener entre 1 byte y 100 MiB")
         headers = {**self._admin_headers(), "Content-Type": "application/octet-stream"}
         respuesta = httpx.post(
             self.base_url + "/admin/backups/validar",
