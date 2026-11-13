@@ -17,8 +17,9 @@ def test_delete_404_no_se_considera_cancelacion_confirmada():
     )
     method = next(node for node in service.body if isinstance(node, ast.FunctionDef) and node.name == "cancelar_orden")
     code = ast.get_source_segment(source, method)
-    assert "resp.status_code in (200, 202, 204)" in code
+    assert "resp.status_code == 204" in code
     assert "resp.status_code in (200, 202, 204, 404)" not in code
+    assert "/stores/" not in code
 
 
 def test_liberacion_automatica_exige_cierre_y_verificacion():
