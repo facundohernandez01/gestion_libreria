@@ -136,3 +136,37 @@ def test_migracion_conserva_checkout_existente(tmp_path):
     assert row["estado"] == "uncertain"
     assert row["qr_close_status"] == "not_checked"
     assert row["qr_close_checked_at"] is None
+
+
+def test_reinicio_libera_reserva_si_worker_nunca_intento_qr(recovery_db):
+    with _connection(recovery_db) as conn:
+        conn.execute(
+            "UPDATE intrashop_checkouts SET estado='reserved' WHERE id='checkout-1'"
+        )
+        conn.commit()
+    assert api.recover_interrupted_checkouts() == 1
+    with _connection(recovery_db) as conn:
+        row = conn.execute(
+            "SELECT estado FROM intrashop_checkouts WHERE id='checkout-1'"
+        ).fetchone()
+        assert row["estado"] == "cancelled"
+        assert checkout.available(conn, 1) == 5
+        audit = conn.execute(
+            "SELECT accion FROM intrashop_auditoria WHERE checkout_id='checkout-1'"
+        ).fetchone()
+        assert audit["accion"] == "RECUPERACION_REINICIO_RESERVED_SIN_QR"
+
+
+def test_reinicio_con_intento_remoto_retiene_stock(recovery_db):
+    with _connection(recovery_db) as conn:
+        conn.execute(
+            "UPDATE intrashop_checkouts SET estado='creating' WHERE id='checkout-1'"
+        )
+        conn.commit()
+    assert api.recover_interrupted_checkouts() == 1
+    with _connection(recovery_db) as conn:
+        row = conn.execute(
+            "SELECT estado FROM intrashop_checkouts WHERE id='checkout-1'"
+        ).fetchone()
+        assert row["estado"] == "uncertain"
+        assert checkout.available(conn, 1) == 2
