@@ -1201,22 +1201,30 @@ class DatabaseManager:
         dicts con ``item_id`` y ``cantidad``. Suma stock y deja la orden en
         estado ``parcial`` o ``confirmada`` según lo pendiente.
         """
+        if not isinstance(recepciones, (dict, list)):
+            return False, "Formato de recepción inválido"
         if isinstance(recepciones, dict):
             pares = [(k, v) for k, v in recepciones.items()]
         else:
-            pares = [(r.get("item_id"), r.get("cantidad")) for r in (recepciones or [])]
+            if any(not isinstance(r, dict) for r in recepciones):
+                return False, "Cada recepción debe ser un objeto con item_id y cantidad"
+            pares = [(r.get("item_id"), r.get("cantidad")) for r in recepciones]
         cantidades: dict[int, int] = {}
         for item_id, cant in pares:
             try:
                 item_id = int(item_id)
                 cant = int(cant)
             except (TypeError, ValueError):
-                continue
-            if cant > 0:
-                cantidades[item_id] = cantidades.get(item_id, 0) + cant
+                return False, "Ítem o cantidad inválidos"
+            if item_id <= 0 or cant <= 0:
+                return False, "Los ítems y cantidades deben ser mayores a cero"
+            cantidades[item_id] = cantidades.get(item_id, 0) + cant
 
         with self._connect() as conn:
             try:
+                # Serializa la validación del pendiente y el incremento de stock
+                # con ventas y recepciones de otros procesos SQLite.
+                conn.execute("BEGIN IMMEDIATE")
                 orden = conn.execute(
                     "SELECT id, estado, observaciones FROM ordenes_compra WHERE id=?",
                     (orden_id,),
@@ -1261,6 +1269,7 @@ class DatabaseManager:
                         "SELECT stock_actual FROM productos WHERE id=?", (pid,)
                     ).fetchone()
                     if not producto:
+                        conn.rollback()
                         return False, f"El producto #{pid} ya no existe"
                     anterior = int(producto["stock_actual"])
                     nuevo = anterior + cant
