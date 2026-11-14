@@ -14,6 +14,11 @@ on:
       - "database_manager.py"
       - "api_client.py"
       - "api_server.py"
+      - "config.py"
+      - "pos_server.py"
+      - "tools/restaurar_backup_servidor.py"
+      - "docs/intrashop-servidor-independiente.md"
+      - "docs/manual-operativo-pos-server-backups.md"
       - "tests/**"
       - ".github/workflows/qr-stock-regression.yml"
 
@@ -32,12 +37,16 @@ jobs:
       - name: Install lightweight test dependencies
         run: python -m pip install pytest fastapi requests python-dotenv httpx
       - name: Compile backend modules and regression tests
-        run: python -m compileall -q api_client.py api_server.py componente_nueva_venta.py intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py services/mp_orders_v1_client.py services/mp_orders_webhook.py database_manager.py tests/
+        run: python -m compileall -q config.py pos_server.py api_client.py api_server.py componente_nueva_venta.py intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py services/mp_orders_v1_client.py services/mp_orders_webhook.py database_manager.py tests/
       - name: Run isolated QR, stock and backup tests
         env:
           POS_API_ONLY: "1"
         run: |
           python -m pytest -q \
+            tests/test_backup_remote_ui_static.py \
+            tests/test_api_client_parity.py \
+            tests/test_backup_validation.py \
+            tests/test_backup_client_export.py \
             tests/test_backup_streaming.py \
             tests/test_pos_qr_cancel_static.py \
             tests/test_intrashop_orders_e2e_mock.py \
