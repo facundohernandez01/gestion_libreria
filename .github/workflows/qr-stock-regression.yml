@@ -30,7 +30,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install lightweight test dependencies
-        run: python -m pip install pytest fastapi requests python-dotenv httpx
+        run: python -m pip install pytest fastapi requests python-dotenv httpx cryptography
       - name: Compile backend modules and regression tests
         run: python -m compileall -q api_client.py api_server.py componente_nueva_venta.py intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py services/mp_orders_v1_client.py services/mp_orders_webhook.py database_manager.py tests/
       - name: Run isolated QR, stock and backup tests
@@ -38,6 +38,9 @@ jobs:
           POS_API_ONLY: "1"
         run: |
           python -m pytest -q \
+            tests/test_pos_server_caja_ventas.py \
+            tests/test_api_client_parity.py \
+            tests/test_http_contract_static.py \
             tests/test_backup_streaming.py \
             tests/test_pos_qr_cancel_static.py \
             tests/test_intrashop_orders_e2e_mock.py \

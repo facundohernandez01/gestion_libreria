@@ -148,17 +148,37 @@ class ApiClient:
         return self._get("/cajas/abierta")
 
     def abrir_caja(self, importe_apertura: float = 0.0, observaciones: str = ""):
-        return self._post("/cajas/abrir", params={"importe_apertura": importe_apertura, "observaciones": observaciones})["id"]
+        try:
+            result = self._post("/cajas/abrir", params={
+                "importe_apertura": importe_apertura, "observaciones": observaciones
+            })
+            return int(result["id"])
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (400, 409, 422):
+                return 0
+            raise
 
     def cerrar_caja(self, caja_id: int, observaciones: str = ""):
-        return self._post(f"/cajas/{caja_id}/cerrar", params={"observaciones": observaciones})
+        try:
+            result = self._post(f"/cajas/{int(caja_id)}/cerrar",
+                                params={"observaciones": observaciones})
+            return bool(result.get("ok", False))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (400, 404, 409, 422):
+                return False
+            raise
 
     def crear_venta(self, caja_id, items, metodo_pago="efectivo", comprobante=""):
-        r = self._post("/ventas", json={
-            "caja_id": caja_id, "items": items,
-            "metodo_pago": metodo_pago, "comprobante": comprobante,
-        })
-        return r["venta_id"], True
+        try:
+            result = self._post("/ventas", json={
+                "caja_id": caja_id, "items": items,
+                "metodo_pago": metodo_pago, "comprobante": comprobante,
+            })
+            return int(result["venta_id"]), True
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in (400, 409, 422):
+                return 0, False
+            raise
 
     def obtener_ventas_del_dia(self, caja_id: int):
         return self._get(f"/ventas/dia/{caja_id}")

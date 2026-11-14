@@ -332,25 +332,76 @@ def caja_abierta(x_api_key: str | None = Header(default=None)):
 
 
 @app.post("/cajas/abrir")
-def abrir_caja(importe_apertura: float = 0.0, observaciones: str = "", x_api_key: str | None = Header(default=None)):
+def abrir_caja(importe_apertura: float = 0.0, observaciones: str = "",
+               x_api_key: str | None = Header(default=None)):
+    """Paridad con DatabaseManager.abrir_caja; una sola caja activa por servidor."""
     _auth(x_api_key)
+    import math
+
+    if not math.isfinite(importe_apertura) or importe_apertura < 0:
+        raise HTTPException(422, "Importe de apertura inválido")
     with _tx() as conn:
+        # BEGIN IMMEDIATE evita dos aperturas simultáneas desde cajas distintas.
+        conn.execute("BEGIN IMMEDIATE")
+        if conn.execute("SELECT 1 FROM cajas WHERE estado='abierta' LIMIT 1").fetchone():
+            raise HTTPException(409, "Ya hay una caja abierta")
         cur = conn.execute(
-            "INSERT INTO cajas (importe_apertura, observaciones, estado) VALUES (?,?, 'abierta')",
+            """INSERT INTO cajas
+               (fecha_apertura, importe_apertura, observaciones_apertura, estado)
+               VALUES (CURRENT_TIMESTAMP, ?, ?, 'abierta')""",
             (importe_apertura, observaciones),
         )
-        return {"id": cur.lastrowid}
+        return {"id": int(cur.lastrowid)}
 
 
 @app.post("/cajas/{caja_id}/cerrar")
-def cerrar_caja(caja_id: int, observaciones: str = "", x_api_key: str | None = Header(default=None)):
+def cerrar_caja(caja_id: int, observaciones: str = "",
+                x_api_key: str | None = Header(default=None)):
+    """Persiste cierre, gastos y ventas reales; rechaza cobros de tótem sin resolver."""
     _auth(x_api_key)
     with _tx() as conn:
-        conn.execute(
-            "UPDATE cajas SET estado='cerrada', fecha_cierre=CURRENT_TIMESTAMP, observaciones=? WHERE id=?",
-            (observaciones, caja_id),
+        conn.execute("BEGIN IMMEDIATE")
+        caja = conn.execute(
+            "SELECT importe_apertura FROM cajas WHERE id=? AND estado='abierta'",
+            (caja_id,),
+        ).fetchone()
+        if caja is None:
+            raise HTTPException(409, "Caja inexistente o ya cerrada")
+
+        # Los cobros de IntraShop tienen reservas persistidas: cerrar antes de
+        # registrar la venta produciría un importe de cierre incorrecto.
+        import intrashop_checkout_store as checkout_store
+        checkout_store.ensure_schema(conn)
+        pending = conn.execute(
+            """SELECT id FROM intrashop_checkouts
+               WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
+               LIMIT 1"""
+        ).fetchone()
+        if pending:
+            raise HTTPException(
+                409,
+                "Hay cobros IntraShop pendientes; finalizá o conciliá antes de cerrar la caja",
+            )
+        total_ventas = conn.execute(
+            "SELECT COALESCE(SUM(total), 0) FROM ventas "
+            "WHERE caja_id=? AND estado='completada'", (caja_id,),
+        ).fetchone()[0]
+        total_gastos = conn.execute(
+            "SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE caja_id=?",
+            (caja_id,),
+        ).fetchone()[0]
+        importe_cierre = (
+            float(caja["importe_apertura"]) +
+            float(total_ventas) - float(total_gastos)
         )
-    return {"ok": True}
+        conn.execute(
+            """UPDATE cajas SET fecha_cierre=CURRENT_TIMESTAMP,
+               importe_cierre=?, total_ventas=?, total_gastos=?,
+               observaciones_cierre=?, estado='cerrada'
+               WHERE id=? AND estado='abierta'""",
+            (importe_cierre, total_ventas, total_gastos, observaciones, caja_id),
+        )
+        return {"ok": True}
 
 
 class VentaIn(BaseModel):
@@ -362,47 +413,84 @@ class VentaIn(BaseModel):
 
 @app.post("/ventas")
 def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None)):
+    """Venta HTTP transaccional; suma cantidades repetidas y respeta reservas."""
     _auth(x_api_key)
+    from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+    import intrashop_checkout_store as checkout_store
+
+    if not body.items:
+        raise HTTPException(400, "El carrito está vacío")
+    items: list[tuple[int, int, Decimal]] = []
+    cantidades: dict[int, int] = {}
+    total = Decimal("0")
+    for item in body.items:
+        try:
+            pid = int(item["producto_id"])
+            raw_qty = item["cantidad"]
+            qty = int(raw_qty)
+            price = Decimal(str(item["precio_unitario"]))
+        except (KeyError, ValueError, TypeError, OverflowError, InvalidOperation):
+            raise HTTPException(400, "Item de venta inválido") from None
+        if (pid <= 0 or isinstance(raw_qty, bool) or qty <= 0 or
+                str(raw_qty).strip() not in (str(qty), f"{qty}.0") or
+                not price.is_finite() or price < 0):
+            raise HTTPException(400, "Cantidad o precio inválidos")
+        items.append((pid, qty, price))
+        cantidades[pid] = cantidades.get(pid, 0) + qty
+        total += price * qty
+
     with _tx() as conn:
-        # validar caja abierta
-        if not conn.execute("SELECT id FROM cajas WHERE id=? AND estado='abierta'", (body.caja_id,)).fetchone():
-            raise HTTPException(400, "caja no abierta")
-        total = 0.0
-        stocks = {}
-        for it in body.items:
-            pid = int(it["producto_id"]); cant = int(it["cantidad"]); precio = float(it["precio_unitario"])
-            if cant <= 0 or precio < 0:
-                raise HTTPException(400, "item inválido")
-            row = conn.execute("SELECT stock_actual FROM productos WHERE id=?", (pid,)).fetchone()
-            import intrashop_checkout_store as reservation_store
-            reservation_store.ensure_schema(conn)
-            if not row or reservation_store.available(conn, pid) < cant:
-                raise HTTPException(409, f"stock disponible insuficiente prod={pid} (reservas IntraShop)")
-            stocks[pid] = int(row["stock_actual"])
-            total += precio * cant
+        # Serializar también contra reservas de tótems y otras escrituras SQLite.
+        conn.execute("BEGIN IMMEDIATE")
+        if not conn.execute(
+            "SELECT id FROM cajas WHERE id=? AND estado='abierta'", (body.caja_id,)
+        ).fetchone():
+            raise HTTPException(409, "Caja no abierta")
+        checkout_store.ensure_schema(conn)
+        stocks: dict[int, int] = {}
+        for pid, required in cantidades.items():
+            product = conn.execute(
+                "SELECT stock_actual FROM productos WHERE id=?", (pid,)
+            ).fetchone()
+            if not product or checkout_store.available(conn, pid) < required:
+                raise HTTPException(
+                    409, f"Stock disponible insuficiente para producto {pid}"
+                )
+            stocks[pid] = int(product["stock_actual"])
+
+        monto = total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         cur = conn.execute(
-            "INSERT INTO ventas (caja_id, fecha, total, estado, metodo_pago, comprobante) VALUES (?,?,?,?,?,?)",
-            (body.caja_id, None, round(total, 2), "completada", body.metodo_pago, body.comprobante or ""),
+            """INSERT INTO ventas
+               (caja_id, fecha, total, estado, metodo_pago, comprobante)
+               VALUES (?, CURRENT_TIMESTAMP, ?, 'completada', ?, ?)""",
+            (body.caja_id, float(monto), body.metodo_pago, body.comprobante or ""),
         )
-        # fecha default CURRENT_TIMESTAMP no aplica porque pasamos None -> set now
-        conn.execute("UPDATE ventas SET fecha=CURRENT_TIMESTAMP WHERE id=?", (cur.lastrowid,))
         venta_id = int(cur.lastrowid)
-        for it in body.items:
-            pid = int(it["producto_id"]); cant = int(it["cantidad"]); precio = float(it["precio_unitario"])
-            subtotal = round(precio * cant, 2)
-            conn.execute(
-                "INSERT INTO venta_items (venta_id, producto_id, cantidad, precio_unitario, subtotal) VALUES (?,?,?,?,?)",
-                (venta_id, pid, cant, precio, subtotal),
-            )
+        for pid, qty, price in items:
             anterior = stocks[pid]
-            nuevo = anterior - cant
-            conn.execute("UPDATE productos SET stock_actual=?, fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?", (nuevo, pid))
-            conn.execute(
-                """INSERT INTO movimientos_stock (producto_id, tipo, cantidad, stock_anterior, stock_nuevo, referencia_id, observaciones)
-                   VALUES (?, 'venta', ?, ?, ?, ?, ?)""",
-                (pid, cant, anterior, nuevo, venta_id, f"Venta #{venta_id}"),
+            nuevo = anterior - qty
+            subtotal = (price * qty).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
             )
-        return {"venta_id": venta_id, "total": round(total, 2)}
+            conn.execute(
+                """INSERT INTO venta_items
+                   (venta_id, producto_id, cantidad, precio_unitario, subtotal)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (venta_id, pid, qty, float(price), float(subtotal)),
+            )
+            conn.execute(
+                "UPDATE productos SET stock_actual=?, fecha_modificacion=CURRENT_TIMESTAMP "
+                "WHERE id=?", (nuevo, pid),
+            )
+            conn.execute(
+                """INSERT INTO movimientos_stock
+                   (producto_id, tipo, cantidad, stock_anterior, stock_nuevo,
+                    referencia_id, observaciones)
+                   VALUES (?, 'venta', ?, ?, ?, ?, ?)""",
+                (pid, qty, anterior, nuevo, venta_id, f"Venta #{venta_id}"),
+            )
+            stocks[pid] = nuevo
+        return {"venta_id": venta_id, "total": float(monto)}
 
 
 @app.get("/ventas/dia/{caja_id}")
