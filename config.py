@@ -1348,7 +1348,7 @@ def ConfigModal(page: ft.Page):
             backup_info.value = (f"Backup válido · {_Path(ruta).name} · "
                                  f"{info.get('conteos_backup', info.get('conteos'))}")
             backup_info.color = N.GREEN_400
-            backup_estado.value = ("Backup validado en POS Server. Para restaurar, detené el servidor y utilizá la herramienta offline." if _backup_remoto else "Elegí cómo restaurar: Fusionar o Reemplazar.")
+            backup_estado.value = ("Vista previa solamente: no se importó ningún dato. Para restaurar en IntraShop, detené POS Server y utilizá tools/restaurar_backup_servidor.py en ese equipo." if _backup_remoto else "Elegí cómo restaurar: Fusionar o Reemplazar.")
             backup_estado.color = N.BLUE_300
             page.update()
         except Exception as ex:  # noqa: BLE001
@@ -1454,7 +1454,17 @@ def ConfigModal(page: ft.Page):
                               on_click=elegir_backup),
         ], spacing=10, wrap=True),
         backup_info,
-        ft.Row([
+        (ft.Container(
+            content=ft.Text(
+                "La selección del backup solo muestra sus datos: NO los incorpora al POS Server. "
+                "Para recuperar la base, ejecutá la restauración offline en el equipo servidor. "
+                "Instrucciones: docs/manual-operativo-pos-server-backups.md",
+                size=11, color=N.BLUE_300, selectable=True,
+            ),
+            padding=10,
+            border_radius=8,
+            bgcolor=ft.Colors.with_opacity(0.08, N.BLUE_GREY_800),
+        ) if _backup_remoto else ft.Row([
             ft.FilledButton("FUSIONAR", icon=ft.Icons.MERGE_TYPE,
                             on_click=lambda _e: preguntar_restaurar("fusionar"),
                             style=ft.ButtonStyle(bgcolor=N.BLUE_700,
@@ -1463,7 +1473,7 @@ def ConfigModal(page: ft.Page):
                             on_click=lambda _e: preguntar_restaurar("reemplazar"),
                             style=ft.ButtonStyle(bgcolor=N.RED_700,
                                                  color=ft.Colors.WHITE)),
-        ], spacing=10, wrap=True),
+        ], spacing=10, wrap=True)),
         ft.Container(
             content=ft.Column([
                 ft.Text("Recomendaciones", size=12, weight=ft.FontWeight.BOLD),
