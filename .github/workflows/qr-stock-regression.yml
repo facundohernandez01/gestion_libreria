@@ -38,6 +38,9 @@ jobs:
           POS_API_ONLY: "1"
         run: |
           python -m pytest -q \
+            tests/test_pos_server_caja_ventas.py \
+            tests/test_api_client_parity.py \
+            tests/test_http_contract_static.py \
             tests/test_backup_streaming.py \
             tests/test_pos_qr_cancel_static.py \
             tests/test_intrashop_orders_e2e_mock.py \
