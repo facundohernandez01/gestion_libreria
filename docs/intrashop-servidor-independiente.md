@@ -1,11 +1,11 @@
 # Servidor POS independiente (Linux)
 
-El proceso `pos_server.py` ejecuta FastAPI sin abrir la aplicación de escritorio Flet. Comparte la SQLite y los ajustes del POS. No debe ejecutarse simultáneamente con otra instancia del servidor en el mismo puerto.
+El proceso `pos_server.py --headless` ejecuta FastAPI sin abrir la aplicación de escritorio Flet. Sin `--headless`, el comando abre la interfaz gráfica del administrador de POS Server. Comparte la SQLite y los ajustes del POS. No debe ejecutarse simultáneamente con otra instancia del servidor en el mismo puerto.
 
 ## Ejecutar manualmente
 
 ```bash
-python pos_server.py --host 0.0.0.0 --port 8000
+python pos_server.py --headless --host 0.0.0.0 --port 8000
 ```
 
 ## systemd (Ubuntu)
@@ -20,7 +20,7 @@ After=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=/RUTA/AL/REPOSITORIO
-ExecStart=/RUTA/AL/VENV/bin/python /RUTA/AL/REPOSITORIO/pos_server.py
+ExecStart=/RUTA/AL/VENV/bin/python /RUTA/AL/REPOSITORIO/pos_server.py --headless --host 0.0.0.0 --port 8000
 Restart=on-failure
 RestartSec=3
 
@@ -33,6 +33,10 @@ systemctl --user daemon-reload
 systemctl --user enable --now intrashop-pos.service
 systemctl --user status intrashop-pos.service
 ```
+
+No iniciar simultáneamente POS Server desde la GUI y desde `systemd`: ambas instancias intentarían gestionar la misma base y el mismo puerto.
+
+Para restaurar un backup **hay que detener el servicio**. Seguir [el procedimiento offline de backups](manual-operativo-pos-server-backups.md) y nunca restaurar la SQLite del cliente.
 
 Para mantener el servicio después de cerrar sesión, configurar `loginctl enable-linger` para el usuario correspondiente si el entorno lo permite.
 
