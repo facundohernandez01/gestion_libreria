@@ -18,7 +18,8 @@ def ensure_schema(conn):
         pos_external_id TEXT NOT NULL UNIQUE,
         store_external_id TEXT NOT NULL,
         qr_url TEXT NOT NULL DEFAULT '',
-        nombre TEXT NOT NULL DEFAULT ''
+        nombre TEXT NOT NULL DEFAULT '',
+        caja_id INTEGER
     )""")
     conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_checkouts (
         id TEXT PRIMARY KEY,
@@ -31,14 +32,20 @@ def ensure_schema(conn):
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         venta_id INTEGER UNIQUE,
+        caja_id INTEGER,
         qr_close_status TEXT NOT NULL DEFAULT 'not_checked',
         qr_close_checked_at INTEGER,
         mp_api TEXT NOT NULL DEFAULT 'legacy',
         mp_order_id TEXT,
         mp_cancel_requested INTEGER NOT NULL DEFAULT 0
     )""")
-    # Migración aditiva para instalaciones anteriores.
+    # Migraciones aditivas: no inferir caja de checkouts antiguos.
+    binding_cols = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_mp_bindings)")}
+    if "caja_id" not in binding_cols:
+        conn.execute("ALTER TABLE intrashop_mp_bindings ADD COLUMN caja_id INTEGER")
     cols = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_checkouts)")}
+    if "caja_id" not in cols:
+        conn.execute("ALTER TABLE intrashop_checkouts ADD COLUMN caja_id INTEGER")
     if "qr_close_status" not in cols:
         conn.execute("ALTER TABLE intrashop_checkouts "
                      "ADD COLUMN qr_close_status TEXT NOT NULL DEFAULT 'not_checked'")
@@ -69,7 +76,7 @@ def binding(conn, terminal_id):
 
 
 def reserve(conn, checkout_id, totem_id, items, total, mp_api="legacy"):
-    """Invocar con BEGIN IMMEDIATE; evita sobreventa y cobros simultáneos sobre el mismo QR."""
+    """Reservar con BEGIN IMMEDIATE, fijando caja antes de crear el cobro remoto."""
     if mp_api not in ("legacy", "orders_v1"):
         raise ValueError("Proveedor QR desconocido")
     assigned = binding(conn, totem_id)
@@ -77,6 +84,28 @@ def reserve(conn, checkout_id, totem_id, items, total, mp_api="legacy"):
         raise ValueError("Asigná un POS Mercado Pago exclusivo a este tótem desde Ajustes.")
     if not assigned["qr_url"]:
         raise ValueError("El POS asignado no tiene URL de QR. Revisá la asignación.")
+
+    # El navegador no decide la caja: se configura por administrador o, si
+    # existe una sola caja abierta, se elige por compatibilidad hacia atrás.
+    configured_caja = assigned["caja_id"]
+    if configured_caja is not None:
+        active_caja = conn.execute(
+            "SELECT id FROM cajas WHERE id=? AND estado='abierta'", (int(configured_caja),)
+        ).fetchone()
+        if active_caja is None:
+            raise ValueError(
+                "La caja asignada a este tótem no está abierta. Revisá la vinculación en Ajustes."
+            )
+        caja_id = int(active_caja["id"])
+    else:
+        cajas = conn.execute("SELECT id FROM cajas WHERE estado='abierta' LIMIT 2").fetchall()
+        if len(cajas) != 1:
+            raise ValueError(
+                "El tótem no tiene caja definida: debe existir una única caja abierta "
+                "o asignarse explícitamente una caja desde Ajustes."
+            )
+        caja_id = int(cajas[0]["id"])
+
     occupied = conn.execute("""SELECT id FROM intrashop_checkouts
         WHERE pos_external_id=? AND estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
         LIMIT 1""", (assigned["pos_external_id"],)).fetchone()
@@ -100,14 +129,14 @@ def reserve(conn, checkout_id, totem_id, items, total, mp_api="legacy"):
             raise ValueError("Stock disponible insuficiente: " + item["descripcion"])
     now = int(time.time())
     conn.execute("""INSERT INTO intrashop_checkouts
-        (id,totem_id,pos_external_id,store_external_id,estado,total,items_json,created_at,updated_at,mp_api)
-        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+        (id,totem_id,pos_external_id,store_external_id,estado,total,items_json,created_at,updated_at,mp_api,caja_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
         (checkout_id,totem_id,assigned["pos_external_id"],assigned["store_external_id"],
-         "reserved",total,json.dumps(items,ensure_ascii=False),now,now,mp_api))
+         "reserved",total,json.dumps(items,ensure_ascii=False),now,now,mp_api,caja_id))
     for item in items:
         conn.execute("INSERT INTO intrashop_reservas VALUES (?,?,?)",
                      (checkout_id,item["producto_id"],item["cantidad"]))
-    return dict(assigned)
+    return {**dict(assigned), "caja_id": caja_id}
 
 
 def set_status(conn, checkout_id, status, venta_id=None):
