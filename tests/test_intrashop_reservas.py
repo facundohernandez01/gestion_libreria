@@ -15,7 +15,9 @@ def db(tmp_path):
     )
     conn.execute("INSERT INTO cajas(id,estado) VALUES (1,'abierta')")
     ensure_schema(conn)
-    conn.execute("""INSERT INTO intrashop_mp_bindings VALUES
+    conn.execute("""INSERT INTO intrashop_mp_bindings
+        (terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre)
+        VALUES
         ('totem-a','totem','mp-a','store','https://qr/a','A'),
         ('totem-b','totem','mp-b','store','https://qr/b','B')""")
     conn.commit()
