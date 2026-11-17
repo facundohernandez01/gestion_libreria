@@ -287,3 +287,72 @@ def test_migracion_legacy_no_inventa_caja_en_checkouts_historicos(tmp_path):
             "SELECT caja_id,estado FROM intrashop_checkouts"
         ).fetchone()
         assert row == (None, "uncertain")
+
+
+def test_admin_recupera_origen_sin_asignarlo_automaticamente(network_db):
+    connect, pid, c1, c2 = network_db
+    _, cart = reserve(network_db, "checkout-legacy")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE intrashop_checkouts SET caja_id=NULL,estado='uncertain' "
+            "WHERE id='checkout-legacy'"
+        )
+        conn.commit()
+
+    req = api.AssignOriginCajaIn(
+        caja_id=c1, confirmacion="ASIGNAR CAJA A CHECKOUT ANTIGUO"
+    )
+    with pytest.raises(HTTPException) as err:
+        api.assign_checkout_origin_caja(
+            "checkout-legacy",
+            api.AssignOriginCajaIn(caja_id=c1, confirmacion="incorrecto"),
+            operador="admin",
+        )
+    assert err.value.status_code == 400
+    assert api.assign_checkout_origin_caja("checkout-legacy", req, operador="admin") == {
+        "ok": True, "caja_id": c1, "requiere_conciliacion": True,
+    }
+    with connect() as conn:
+        row = conn.execute(
+            "SELECT caja_id,estado,venta_id FROM intrashop_checkouts "
+            "WHERE id='checkout-legacy'"
+        ).fetchone()
+        audit = conn.execute(
+            "SELECT operador,accion FROM intrashop_auditoria WHERE checkout_id='checkout-legacy'"
+        ).fetchone()
+    assert row["caja_id"] == c1 and row["estado"] == "uncertain"
+    assert row["venta_id"] is None
+    assert tuple(audit) == ("admin", f"ASIGNACION_CAJA_HISTORICA:{c1}")
+    with pytest.raises(HTTPException) as again:
+        api.assign_checkout_origin_caja(
+            "checkout-legacy",
+            api.AssignOriginCajaIn(
+                caja_id=c2, confirmacion="ASIGNAR CAJA A CHECKOUT ANTIGUO"
+            ),
+            operador="admin",
+        )
+    assert again.value.status_code == 409
+
+
+def test_admin_no_asigna_caja_cerrada_en_recuperacion(network_db):
+    connect, _, c1, c2 = network_db
+    reserve(network_db, "checkout-legacy")
+    with connect() as conn:
+        conn.execute(
+            "UPDATE intrashop_checkouts SET caja_id=NULL WHERE id='checkout-legacy'"
+        )
+        conn.execute("UPDATE cajas SET estado='cerrada' WHERE id=?", (c2,))
+        conn.commit()
+    with pytest.raises(HTTPException) as err:
+        api.assign_checkout_origin_caja(
+            "checkout-legacy",
+            api.AssignOriginCajaIn(
+                caja_id=c2, confirmacion="ASIGNAR CAJA A CHECKOUT ANTIGUO"
+            ),
+            operador="admin",
+        )
+    assert err.value.status_code == 409
+    with connect() as conn:
+        assert conn.execute(
+            "SELECT caja_id FROM intrashop_checkouts WHERE id='checkout-legacy'"
+        ).fetchone()[0] is None
