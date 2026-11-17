@@ -10,6 +10,10 @@ def db(tmp_path):
     conn.row_factory=sqlite3.Row
     conn.execute("CREATE TABLE productos(id INTEGER PRIMARY KEY, stock_actual INTEGER, disponible_tienda INTEGER)")
     conn.execute("INSERT INTO productos VALUES (1,5,1)")
+    conn.execute(
+        "CREATE TABLE cajas (id INTEGER PRIMARY KEY, estado TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO cajas(id,estado) VALUES (1,'abierta')")
     ensure_schema(conn)
     conn.execute("""INSERT INTO intrashop_mp_bindings VALUES
         ('totem-a','totem','mp-a','store','https://qr/a','A'),
