@@ -356,3 +356,28 @@ def test_admin_no_asigna_caja_cerrada_en_recuperacion(network_db):
         assert conn.execute(
             "SELECT caja_id FROM intrashop_checkouts WHERE id='checkout-legacy'"
         ).fetchone()[0] is None
+
+
+def test_cierre_solo_bloquea_caja_del_checkout(network_db, monkeypatch):
+    import api_server as pos_api
+
+    connect, pid, c1, c2 = network_db
+    reserve(network_db, "checkout-per-caja")
+    path = None
+    with connect() as conn:
+        path = conn.execute("PRAGMA database_list").fetchone()[2]
+    monkeypatch.setattr(pos_api, "DB_PATH", path)
+    monkeypatch.setattr(pos_api, "API_KEY", "TEST-KEY")
+
+    # QR pendiente pertenece a caja 1. Caja 2 puede cerrar sin afectarlo.
+    assert pos_api.cerrar_caja(c2, x_api_key="TEST-KEY") == {"ok": True}
+    with pytest.raises(HTTPException) as err:
+        pos_api.cerrar_caja(c1, x_api_key="TEST-KEY")
+    assert err.value.status_code == 409
+    with connect() as conn:
+        assert conn.execute(
+            "SELECT estado FROM cajas WHERE id=?", (c1,)
+        ).fetchone()[0] == "abierta"
+        store.set_status(conn, "checkout-per-caja", "cancelled")
+        conn.commit()
+    assert pos_api.cerrar_caja(c1, x_api_key="TEST-KEY") == {"ok": True}
