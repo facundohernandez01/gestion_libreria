@@ -991,6 +991,70 @@ def pending_checkouts(operador: str = Depends(require_config)):
             ORDER BY created_at DESC LIMIT 100""")]
 
 
+class AssignOriginCajaIn(BaseModel):
+    caja_id: int = Field(gt=0)
+    confirmacion: str
+
+
+@router.post("/admin/checkouts/{checkout_id}/assign-caja")
+def assign_checkout_origin_caja(
+    checkout_id: str, body: AssignOriginCajaIn,
+    operador: str = Depends(require_config),
+):
+    """Recuperación excepcional: checkout antiguo sin caja; no crea ni libera ventas.
+
+    Solo un administrador puede fijar una caja ABIERTA, con confirmación
+    explícita y auditoría. No modifica asignaciones ya existentes ni cambia
+    el origen de una venta registrada. Después hay que conciliar con MP.
+    """
+    if body.confirmacion != "ASIGNAR CAJA A CHECKOUT ANTIGUO":
+        raise HTTPException(400, "Confirmación administrativa requerida")
+    with _reconcile_lock:
+        if checkout_id in _reconciling:
+            raise HTTPException(409, "Hay una conciliación de este checkout en curso")
+        _reconciling.add(checkout_id)
+    try:
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            checkout_store.ensure_schema(conn)
+            row = conn.execute(
+                "SELECT estado,venta_id,caja_id FROM intrashop_checkouts WHERE id=?",
+                (checkout_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(404, "Checkout inexistente")
+            if row["venta_id"] is not None or row["estado"] in (
+                "completed", "cancelled", "failed"
+            ):
+                raise HTTPException(409, "El checkout ya está cerrado o tiene una venta")
+            if row["caja_id"] is not None:
+                raise HTTPException(409, "La caja del checkout ya está fijada y no puede cambiarse")
+            if not conn.execute(
+                "SELECT 1 FROM cajas WHERE id=? AND estado='abierta'",
+                (body.caja_id,),
+            ).fetchone():
+                raise HTTPException(409, "La caja elegida no está abierta")
+            conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_auditoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, checkout_id TEXT NOT NULL,
+                operador TEXT NOT NULL, accion TEXT NOT NULL,
+                fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+            conn.execute(
+                "UPDATE intrashop_checkouts SET caja_id=?,updated_at=? WHERE id=? "
+                "AND caja_id IS NULL AND venta_id IS NULL",
+                (body.caja_id, int(time.time()), checkout_id),
+            )
+            conn.execute(
+                "INSERT INTO intrashop_auditoria(checkout_id,operador,accion) "
+                "VALUES (?,?,?)",
+                (checkout_id, operador, f"ASIGNACION_CAJA_HISTORICA:{body.caja_id}"),
+            )
+            conn.commit()
+        return {"ok": True, "caja_id": body.caja_id, "requiere_conciliacion": True}
+    finally:
+        with _reconcile_lock:
+            _reconciling.discard(checkout_id)
+
+
 class ResolveMpOrderIn(BaseModel):
     order_id: str = Field(min_length=8, max_length=64, pattern=r"^ORD[A-Za-z0-9]+$")
 
