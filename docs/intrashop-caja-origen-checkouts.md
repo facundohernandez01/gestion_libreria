@@ -30,6 +30,18 @@ Ahora, **antes de crear el cobro Mercado Pago**, la reserva guarda `intrashop_ch
 
 Para una asociación a otra caja, primero completar o conciliar los cobros pendientes; el servidor rechaza el cambio de un QR con checkout activo.
 
+## Recuperación de un checkout anterior a la migración
+
+Si un checkout existente quedó con `caja_id=NULL`, **no** se inventa una caja ni se libera su reserva. Un administrador que verificó a qué caja correspondía puede utilizar `POST /tienda/admin/checkouts/{checkout_id}/assign-caja` con encabezado `Authorization: Bearer <sesión_admin>` y body:
+
+```json
+{"caja_id": 123, "confirmacion": "ASIGNAR CAJA A CHECKOUT ANTIGUO"}
+```
+
+Solo acepta una caja **abierta**, sin venta previa y un checkout aún no cerrado. Registra la decisión del operador en `intrashop_auditoria` y no produce ni descuenta ventas por sí misma. La caja queda inmutable. Luego usar `POST /tienda/admin/checkouts/{checkout_id}/reconcile` para comprobar el pago en Mercado Pago antes de registrar una venta. No publicar el token administrativo, ni llamar esta ruta desde el navegador del tótem.
+
+Si la caja original se cerró, este procedimiento no reasigna automáticamente pagos históricos a otra caja. Hace falta conciliación operativa antes de modificar cierres contables.
+
 ## Validaciones
 
 ```bash
