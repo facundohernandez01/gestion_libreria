@@ -375,7 +375,8 @@ def cerrar_caja(caja_id: int, observaciones: str = "",
         pending = conn.execute(
             """SELECT id FROM intrashop_checkouts
                WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
-               LIMIT 1"""
+               AND (caja_id=? OR caja_id IS NULL) LIMIT 1""",
+            (caja_id,),
         ).fetchone()
         if pending:
             raise HTTPException(
