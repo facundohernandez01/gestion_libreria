@@ -152,14 +152,30 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
     try:
         with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            already = conn.execute("SELECT venta_id FROM intrashop_checkouts WHERE id=? AND venta_id IS NOT NULL", (job_id,)).fetchone()
-            if already:
+            checkout = conn.execute(
+                "SELECT venta_id,caja_id FROM intrashop_checkouts WHERE id=?", (job_id,)
+            ).fetchone()
+            if not checkout:
+                raise RuntimeError("No existe la reserva de IntraShop asociada al pago.")
+            if checkout["venta_id"] is not None:
                 with _jobs_lock:
-                    _jobs[job_id].update(status="completed", venta_id=already["venta_id"], sale_done=True)
+                    _jobs[job_id].update(status="completed", venta_id=checkout["venta_id"], sale_done=True)
                 return
-            caja = conn.execute("SELECT id FROM cajas WHERE estado='abierta' ORDER BY id DESC LIMIT 1").fetchone()
+            # La caja se fijó con la reserva, antes de crear el pago MP.
+            # No imputar una venta al último turno/caja que abrió después.
+            if checkout["caja_id"] is None:
+                raise RuntimeError(
+                    "Checkout anterior sin caja asignada: se requiere conciliación administrativa."
+                )
+            caja = conn.execute(
+                "SELECT id FROM cajas WHERE id=? AND estado='abierta'",
+                (checkout["caja_id"],),
+            ).fetchone()
             if not caja:
-                raise RuntimeError("No hay una caja abierta. Abrí la caja en el POS antes de cobrar.")
+                raise RuntimeError(
+                    "La caja original del checkout está cerrada; "
+                    "venta pendiente de conciliación en su caja de origen."
+                )
             for item in cart:
                 p = conn.execute(
                     "SELECT stock_actual, disponible_tienda, descripcion FROM productos WHERE id=?",
@@ -885,6 +901,7 @@ class BindingIn(BaseModel):
     store_external_id: str = Field(min_length=1, max_length=100)
     qr_url: str = ""
     nombre: str = ""
+    caja_id: int | None = Field(default=None, gt=0)
 
 
 @router.get("/admin/mp-bindings")
@@ -907,6 +924,14 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
             totem = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.terminal_id,)).fetchone()
             if not totem:
                 raise HTTPException(404, "El tótem no está registrado en POS Server")
+        if body.caja_id is not None:
+            if body.terminal_type != "totem":
+                raise HTTPException(400, "La caja de cobro se vincula únicamente a tótems")
+            active = conn.execute(
+                "SELECT id FROM cajas WHERE id=? AND estado='abierta'", (body.caja_id,)
+            ).fetchone()
+            if not active:
+                raise HTTPException(409, "La caja seleccionada no está abierta")
         duplicate = conn.execute(
             "SELECT terminal_id, nombre FROM intrashop_mp_bindings "
             "WHERE pos_external_id=? AND terminal_id<>? LIMIT 1",
@@ -923,12 +948,13 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
             raise HTTPException(409, "No se puede reasignar un QR con cobros activos")
         try:
             conn.execute("""INSERT INTO intrashop_mp_bindings
-                (terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre)
-                VALUES (?,?,?,?,?,?) ON CONFLICT(terminal_id) DO UPDATE SET
+                (terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre,caja_id)
+                VALUES (?,?,?,?,?,?,?) ON CONFLICT(terminal_id) DO UPDATE SET
                 terminal_type=excluded.terminal_type,pos_external_id=excluded.pos_external_id,
-                store_external_id=excluded.store_external_id,qr_url=excluded.qr_url,nombre=excluded.nombre""",
+                store_external_id=excluded.store_external_id,qr_url=excluded.qr_url,
+                nombre=excluded.nombre,caja_id=excluded.caja_id""",
                 (body.terminal_id,body.terminal_type,body.pos_external_id,
-                 body.store_external_id,body.qr_url,body.nombre))
+                 body.store_external_id,body.qr_url,body.nombre,body.caja_id))
             conn.commit()
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Este POS Mercado Pago ya está asignado a otra terminal")
@@ -958,7 +984,7 @@ def desvincular_binding(terminal_id: str, operador: str = Depends(require_config
 def pending_checkouts(operador: str = Depends(require_config)):
     with _connect() as conn:
         checkout_store.ensure_schema(conn)
-        return [dict(row) for row in conn.execute("""SELECT id,totem_id,pos_external_id,
+        return [dict(row) for row in conn.execute("""SELECT id,totem_id,pos_external_id,caja_id,
             estado,total,created_at,updated_at,qr_close_status,qr_close_checked_at,
             mp_api,mp_order_id,mp_cancel_requested FROM intrashop_checkouts
             WHERE estado NOT IN ('completed','cancelled','failed')
@@ -1313,10 +1339,6 @@ def presencia_totem(body: TotemPresenceIn, request: Request):
 def iniciar_checkout(body: CheckoutIn):
     _ensure_schema()
     cart, total = _load_cart(body.items)
-    with _connect() as conn:
-        caja = conn.execute("SELECT id FROM cajas WHERE estado='abierta' ORDER BY id DESC LIMIT 1").fetchone()
-    if not caja:
-        raise HTTPException(409, "El POS no tiene una caja abierta. Abrí la caja antes de habilitar compras.")
     if not settings.mp_activo:
         raise HTTPException(503, "Mercado Pago está deshabilitado en la configuración del POS")
     totem_nombre = None
@@ -1348,7 +1370,7 @@ def iniciar_checkout(body: CheckoutIn):
         _jobs[job_id] = {"status": "queued", "message": "Stock reservado; preparando cobro",
                          "total": total, "items": cart, "created_at": time.time(),
                          "sale_done": False, "mp_api": mp_api, "totem_id": body.totem_id,
-                         "totem_nombre": totem_nombre,
+                         "totem_nombre": totem_nombre, "caja_id": binding["caja_id"],
                          "pos_ext": binding["pos_external_id"],
                          "store_ext": binding["store_external_id"],
                          "qr_url": binding["qr_url"]}
@@ -1356,7 +1378,7 @@ def iniciar_checkout(body: CheckoutIn):
     worker = _run_checkout_orders_v1 if mp_api == "orders_v1" else _run_checkout
     threading.Thread(target=worker, args=(job_id, cart, total), daemon=True).start()
     return {"checkout_id": job_id, "status": "queued", "total": total,
-            "items": cart, "mp_api": mp_api}
+            "items": cart, "mp_api": mp_api, "caja_id": binding["caja_id"]}
 
 
 @router.post("/checkout/{checkout_id}/cancel")
@@ -1435,7 +1457,7 @@ def estado_checkout(checkout_id: str):
         job = _jobs.get(checkout_id)
         if not job:
             with _connect() as conn:
-                row = conn.execute("SELECT estado,total,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
+                row = conn.execute("SELECT estado,total,venta_id,caja_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
             if not row:
                 raise HTTPException(404, "Checkout inexistente")
             persisted = row["estado"]
@@ -1451,5 +1473,6 @@ def estado_checkout(checkout_id: str):
                 message = ("El servidor se reinició. El estado del pago no está confirmado. "
                            "No reintentes ni liberes stock hasta que un administrador concilie en Mercado Pago.")
             return {"status": status, "total": row["total"],
-                    "venta_id": row["venta_id"], "message": message}
+                    "venta_id": row["venta_id"], "caja_id": row["caja_id"],
+                    "message": message}
         return {k: v for k, v in job.items() if k not in {"sale_done", "created_at"}}
