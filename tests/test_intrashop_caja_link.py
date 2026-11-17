@@ -221,3 +221,69 @@ def test_api_checkout_devuelve_caja_fijada_sin_crear_cobro_externo(network_db, m
             "SELECT caja_id FROM intrashop_checkouts WHERE id=?",
             (result["checkout_id"],),
         ).fetchone()[0] == c1
+
+
+def test_conciliacion_orders_tras_reinicio_respeta_caja_de_origen(network_db, monkeypatch):
+    connect, pid, c1, c2 = network_db
+    _, cart = reserve(network_db, "checkout-reinicio")
+    with connect() as conn:
+        store.set_mp_order_id(conn, "checkout-reinicio", "ORDREINICIO")
+        conn.commit()
+    # El worker desapareció, pero la base preservó el vínculo con la caja.
+    api._jobs.clear()
+
+    class OrdersAprobadas:
+        def consultar(self, order_id, reference, total):
+            assert order_id == "ORDREINICIO"
+            assert reference == "checkout-reinicio" and total == 20
+            return {"estado": "approved", "order_id": order_id}
+
+    monkeypatch.setattr(api, "_orders_client", lambda: OrdersAprobadas())
+    result = api._orders_reconcile("checkout-reinicio")
+    assert result["estado"] == "completed"
+    with connect() as conn:
+        sale = conn.execute("SELECT caja_id FROM ventas").fetchone()
+        row = conn.execute(
+            "SELECT estado,venta_id,caja_id FROM intrashop_checkouts"
+        ).fetchone()
+    assert sale["caja_id"] == c1
+    assert row["estado"] == "completed" and row["caja_id"] == c1
+    assert api._orders_reconcile("checkout-reinicio") == {
+        "estado": "completed", "venta_id": row["venta_id"],
+    }
+    with connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM ventas").fetchone()[0] == 1
+
+
+def test_migracion_legacy_no_inventa_caja_en_checkouts_historicos(tmp_path):
+    path = str(tmp_path / "legacy.db")
+    with sqlite3.connect(path) as conn:
+        conn.execute("""CREATE TABLE intrashop_mp_bindings (
+            terminal_id TEXT PRIMARY KEY, terminal_type TEXT NOT NULL,
+            pos_external_id TEXT UNIQUE NOT NULL, store_external_id TEXT NOT NULL,
+            qr_url TEXT NOT NULL, nombre TEXT NOT NULL DEFAULT ''
+        )""")
+        conn.execute("""CREATE TABLE intrashop_checkouts (
+            id TEXT PRIMARY KEY, totem_id TEXT, pos_external_id TEXT NOT NULL,
+            store_external_id TEXT NOT NULL, estado TEXT NOT NULL, total REAL NOT NULL,
+            items_json TEXT NOT NULL, created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL, venta_id INTEGER UNIQUE
+        )""")
+        conn.execute(
+            "INSERT INTO intrashop_mp_bindings VALUES"
+            "('viejo','totem','POS-LEGACY','STORE-LEGACY','https://example.test/qr','Antiguo')"
+        )
+        conn.execute(
+            "INSERT INTO intrashop_checkouts "
+            "(id,totem_id,pos_external_id,store_external_id,estado,total,items_json,created_at,updated_at)"
+            " VALUES ('pago-viejo','viejo','POS-LEGACY','STORE-LEGACY','uncertain',100,'[]',1,1)"
+        )
+        store.ensure_schema(conn)
+        store.ensure_schema(conn)
+        assert conn.execute(
+            "SELECT caja_id FROM intrashop_mp_bindings"
+        ).fetchone()[0] is None
+        row = conn.execute(
+            "SELECT caja_id,estado FROM intrashop_checkouts"
+        ).fetchone()
+        assert row == (None, "uncertain")
