@@ -381,3 +381,59 @@ def test_cierre_solo_bloquea_caja_del_checkout(network_db, monkeypatch):
         store.set_status(conn, "checkout-per-caja", "cancelled")
         conn.commit()
     assert pos_api.cerrar_caja(c1, x_api_key="TEST-KEY", x_terminal_id="") == {"ok": True}
+
+
+
+def test_dos_totems_en_cajas_distintas_acreditan_sin_mover_ventas(network_db):
+    from concurrent.futures import ThreadPoolExecutor
+
+    connect, pid, c1, c2 = network_db
+    with connect() as conn:
+        conn.execute(
+            "INSERT INTO intrashop_totems(id,nombre) VALUES('totem-b','Tótem B')"
+        )
+        conn.execute(
+            "INSERT INTO intrashop_mp_bindings "
+            "(terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,caja_id) "
+            "VALUES ('totem-b','totem','POS-B','STORE-TEST','https://example.test/qr-b',?)",
+            (c2,),
+        )
+        conn.commit()
+
+    _, cart = reserve(network_db, "checkout-totem-a")
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        second = store.reserve(
+            conn, "checkout-totem-b", "totem-b", cart, 20, mp_api="orders_v1"
+        )
+        conn.commit()
+    assert second["caja_id"] == c2
+
+    paid_job(network_db, "checkout-totem-a", cart)
+    api._jobs["checkout-totem-b"] = {
+        "status": "paid", "sale_done": False, "totem_id": "totem-b",
+        "totem_nombre": "Tótem B", "items": cart, "total": 20,
+    }
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(
+            lambda ref: api._finalize_sale(ref, cart, 20),
+            ("checkout-totem-a", "checkout-totem-b"),
+        ))
+
+    with connect() as conn:
+        sales = conn.execute(
+            "SELECT caja_id FROM ventas ORDER BY caja_id"
+        ).fetchall()
+        stock = conn.execute(
+            "SELECT stock_actual FROM productos WHERE id=?", (pid,)
+        ).fetchone()[0]
+        deliveries = conn.execute(
+            "SELECT COUNT(*) FROM intrashop_entregas"
+        ).fetchone()[0]
+        checked = conn.execute(
+            "SELECT estado,caja_id FROM intrashop_checkouts ORDER BY caja_id"
+        ).fetchall()
+    assert [row["caja_id"] for row in sales] == [c1, c2]
+    assert stock == 1 and deliveries == 2
+    assert [row["estado"] for row in checked] == ["completed", "completed"]
