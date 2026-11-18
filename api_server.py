@@ -314,9 +314,14 @@ def historial_cajas(filtro: str = "", desde: str = "", hasta: str = "",
 
 
 @app.get("/cajas/{caja_id}/ventas")
-def ventas_por_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+def ventas_por_caja(caja_id: int, x_api_key: str | None = Header(default=None),
+                    x_terminal_id: str = Header(default=""),
+                    authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        validate_caja_owner(conn, caja_id, x_terminal_id)
         rows = conn.execute("""SELECT v.*, COUNT(vi.id) AS items_count FROM ventas v
             LEFT JOIN venta_items vi ON v.id=vi.venta_id
             WHERE v.caja_id=? AND v.estado='completada'
@@ -610,9 +615,14 @@ def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None),
 
 
 @app.get("/ventas/dia/{caja_id}")
-def ventas_dia(caja_id: int, x_api_key: str | None = Header(default=None)):
+def ventas_dia(caja_id: int, x_api_key: str | None = Header(default=None),
+               x_terminal_id: str = Header(default=""),
+               authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        validate_caja_owner(conn, caja_id, x_terminal_id)
         rows = conn.execute(
             """SELECT v.*, COUNT(vi.id) AS items_count FROM ventas v
                LEFT JOIN venta_items vi ON v.id = vi.venta_id
@@ -901,16 +911,44 @@ def api_ventas_detalle(desde: str, hasta: str, x_api_key: str | None = Header(de
 
 
 @app.get("/cajas/{caja_id}/gastos")
-def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None),
+                    x_terminal_id: str = Header(default=""),
+                    authorization: str | None = Header(default=None)):
     _auth(x_api_key)
-    return _gestor_reposicion().obtener_gastos_caja(caja_id)
+    with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "CAJA")
+        validate_caja_owner(conn, caja_id, x_terminal_id)
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM gastos WHERE caja_id=? ORDER BY fecha DESC", (caja_id,),
+        )]
 
 
 @app.post("/cajas/{caja_id}/gastos")
-def api_agregar_gasto(caja_id: int, body: dict, x_api_key: str | None = Header(default=None)):
+def api_agregar_gasto(caja_id: int, body: dict,
+                      x_api_key: str | None = Header(default=None),
+                      x_terminal_id: str = Header(default=""),
+                      authorization: str | None = Header(default=None)):
     _auth(x_api_key)
-    with _write_lock:
-        return {"id": _gestor_reposicion().agregar_gasto(caja_id, body["monto"], body["concepto"])}
+    from decimal import Decimal, InvalidOperation
+    try:
+        monto = Decimal(str(body["monto"]))
+    except (KeyError, ValueError, TypeError, InvalidOperation):
+        raise HTTPException(422, "Monto de gasto inválido") from None
+    concepto = str(body.get("concepto") or "").strip()
+    if not monto.is_finite() or monto <= 0 or not concepto:
+        raise HTTPException(422, "Ingresá un concepto y un monto válido")
+    with _tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_caja_schema(conn)
+        operador = _operator_for_terminal(conn, x_terminal_id, authorization, "CAJA")
+        validate_caja_owner(conn, caja_id, x_terminal_id, require_open=True)
+        result = conn.execute(
+            "INSERT INTO gastos(caja_id,monto,concepto,fecha,usuario) "
+            "VALUES(?,?,?,CURRENT_TIMESTAMP,?)",
+            (caja_id, float(monto), concepto, operador),
+        )
+        return {"id": int(result.lastrowid)}
 
 
 @app.get("/admin/datos/conteos")
