@@ -156,26 +156,56 @@ def LoginView(db_manager, on_login, page: ft.Page):
     clave_field.on_submit = ingresar
 
     def configurar_red(e=None):
-        from database_manager import DatabaseManager
-        from core.db_factory import modo_actual, _server_url
+        from core.db_factory import modo_actual, _server_url, es_edicion_intrashop
+        from core.pos_client_settings import guardar_server_url
         from ui.helpers import abrir_dialogo, cerrar_dialogo
-        db_local = DatabaseManager()
-        modo = ft.Dropdown(label="Modo de conexión", value=modo_actual(), width=290,
+
+        es_cliente_intrashop = es_edicion_intrashop()
+        # El cliente IntraShop no debe crear ni configurar una SQLite local
+        # para recordar una IP: esa configuración no era leída por _server_url.
+        modo = ft.Dropdown(
+            label="Modo de conexión", value=modo_actual(), width=290,
+            disabled=es_cliente_intrashop,
             options=[ft.dropdown.Option("local", "Local"),
                      ft.dropdown.Option("servidor", "Servidor"),
-                     ft.dropdown.Option("cliente", "Cliente LAN")])
-        url = ft.TextField(label="URL del servidor POS", value=_server_url(), width=290)
-        estado = ft.Text("Se guarda en esta terminal. Reiniciá el POS para aplicar el cambio.", size=12, color=N.AMBER_400)
+                     ft.dropdown.Option("cliente", "Cliente LAN")],
+        )
+        url = ft.TextField(
+            label="URL del servidor POS", value=_server_url(), width=290,
+            hint_text="http://192.168.1.100:8000",
+        )
+        estado = ft.Text(
+            "La conexión se guarda en este equipo, nunca en la base central. "
+            "Reiniciá el POS para aplicar los cambios.",
+            size=12, color=N.AMBER_400,
+        )
+
         def guardar(e):
-            db_local.set_config("MODO_RED", modo.value)
-            db_local.set_config("SERVER_URL", (url.value or "").strip())
+            try:
+                if es_cliente_intrashop:
+                    guardar_server_url(url.value or "")
+                else:
+                    from database_manager import DatabaseManager
+                    db_local = DatabaseManager()
+                    db_local.set_config("MODO_RED", modo.value)
+                    db_local.set_config("SERVER_URL", (url.value or "").strip())
+            except (ValueError, OSError) as exc:
+                estado.value = str(exc)
+                estado.color = N.RED_400
+                page.update()
+                return
             cerrar_dialogo(page)
-            estado.value = "Configuración guardada. Reiniciá el POS."
-            page.update()
-        dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
+            from ui.helpers import snack
+            snack(page, "Conexión guardada en esta terminal. Reiniciá el POS.")
+
+        dlg = ft.AlertDialog(
+            modal=True, title=ft.Text("Conexión de esta terminal"),
             content=ft.Column([modo, url, estado], tight=True, spacing=12),
-            actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
-                     ft.FilledButton("Guardar", on_click=guardar)])
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
+                ft.FilledButton("Guardar", on_click=guardar),
+            ],
+        )
         abrir_dialogo(page, dlg)
 
     tarjeta = ft.Container(
