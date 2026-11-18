@@ -29,6 +29,15 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
         width=500
     )
     
+    # En una migración jamás apropiarse automáticamente de la caja de otro POS.
+    # Solo administración puede ver/asociar cajas heredadas sin terminal.
+    legacy_cajas = []
+    if hasattr(db_manager, "listar_cajas_sin_terminal"):
+        try:
+            legacy_cajas = db_manager.listar_cajas_sin_terminal()
+        except Exception:
+            pass
+
     def abrir_caja(e):
         try:
             importe = float(importe_field.value or 0)
@@ -44,7 +53,10 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
                 mostrar_exito("Caja abierta correctamente")
                 on_caja_abierta(caja_id)
             else:
-                mostrar_error("Error al abrir la caja")
+                mostrar_error(
+                    getattr(db_manager, "ultimo_error_caja", "") or
+                    "Error al abrir la caja"
+                )
                 
         except ValueError:
             mostrar_error("Ingrese un importe válido")
@@ -57,7 +69,57 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
 
     async def _salir(e):
         await page.window.close()
-    
+
+    caja_heredada = ft.Dropdown(
+        label="Caja existente sin terminal", width=340,
+        options=[
+            ft.dropdown.Option(
+                key=str(c["id"]),
+                text=f"Caja #{c['id']} · {str(c.get('fecha_apertura') or '')[:16]}"
+            )
+            for c in legacy_cajas
+        ],
+    )
+    confirmar_heredada = ft.Checkbox(
+        label="Verifiqué que esta caja abierta pertenece a este equipo POS.",
+        value=False,
+    )
+
+    def vincular_caja_heredada(e):
+        if not caja_heredada.value or not confirmar_heredada.value:
+            mostrar_error("Seleccioná una caja y confirmá que corresponde a este POS.")
+            return
+        try:
+            caja_id = int(caja_heredada.value)
+            result = db_manager.asociar_caja_existente(caja_id)
+            if not result.get("ok") or result.get("caja_id") != caja_id:
+                raise ValueError("El servidor no confirmó la vinculación.")
+            mostrar_exito(f"Caja #{caja_id} vinculada a esta terminal.")
+            on_caja_abierta(caja_id)
+        except Exception as exc:
+            mostrar_error("No se pudo asociar la caja: " + str(exc))
+
+    panel_caja_heredada = ft.Container(
+        visible=bool(legacy_cajas),
+        content=ft.Column([
+            ft.Text("Caja abierta de una versión anterior", weight=ft.FontWeight.BOLD),
+            ft.Text(
+                "Elegí la caja histórica de ESTE equipo. No se asocia automáticamente "
+                "para evitar mezclar ventas entre terminales.", size=12,
+            ),
+            caja_heredada,
+            confirmar_heredada,
+            ft.OutlinedButton(
+                "Asociar caja existente a este POS",
+                icon=ft.Icons.LINK,
+                on_click=vincular_caja_heredada,
+            ),
+        ], spacing=9),
+        padding=14,
+        border_radius=8,
+        bgcolor=ft.Colors.with_opacity(0.05, N.BLUE_700),
+    )
+
     btn_aceptar = ft.FilledButton(
         content="ABRIR CAJA",
         icon=ft.Icons.LOCK_OPEN,
@@ -109,7 +171,9 @@ def AbrirCajaView(db_manager, on_caja_abierta, page):
                     content=observaciones_field,
                     alignment=ft.Alignment.CENTER
                 ),
-                ft.Container(height=30),
+                ft.Container(height=20),
+                panel_caja_heredada,
+                ft.Container(height=20),
                 ft.Row(
                     controls=[btn_salir, btn_aceptar],
                     alignment=ft.MainAxisAlignment.CENTER,
