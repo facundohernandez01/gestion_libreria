@@ -370,9 +370,9 @@ def test_cierre_solo_bloquea_caja_del_checkout(network_db, monkeypatch):
     monkeypatch.setattr(pos_api, "API_KEY", "TEST-KEY")
 
     # QR pendiente pertenece a caja 1. Caja 2 puede cerrar sin afectarlo.
-    assert pos_api.cerrar_caja(c2, x_api_key="TEST-KEY") == {"ok": True}
+    assert pos_api.cerrar_caja(c2, x_api_key="TEST-KEY", x_terminal_id="") == {"ok": True}
     with pytest.raises(HTTPException) as err:
-        pos_api.cerrar_caja(c1, x_api_key="TEST-KEY")
+        pos_api.cerrar_caja(c1, x_api_key="TEST-KEY", x_terminal_id="")
     assert err.value.status_code == 409
     with connect() as conn:
         assert conn.execute(
@@ -380,4 +380,4 @@ def test_cierre_solo_bloquea_caja_del_checkout(network_db, monkeypatch):
         ).fetchone()[0] == "abierta"
         store.set_status(conn, "checkout-per-caja", "cancelled")
         conn.commit()
-    assert pos_api.cerrar_caja(c1, x_api_key="TEST-KEY") == {"ok": True}
+    assert pos_api.cerrar_caja(c1, x_api_key="TEST-KEY", x_terminal_id="") == {"ok": True}
