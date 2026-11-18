@@ -105,12 +105,21 @@ def LoginView(db_manager, on_login, page: ft.Page):
         text_align=ft.TextAlign.CENTER)
 
     def ingresar(e=None):
+        from core.db_factory import modo_actual
+        from core.pos_operator_session import preparar_sesion_operador
+        from adapters.entregas import set_session
+
+        modo = modo_actual()
+        # El cliente HTTP crea una sesión vinculada a X-Terminal-Id.
+        # Una segunda petición de login aquí sobrescribía el token con uno
+        # sin terminal y /cajas/abierta respondía 403 después de un 200.
+        set_session(None)
         try:
             usuario = db_manager.autenticar_usuario(
                 usuario_field.value, clave_field.value)
         except Exception:
             usuario = None
-        if usuario is None and validar_login(
+        if usuario is None and modo != "cliente" and validar_login(
                 db_manager, usuario_field.value, clave_field.value):
             from core.permisos import permisos_todos
 
@@ -120,23 +129,8 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "es_admin": True, "activo": True,
                 "permisos": permisos_todos(),
             }
-        if usuario:
-            # Obtener una sesión de operador del servidor; el rol se verifica allí.
-            try:
-                import httpx
-                from adapters.entregas import EntregasAdapter, set_session
-                from core.db_factory import _server_url, modo_actual
-                from core.settings import settings
-                base = _server_url() if modo_actual() == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
-                response = httpx.post(base.rstrip("/") + "/pos/auth/login",
-                    json={"usuario": usuario_field.value, "clave": clave_field.value}, timeout=4)
-                if response.status_code == 200:
-                    set_session(response.json()["access_token"])
-                else:
-                    set_session(None)
-            except Exception:
-                from adapters.entregas import set_session
-                set_session(None)
+        if usuario and preparar_sesion_operador(
+                modo, usuario_field.value, clave_field.value):
             if recordar_cb.value:
                 _guardar_recordado(usuario_field.value or "", clave_field.value or "")
             else:
@@ -146,7 +140,10 @@ def LoginView(db_manager, on_login, page: ft.Page):
             except TypeError:
                 on_login(usuario)
             return
-        error_text.value = "Usuario o clave incorrectos"
+        error_text.value = (
+            getattr(db_manager, "ultimo_error_login", "") or
+            "Usuario o clave incorrectos"
+        )
         error_text.visible = True
         clave_field.value = ""
         page.update()
