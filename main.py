@@ -410,6 +410,14 @@ class LibreriaApp:
         self.iniciar()
 
     def cerrar_sesion(self):
+        # Revocar también la sesión del POS Server en modo cliente.
+        # El token HTTP no es el token local de "recordar inicio".
+        if self.modo == "cliente":
+            try:
+                self.db.cerrar_sesion_remota()
+            except Exception:
+                from adapters.entregas import set_session
+                set_session(None)
         if self._token_sesion:
             from utils import sesion_recordada as sr
 
