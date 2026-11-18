@@ -1,0 +1,37 @@
+name: IntraShop desktop and POS Server builds
+
+on:
+  push:
+    branches:
+      - fix/intrashop-tauri-dual-base-20261118
+      - feat/pos-server-multicaja-terminal-20261118
+  pull_request:
+    paths:
+      - "intrashop/**"
+      - ".github/workflows/intrashop-dual-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  astro-dual-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Astro and Tauri CLI frontend dependencies
+        working-directory: intrashop
+        run: npm install --no-audit --no-fund
+      - name: Build Tauri desktop with root base
+        working-directory: intrashop
+        run: |
+          npm run build:tauri
+          node scripts/check-build.mjs tauri
+      - name: Build POS Server static site with /intrashop/ base
+        working-directory: intrashop
+        run: |
+          npm run build
+          node scripts/check-build.mjs server
