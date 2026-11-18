@@ -17,6 +17,7 @@ class ApiClient:
         self.api_key = api_key
         self._headers = {"X-API-Key": api_key}
         self.ultimo_error_caja = ""
+        self.ultimo_error_login = ""
 
     def _pos_headers(self):
         from core.terminal_identity import terminal_id
@@ -81,20 +82,41 @@ class ApiClient:
         return r.json()
 
     def autenticar_usuario(self, usuario: str, clave: str):
+        from adapters.entregas import set_session
+        from core.terminal_identity import terminal_id
+
+        # Un intento fallido jamás debe reutilizar el bearer de otro operador.
+        set_session(None)
+        self.ultimo_error_login = ""
         try:
-            from core.terminal_identity import terminal_id
-            response = httpx.post(self.base_url + "/pos/auth/login",
+            response = httpx.post(
+                self.base_url + "/pos/auth/login",
                 json={"usuario": usuario, "clave": clave},
-                headers={"X-Terminal-Id": terminal_id()}, timeout=8)
+                headers={"X-Terminal-Id": terminal_id()},
+                timeout=8,
+            )
             if response.status_code != 200:
+                if response.status_code == 401:
+                    self.ultimo_error_login = "Usuario o clave incorrectos"
+                else:
+                    self.ultimo_error_login = (
+                        "No se pudo iniciar sesión en POS Server "
+                        f"(HTTP {response.status_code})"
+                    )
                 return None
             data = response.json()
-            from adapters.entregas import set_session
             set_session(data["access_token"])
-            return {"usuario": data["usuario"], "nombre": data["usuario"],
-                    "rol": data.get("rol", "OPERADOR"), "es_admin": data.get("es_admin", False),
-                    "permisos": data.get("permisos", {}), "activo": True}
-        except Exception:
+            return {
+                "usuario": data["usuario"], "nombre": data["usuario"],
+                "rol": data.get("rol", "OPERADOR"),
+                "es_admin": data.get("es_admin", False),
+                "permisos": data.get("permisos", {}), "activo": True,
+            }
+        except (httpx.RequestError, ValueError, KeyError) as exc:
+            self.ultimo_error_login = (
+                "No se pudo conectar a POS Server o su respuesta es inválida: "
+                + str(exc)
+            )
             return None
 
     def cerrar_sesion_remota(self) -> None:
