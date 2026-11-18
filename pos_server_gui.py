@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from tkinter import ttk, messagebox, simpledialog
 
 from core.settings import settings
+from pos_server_snapshot import snapshot as load_snapshot
 from server_manager import server_manager, ip_lan
 
 
@@ -30,6 +31,8 @@ class ServerConsole:
         self._closing = False
         self._loading = False
         self._timer = None
+        self._ui_timer = None
+        self._ui_queue = queue.Queue()
         self._tray = None
         self._tray_available = False
         self._exit_requested = False
@@ -44,6 +47,9 @@ class ServerConsole:
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
         self._init_tray()
+        # Las tareas SQLite y uvicorn nunca llaman a Tk desde hilos de fondo.
+        # Procesar sus resultados exclusivamente desde el hilo principal.
+        self._drain_ui_queue()
         self.refresh()
         self.start()
 
@@ -436,11 +442,10 @@ class ServerConsole:
             try:
                 server_manager.iniciar(host=self.host, port=self.port)
             except Exception as exc:
-                msg = str(exc)
-                self.root.after(0, lambda: messagebox.showerror("Servidor", msg) if not self._closing else None)
+                self._ui_queue.put(("server_error", str(exc)))
             finally:
-                self.root.after(0, self.refresh)
-        threading.Thread(target=worker, daemon=True).start()
+                self._ui_queue.put(("server_refresh", None))
+        threading.Thread(target=worker, name="pos-server-start", daemon=True).start()
 
     def stop(self):
         threading.Thread(target=server_manager.detener, daemon=True).start()
@@ -459,17 +464,36 @@ class ServerConsole:
             return None
 
     def _snapshot(self):
-        with sqlite3.connect(settings.db_path, timeout=3) as conn:
-            conn.row_factory = sqlite3.Row
-            # Una lectura agrupada cada 15 s; no se hace polling de la red.
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(intrashop_totems)")}
-            ip_col = "ip" if "ip" in columns else ("ip_address" if "ip_address" in columns else None)
-            fields = "id,nombre,ultimo_contacto" + ("," + ip_col if ip_col else "")
-            totems = [dict(row) for row in conn.execute("SELECT " + fields + " FROM intrashop_totems ORDER BY nombre COLLATE NOCASE")]
-            bindings = [dict(row) for row in conn.execute(
-                "SELECT terminal_id,terminal_type,nombre,pos_external_id FROM intrashop_mp_bindings ORDER BY terminal_type,nombre")]
-            pending_rows = [dict(row) for row in conn.execute("SELECT id,estado,pos_external_id,total FROM intrashop_checkouts WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid') ORDER BY created_at DESC LIMIT 100")]
-        return totems, bindings, pending_rows
+        # Lectura agrupada cada 15 s, sin polling LAN. La inicialización de
+        # las tablas opcionales vive en un módulo testeable sin interfaz.
+        return load_snapshot(settings.db_path)
+
+    def _drain_ui_queue(self):
+        """Ejecuta resultados de workers en el hilo Tk; evita bloqueos de after()."""
+        if self._closing:
+            return
+        try:
+            while True:
+                kind, payload = self._ui_queue.get_nowait()
+                if kind == "snapshot":
+                    self._loading = False
+                    self._render(*payload)
+                elif kind == "snapshot_error":
+                    self._loading = False
+                    self.summary.set("No se pudieron cargar los dispositivos")
+                    self.notice.set(
+                        "Error leyendo SQLite: " + str(payload) +
+                        " · Revisá la base de POS Server y pulsá Actualizar."
+                    )
+                elif kind == "server_error":
+                    messagebox.showerror("Servidor", str(payload))
+                elif kind == "server_refresh":
+                    self.refresh()
+        except queue.Empty:
+            pass
+        finally:
+            if not self._closing:
+                self._ui_timer = self.root.after(150, self._drain_ui_queue)
 
     @staticmethod
     def _fill(table, rows):
@@ -496,23 +520,18 @@ class ServerConsole:
         self.url.set("http://" + ip_lan() + ":" + str(self.port))
         if not self._loading:
             self._loading = True
+            self.summary.set("Actualizando dispositivos…")
             def worker():
                 try:
-                    data = self._snapshot()
-                    error = None
-                except (sqlite3.Error, OSError) as exc:
-                    data = None
-                    error = str(exc)
-                def finish():
-                    self._loading = False
-                    if self._closing:
-                        return
-                    if data:
-                        self._render(*data)
-                    else:
-                        self.notice.set("No se pudo consultar el estado: " + str(error))
-                self.root.after(0, finish)
-            threading.Thread(target=worker, daemon=True).start()
+                    self._ui_queue.put(("snapshot", self._snapshot()))
+                except Exception as exc:
+                    # No dejar nunca _loading=True indefinidamente. Una
+                    # excepción no SQLite (migración, columna antigua, etc.)
+                    # también debe hacerse visible y permitir reintentar.
+                    self._ui_queue.put(("snapshot_error", str(exc)))
+            threading.Thread(
+                target=worker, name="pos-server-devices", daemon=True
+            ).start()
         self._timer = self.root.after(self.REFRESH_MS, self.refresh)
 
     def _render(self, totems, bindings, pending_rows):
@@ -649,6 +668,10 @@ class ServerConsole:
         self._closing = True
         if self._timer is not None:
             self.root.after_cancel(self._timer)
+            self._timer = None
+        if self._ui_timer is not None:
+            self.root.after_cancel(self._ui_timer)
+            self._ui_timer = None
         server_manager.detener()
         if self._single_socket is not None:
             self._single_socket.close()
