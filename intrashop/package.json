@@ -7,7 +7,9 @@
     "dev": "astro dev --host 0.0.0.0",
     "build": "astro check && astro build",
     "preview": "astro preview --host 0.0.0.0",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "dev:tauri": "cross-env INTRASHOP_TARGET=tauri astro dev --host 0.0.0.0",
+    "build:tauri": "cross-env INTRASHOP_TARGET=tauri npm run build"
   },
   "dependencies": {
     "@astrojs/check": "^0.9.4",
@@ -15,6 +17,7 @@
     "typescript": "^5.7.3"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.2.0"
+    "@tauri-apps/cli": "^2.2.0",
+    "cross-env": "^7.0.3"
   }
 }
