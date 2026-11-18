@@ -632,9 +632,17 @@ def ventas_dia(caja_id: int, x_api_key: str | None = Header(default=None),
 
 
 @app.get("/ventas/{venta_id}/items")
-def items_venta(venta_id: int, x_api_key: str | None = Header(default=None)):
+def items_venta(venta_id: int, x_api_key: str | None = Header(default=None),
+                x_terminal_id: str = Header(default=""),
+                authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        venta = conn.execute("SELECT caja_id FROM ventas WHERE id=?", (venta_id,)).fetchone()
+        if venta is None:
+            raise HTTPException(404, "Venta inexistente")
+        validate_caja_owner(conn, venta["caja_id"], x_terminal_id)
         rows = conn.execute(
             """SELECT vi.*, p.descripcion AS producto_nombre FROM venta_items vi
                JOIN productos p ON vi.producto_id = p.id WHERE vi.venta_id=?""", (venta_id,)).fetchall()
@@ -649,9 +657,20 @@ class FacturaIn(BaseModel):
 
 
 @app.post("/ventas/factura")
-def actualizar_factura(body: FacturaIn, x_api_key: str | None = Header(default=None)):
+def actualizar_factura(body: FacturaIn, x_api_key: str | None = Header(default=None),
+                       x_terminal_id: str = Header(default=""),
+                       authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        venta = conn.execute(
+            "SELECT caja_id FROM ventas WHERE id=?", (body.venta_id,),
+        ).fetchone()
+        if venta is None:
+            raise HTTPException(404, "Venta inexistente")
+        validate_caja_owner(conn, venta["caja_id"], x_terminal_id)
         conn.execute(
             "UPDATE ventas SET numero_factura=?, cae=?, vencimiento_cae=? WHERE id=?",
             (body.numero_factura, body.cae, body.vencimiento_cae, body.venta_id),
