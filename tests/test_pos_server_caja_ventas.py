@@ -41,7 +41,7 @@ def _items(pid, *cantidades):
 
 def _open():
     return api.abrir_caja(importe_apertura=100, observaciones="Apertura test",
-                          x_api_key="TEST-LAN-KEY")["id"]
+                          x_api_key="TEST-LAN-KEY", x_terminal_id="")["id"]
 
 
 def test_abrir_caja_usa_columnas_reales_y_no_duplica(db):
@@ -67,7 +67,7 @@ def test_venta_no_sobrevende_producto_repetido_y_actualiza_movimientos(db):
     with pytest.raises(HTTPException) as exc:
         api.crear_venta(
             api.VentaIn(caja_id=caja, items=_items(pid, 3, 3)),
-            x_api_key="TEST-LAN-KEY",
+            x_api_key="TEST-LAN-KEY", x_terminal_id="",
         )
     assert exc.value.status_code == 409
     with sqlite3.connect(path) as conn:
@@ -78,7 +78,7 @@ def test_venta_no_sobrevende_producto_repetido_y_actualiza_movimientos(db):
 
     result = api.crear_venta(
         api.VentaIn(caja_id=caja, items=_items(pid, 2, 3)),
-        x_api_key="TEST-LAN-KEY",
+        x_api_key="TEST-LAN-KEY", x_terminal_id="",
     )
     assert result["total"] == 50
     with sqlite3.connect(path) as conn:
@@ -116,7 +116,7 @@ def test_venta_pos_respeta_reservas_de_totem(db):
     with pytest.raises(HTTPException) as exc:
         api.crear_venta(
             api.VentaIn(caja_id=caja, items=_items(pid, 2)),
-            x_api_key="TEST-LAN-KEY",
+            x_api_key="TEST-LAN-KEY", x_terminal_id="",
         )
     assert exc.value.status_code == 409
     with sqlite3.connect(path) as conn:
@@ -129,14 +129,14 @@ def test_cierre_calcula_importes_y_no_se_repite(db):
     caja = _open()
     api.crear_venta(
         api.VentaIn(caja_id=caja, items=_items(pid, 2)),
-        x_api_key="TEST-LAN-KEY",
+        x_api_key="TEST-LAN-KEY", x_terminal_id="",
     )
     with sqlite3.connect(path) as conn:
         conn.execute(
             "INSERT INTO gastos (caja_id,monto,concepto) VALUES (?,?,?)",
             (caja, 5, "Transporte"),
         )
-    assert api.cerrar_caja(caja, "Cierre test", x_api_key="TEST-LAN-KEY") == {"ok": True}
+    assert api.cerrar_caja(caja, "Cierre test", x_api_key="TEST-LAN-KEY", x_terminal_id="") == {"ok": True}
     with sqlite3.connect(path) as conn:
         fila = conn.execute(
             "SELECT estado,fecha_cierre,importe_cierre,total_ventas,total_gastos,"
@@ -145,7 +145,7 @@ def test_cierre_calcula_importes_y_no_se_repite(db):
     assert fila[0] == "cerrada" and fila[1] and fila[2:5] == (115, 20, 5)
     assert fila[5] == "Cierre test"
     with pytest.raises(HTTPException) as exc:
-        api.cerrar_caja(caja, x_api_key="TEST-LAN-KEY")
+        api.cerrar_caja(caja, x_api_key="TEST-LAN-KEY", x_terminal_id="")
     assert exc.value.status_code == 409
 
 
@@ -169,12 +169,12 @@ def test_no_cierra_caja_con_cobros_intrashop_pendientes(db):
         conn.commit()
 
     with pytest.raises(HTTPException) as exc:
-        api.cerrar_caja(caja, x_api_key="TEST-LAN-KEY")
+        api.cerrar_caja(caja, x_api_key="TEST-LAN-KEY", x_terminal_id="")
     assert exc.value.status_code == 409
     with sqlite3.connect(path) as conn:
         assert conn.execute("SELECT estado FROM cajas WHERE id=?", (caja,)).fetchone()[0] == "abierta"
         store.set_status(conn, "checkout-test", "cancelled")
-    assert api.cerrar_caja(caja, x_api_key="TEST-LAN-KEY") == {"ok": True}
+    assert api.cerrar_caja(caja, x_api_key="TEST-LAN-KEY", x_terminal_id="") == {"ok": True}
 
 
 @pytest.mark.parametrize("method,expected", [
