@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "identifier": "com.gestionlibreria.intrashop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run dev:tauri",
     "devUrl": "http://localhost:4321",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "beforeBuildCommand": "npm run build:tauri",
+    "frontendDist": "../dist-tauri"
   },
   "app": {
     "windows": [

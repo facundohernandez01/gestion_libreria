@@ -16,9 +16,21 @@ class ApiClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self._headers = {"X-API-Key": api_key}
+        self.ultimo_error_caja = ""
+        self.ultimo_error_login = ""
+
+    def _pos_headers(self):
+        from core.terminal_identity import terminal_id
+        from adapters import entregas
+
+        headers = {**self._headers, "X-Terminal-Id": terminal_id()}
+        if entregas._session_token:
+            headers["Authorization"] = "Bearer " + entregas._session_token
+        return headers
 
     def _get(self, path, params=None):
-        r = httpx.get(self.base_url + path, params=params, headers=self._headers, timeout=15)
+        r = httpx.get(self.base_url + path, params=params,
+                      headers=self._pos_headers(), timeout=15)
         r.raise_for_status()
         return r.json()
 
@@ -27,7 +39,7 @@ class ApiClient:
         token = entregas._session_token
         if not token:
             raise PermissionError("Iniciá sesión como administrador POS para gestionar usuarios y roles")
-        return {**self._headers, "Authorization": "Bearer " + token}
+        return {**self._pos_headers(), "Authorization": "Bearer " + token}
 
     def _admin_request(self, method, path, json=None):
         response = httpx.request(method, self.base_url + path,
@@ -64,26 +76,68 @@ class ApiClient:
         return result["ok"], result["error"]
 
     def _post(self, path, json=None, params=None):
-        r = httpx.post(self.base_url + path, json=json, params=params, headers=self._headers, timeout=15)
+        r = httpx.post(self.base_url + path, json=json, params=params,
+                       headers=self._pos_headers(), timeout=15)
         r.raise_for_status()
         return r.json()
 
     def autenticar_usuario(self, usuario: str, clave: str):
+        from adapters.entregas import set_session
+        from core.terminal_identity import terminal_id
+
+        # Un intento fallido jamás debe reutilizar el bearer de otro operador.
+        set_session(None)
+        self.ultimo_error_login = ""
         try:
-            from core.terminal_identity import terminal_id
-            response = httpx.post(self.base_url + "/pos/auth/login",
+            response = httpx.post(
+                self.base_url + "/pos/auth/login",
                 json={"usuario": usuario, "clave": clave},
-                headers={"X-Terminal-Id": terminal_id()}, timeout=8)
+                headers={"X-Terminal-Id": terminal_id()},
+                timeout=8,
+            )
             if response.status_code != 200:
+                if response.status_code == 401:
+                    self.ultimo_error_login = "Usuario o clave incorrectos"
+                else:
+                    self.ultimo_error_login = (
+                        "No se pudo iniciar sesión en POS Server "
+                        f"(HTTP {response.status_code})"
+                    )
                 return None
             data = response.json()
-            from adapters.entregas import set_session
             set_session(data["access_token"])
-            return {"usuario": data["usuario"], "nombre": data["usuario"],
-                    "rol": data.get("rol", "OPERADOR"), "es_admin": data.get("es_admin", False),
-                    "permisos": data.get("permisos", {}), "activo": True}
-        except Exception:
+            return {
+                "usuario": data["usuario"], "nombre": data["usuario"],
+                "rol": data.get("rol", "OPERADOR"),
+                "es_admin": data.get("es_admin", False),
+                "permisos": data.get("permisos", {}), "activo": True,
+            }
+        except (httpx.RequestError, ValueError, KeyError) as exc:
+            self.ultimo_error_login = (
+                "No se pudo conectar a POS Server o su respuesta es inválida: "
+                + str(exc)
+            )
             return None
+
+    def cerrar_sesion_remota(self) -> None:
+        from adapters.entregas import set_session
+        from adapters import entregas
+
+        token = entregas._session_token
+        if token:
+            try:
+                httpx.post(self.base_url + "/pos/auth/logout",
+                           headers=self._pos_headers(), timeout=5)
+            except httpx.RequestError:
+                pass
+        set_session(None)
+
+    def listar_cajas_sin_terminal(self):
+        return self._get("/cajas/sin-terminal")
+
+    def asociar_caja_existente(self, caja_id: int):
+        return self._post(f"/cajas/{int(caja_id)}/asociar-terminal",
+                          json={"confirmacion": "ASOCIAR CAJA EXISTENTE"})
 
     def health(self) -> bool:
         try:
@@ -148,6 +202,7 @@ class ApiClient:
         return self._get("/cajas/abierta")
 
     def abrir_caja(self, importe_apertura: float = 0.0, observaciones: str = ""):
+        self.ultimo_error_caja = ""
         try:
             result = self._post("/cajas/abrir", params={
                 "importe_apertura": importe_apertura, "observaciones": observaciones
@@ -155,6 +210,12 @@ class ApiClient:
             return int(result["id"])
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (400, 409, 422):
+                try:
+                    self.ultimo_error_caja = str(
+                        exc.response.json().get("detail") or "No se pudo abrir la caja"
+                    )
+                except ValueError:
+                    self.ultimo_error_caja = "No se pudo abrir la caja"
                 return 0
             raise
 

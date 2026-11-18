@@ -1,0 +1,65 @@
+name: IntraShop desktop and POS Server builds
+
+on:
+  push:
+    branches:
+      - fix/intrashop-tauri-dual-base-20261118
+      - feat/pos-server-multicaja-terminal-20261118
+  pull_request:
+    paths:
+      - "intrashop/**"
+      - ".github/workflows/intrashop-dual-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  astro-dual-base:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install Astro and Tauri CLI frontend dependencies
+        working-directory: intrashop
+        run: npm install --no-audit --no-fund
+      - name: Build Tauri desktop with root base
+        working-directory: intrashop
+        run: |
+          npm run build:tauri
+          node scripts/check-build.mjs tauri
+      - name: Build POS Server static site with /intrashop/ base
+        working-directory: intrashop
+        run: |
+          npm run build
+          node scripts/check-build.mjs server
+          # El build para POS Server no debe borrar el de Tauri.
+          node scripts/check-build.mjs tauri
+      - name: Smoke Astro dev routes used by Tauri and POS Server
+        working-directory: intrashop
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run dev:tauri > /tmp/intrashop-tauri-dev.log 2>&1 &
+          DESKTOP_PID=$!
+          npm run dev -- --port 4322 > /tmp/intrashop-server-dev.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$DESKTOP_PID" "$SERVER_PID" 2>/dev/null || true' EXIT
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:4321/ -o /tmp/intrashop-desktop.html &&
+               curl -fsS http://127.0.0.1:4322/intrashop/ -o /tmp/intrashop-server.html; then
+              break
+            fi
+            sleep 1
+          done
+          grep -q 'id="catalog"' /tmp/intrashop-desktop.html || {
+            cat /tmp/intrashop-tauri-dev.log
+            exit 1
+          }
+          grep -q 'id="catalog"' /tmp/intrashop-server.html || {
+            cat /tmp/intrashop-server-dev.log
+            exit 1
+          }
+          echo "Tauri abre / y POS Server abre /intrashop/ correctamente"

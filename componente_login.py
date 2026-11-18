@@ -105,12 +105,21 @@ def LoginView(db_manager, on_login, page: ft.Page):
         text_align=ft.TextAlign.CENTER)
 
     def ingresar(e=None):
+        from core.db_factory import modo_actual
+        from core.pos_operator_session import preparar_sesion_operador
+        from adapters.entregas import set_session
+
+        modo = modo_actual()
+        # El cliente HTTP crea una sesión vinculada a X-Terminal-Id.
+        # Una segunda petición de login aquí sobrescribía el token con uno
+        # sin terminal y /cajas/abierta respondía 403 después de un 200.
+        set_session(None)
         try:
             usuario = db_manager.autenticar_usuario(
                 usuario_field.value, clave_field.value)
         except Exception:
             usuario = None
-        if usuario is None and validar_login(
+        if usuario is None and modo != "cliente" and validar_login(
                 db_manager, usuario_field.value, clave_field.value):
             from core.permisos import permisos_todos
 
@@ -120,23 +129,8 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "es_admin": True, "activo": True,
                 "permisos": permisos_todos(),
             }
-        if usuario:
-            # Obtener una sesión de operador del servidor; el rol se verifica allí.
-            try:
-                import httpx
-                from adapters.entregas import EntregasAdapter, set_session
-                from core.db_factory import _server_url, modo_actual
-                from core.settings import settings
-                base = _server_url() if modo_actual() == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
-                response = httpx.post(base.rstrip("/") + "/pos/auth/login",
-                    json={"usuario": usuario_field.value, "clave": clave_field.value}, timeout=4)
-                if response.status_code == 200:
-                    set_session(response.json()["access_token"])
-                else:
-                    set_session(None)
-            except Exception:
-                from adapters.entregas import set_session
-                set_session(None)
+        if usuario and preparar_sesion_operador(
+                modo, usuario_field.value, clave_field.value):
             if recordar_cb.value:
                 _guardar_recordado(usuario_field.value or "", clave_field.value or "")
             else:
@@ -146,7 +140,10 @@ def LoginView(db_manager, on_login, page: ft.Page):
             except TypeError:
                 on_login(usuario)
             return
-        error_text.value = "Usuario o clave incorrectos"
+        error_text.value = (
+            getattr(db_manager, "ultimo_error_login", "") or
+            "Usuario o clave incorrectos"
+        )
         error_text.visible = True
         clave_field.value = ""
         page.update()
@@ -159,26 +156,56 @@ def LoginView(db_manager, on_login, page: ft.Page):
     clave_field.on_submit = ingresar
 
     def configurar_red(e=None):
-        from database_manager import DatabaseManager
-        from core.db_factory import modo_actual, _server_url
+        from core.db_factory import modo_actual, _server_url, es_edicion_intrashop
+        from core.pos_client_settings import guardar_server_url
         from ui.helpers import abrir_dialogo, cerrar_dialogo
-        db_local = DatabaseManager()
-        modo = ft.Dropdown(label="Modo de conexión", value=modo_actual(), width=290,
+
+        es_cliente_intrashop = es_edicion_intrashop()
+        # El cliente IntraShop no debe crear ni configurar una SQLite local
+        # para recordar una IP: esa configuración no era leída por _server_url.
+        modo = ft.Dropdown(
+            label="Modo de conexión", value=modo_actual(), width=290,
+            disabled=es_cliente_intrashop,
             options=[ft.dropdown.Option("local", "Local"),
                      ft.dropdown.Option("servidor", "Servidor"),
-                     ft.dropdown.Option("cliente", "Cliente LAN")])
-        url = ft.TextField(label="URL del servidor POS", value=_server_url(), width=290)
-        estado = ft.Text("Se guarda en esta terminal. Reiniciá el POS para aplicar el cambio.", size=12, color=N.AMBER_400)
+                     ft.dropdown.Option("cliente", "Cliente LAN")],
+        )
+        url = ft.TextField(
+            label="URL del servidor POS", value=_server_url(), width=290,
+            hint_text="http://192.168.1.100:8000",
+        )
+        estado = ft.Text(
+            "La conexión se guarda en este equipo, nunca en la base central. "
+            "Reiniciá el POS para aplicar los cambios.",
+            size=12, color=N.AMBER_400,
+        )
+
         def guardar(e):
-            db_local.set_config("MODO_RED", modo.value)
-            db_local.set_config("SERVER_URL", (url.value or "").strip())
+            try:
+                if es_cliente_intrashop:
+                    guardar_server_url(url.value or "")
+                else:
+                    from database_manager import DatabaseManager
+                    db_local = DatabaseManager()
+                    db_local.set_config("MODO_RED", modo.value)
+                    db_local.set_config("SERVER_URL", (url.value or "").strip())
+            except (ValueError, OSError) as exc:
+                estado.value = str(exc)
+                estado.color = N.RED_400
+                page.update()
+                return
             cerrar_dialogo(page)
-            estado.value = "Configuración guardada. Reiniciá el POS."
-            page.update()
-        dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
+            from ui.helpers import snack
+            snack(page, "Conexión guardada en esta terminal. Reiniciá el POS.")
+
+        dlg = ft.AlertDialog(
+            modal=True, title=ft.Text("Conexión de esta terminal"),
             content=ft.Column([modo, url, estado], tight=True, spacing=12),
-            actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
-                     ft.FilledButton("Guardar", on_click=guardar)])
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
+                ft.FilledButton("Guardar", on_click=guardar),
+            ],
+        )
         abrir_dialogo(page, dlg)
 
     tarjeta = ft.Container(

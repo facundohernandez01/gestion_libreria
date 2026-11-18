@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager, contextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Header, Request
+from core.pos_cajas import ensure_schema as ensure_caja_schema, validate_owner as validate_caja_owner, unassigned_open
 from pydantic import BaseModel
 
 DB_PATH = os.getenv("DB_PATH", "libreria.db")
@@ -313,9 +314,14 @@ def historial_cajas(filtro: str = "", desde: str = "", hasta: str = "",
 
 
 @app.get("/cajas/{caja_id}/ventas")
-def ventas_por_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+def ventas_por_caja(caja_id: int, x_api_key: str | None = Header(default=None),
+                    x_terminal_id: str = Header(default=""),
+                    authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        validate_caja_owner(conn, caja_id, x_terminal_id)
         rows = conn.execute("""SELECT v.*, COUNT(vi.id) AS items_count FROM ventas v
             LEFT JOIN venta_items vi ON v.id=vi.venta_id
             WHERE v.caja_id=? AND v.estado='completada'
@@ -323,50 +329,162 @@ def ventas_por_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
         return [dict(row) for row in rows]
 
 
+def _operator_for_terminal(conn, terminal_id: str, authorization: str | None, permission: str):
+    """Para peticiones identificadas, la API key LAN no sustituye la sesión POS."""
+    if not terminal_id:
+        return ""
+    from pos_auth import require_terminal_permission
+    return require_terminal_permission(conn, authorization, terminal_id, permission)
+
+
 @app.get("/cajas/abierta")
-def caja_abierta(x_api_key: str | None = Header(default=None)):
+def caja_abierta(x_api_key: str | None = Header(default=None),
+                 x_terminal_id: str = Header(default=""),
+                 authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
-        row = conn.execute("SELECT * FROM cajas WHERE estado='abierta' ORDER BY id DESC LIMIT 1").fetchone()
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "CAJA")
+        # No seleccionar la caja de otro POS ni adjudicarse cajas heredadas.
+        if x_terminal_id:
+            row = conn.execute(
+                "SELECT * FROM cajas WHERE estado='abierta' AND terminal_id=? "
+                "ORDER BY id DESC LIMIT 1", (x_terminal_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM cajas WHERE estado='abierta' AND terminal_id IS NULL "
+                "ORDER BY id DESC LIMIT 1"
+            ).fetchone()
     return dict(row) if row else None
+
+
+@app.get("/cajas/sin-terminal")
+def cajas_sin_terminal(x_api_key: str | None = Header(default=None),
+                       x_terminal_id: str = Header(default=""),
+                       authorization: str | None = Header(default=None)):
+    """Sólo un administrador conectado puede revisar las cajas históricas."""
+    _auth(x_api_key)
+    with _connect() as conn:
+        ensure_caja_schema(conn)
+        if not x_terminal_id:
+            raise HTTPException(401, "Se requiere sesión de terminal")
+        _operator_for_terminal(conn, x_terminal_id, authorization, "CONFIGURACION")
+        return [dict(row) for row in conn.execute(
+            "SELECT id,fecha_apertura,importe_apertura,estado FROM cajas "
+            "WHERE estado='abierta' AND terminal_id IS NULL ORDER BY id"
+        )]
+
+
+class AdoptCajaIn(BaseModel):
+    confirmacion: str
+
+
+@app.post("/cajas/{caja_id}/asociar-terminal")
+def asociar_caja_heredada(caja_id: int, body: AdoptCajaIn,
+                          x_api_key: str | None = Header(default=None),
+                          x_terminal_id: str = Header(default=""),
+                          authorization: str | None = Header(default=None)):
+    """Adopción administrativa explícita; nunca asignar cajas por orden de apertura."""
+    _auth(x_api_key)
+    if body.confirmacion != "ASOCIAR CAJA EXISTENTE":
+        raise HTTPException(400, "Confirmación administrativa requerida")
+    with _tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_caja_schema(conn)
+        if not x_terminal_id:
+            raise HTTPException(401, "Se requiere una terminal autenticada")
+        operador = _operator_for_terminal(
+            conn, x_terminal_id, authorization, "CONFIGURACION"
+        )
+        current = conn.execute(
+            "SELECT id FROM cajas WHERE id=? AND estado='abierta' "
+            "AND terminal_id IS NULL", (caja_id,),
+        ).fetchone()
+        if not current:
+            raise HTTPException(409, "La caja no está abierta o ya tiene terminal")
+        exists = conn.execute(
+            "SELECT 1 FROM cajas WHERE terminal_id=? AND estado='abierta'",
+            (x_terminal_id,),
+        ).fetchone()
+        if exists:
+            raise HTTPException(409, "Esta terminal ya tiene una caja abierta")
+        conn.execute(
+            "UPDATE cajas SET terminal_id=? WHERE id=? AND terminal_id IS NULL",
+            (x_terminal_id, caja_id),
+        )
+        conn.execute("""CREATE TABLE IF NOT EXISTS pos_caja_auditoria (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            caja_id INTEGER NOT NULL,
+            terminal_id TEXT NOT NULL,
+            operador TEXT NOT NULL,
+            accion TEXT NOT NULL,
+            fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        conn.execute(
+            "INSERT INTO pos_caja_auditoria "
+            "(caja_id,terminal_id,operador,accion) VALUES (?,?,?,?)",
+            (caja_id, x_terminal_id, operador, "ASOCIACION_CAJA_HISTORICA"),
+        )
+        return {"ok": True, "caja_id": caja_id, "terminal_id": x_terminal_id}
 
 
 @app.post("/cajas/abrir")
 def abrir_caja(importe_apertura: float = 0.0, observaciones: str = "",
-               x_api_key: str | None = Header(default=None)):
-    """Paridad con DatabaseManager.abrir_caja; una sola caja activa por servidor."""
+               x_api_key: str | None = Header(default=None),
+               x_terminal_id: str = Header(default=""),
+               authorization: str | None = Header(default=None)):
+    """Una caja por terminal POS; varias terminales pueden abrir en paralelo."""
     _auth(x_api_key)
     import math
-
     if not math.isfinite(importe_apertura) or importe_apertura < 0:
         raise HTTPException(422, "Importe de apertura inválido")
     with _tx() as conn:
-        # BEGIN IMMEDIATE evita dos aperturas simultáneas desde cajas distintas.
         conn.execute("BEGIN IMMEDIATE")
-        if conn.execute("SELECT 1 FROM cajas WHERE estado='abierta' LIMIT 1").fetchone():
-            raise HTTPException(409, "Ya hay una caja abierta")
+        ensure_caja_schema(conn)
+        operador = _operator_for_terminal(conn, x_terminal_id, authorization, "CAJA")
+        if x_terminal_id:
+            if unassigned_open(conn):
+                raise HTTPException(
+                    409, "Existe una caja antigua sin terminal: "
+                         "un administrador debe asociarla antes de abrir nuevas cajas"
+                )
+            exists = conn.execute(
+                "SELECT 1 FROM cajas WHERE estado='abierta' AND terminal_id=? LIMIT 1",
+                (x_terminal_id,),
+            ).fetchone()
+        else:
+            # Compatibilidad sólo para clientes legacy y caja única.
+            exists = conn.execute(
+                "SELECT 1 FROM cajas WHERE estado='abierta' LIMIT 1"
+            ).fetchone()
+        if exists:
+            raise HTTPException(409, "Esta terminal ya tiene una caja abierta")
         cur = conn.execute(
             """INSERT INTO cajas
-               (fecha_apertura, importe_apertura, observaciones_apertura, estado)
-               VALUES (CURRENT_TIMESTAMP, ?, ?, 'abierta')""",
-            (importe_apertura, observaciones),
+               (fecha_apertura, importe_apertura, observaciones_apertura,
+                usuario_apertura, terminal_id, estado)
+               VALUES (CURRENT_TIMESTAMP, ?, ?, ?, ?, 'abierta')""",
+            (importe_apertura, observaciones, operador, x_terminal_id or None),
         )
         return {"id": int(cur.lastrowid)}
 
 
 @app.post("/cajas/{caja_id}/cerrar")
 def cerrar_caja(caja_id: int, observaciones: str = "",
-                x_api_key: str | None = Header(default=None)):
-    """Persiste cierre, gastos y ventas reales; rechaza cobros de tótem sin resolver."""
+                x_api_key: str | None = Header(default=None),
+                x_terminal_id: str = Header(default=""),
+                authorization: str | None = Header(default=None)):
+    """Cierra sólo la caja de la terminal autenticada y sin QR pendientes."""
     _auth(x_api_key)
     with _tx() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        ensure_caja_schema(conn)
+        operador = _operator_for_terminal(conn, x_terminal_id, authorization, "CAJA")
+        validate_caja_owner(conn, caja_id, x_terminal_id, require_open=True)
         caja = conn.execute(
-            "SELECT importe_apertura FROM cajas WHERE id=? AND estado='abierta'",
-            (caja_id,),
+            "SELECT importe_apertura FROM cajas WHERE id=?", (caja_id,),
         ).fetchone()
-        if caja is None:
-            raise HTTPException(409, "Caja inexistente o ya cerrada")
 
         # Los cobros de IntraShop tienen reservas persistidas: cerrar antes de
         # registrar la venta produciría un importe de cierre incorrecto.
@@ -398,9 +516,10 @@ def cerrar_caja(caja_id: int, observaciones: str = "",
         conn.execute(
             """UPDATE cajas SET fecha_cierre=CURRENT_TIMESTAMP,
                importe_cierre=?, total_ventas=?, total_gastos=?,
-               observaciones_cierre=?, estado='cerrada'
+               observaciones_cierre=?, usuario_cierre=?, estado='cerrada'
                WHERE id=? AND estado='abierta'""",
-            (importe_cierre, total_ventas, total_gastos, observaciones, caja_id),
+            (importe_cierre, total_ventas, total_gastos,
+             observaciones, operador, caja_id),
         )
         return {"ok": True}
 
@@ -413,7 +532,9 @@ class VentaIn(BaseModel):
 
 
 @app.post("/ventas")
-def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None)):
+def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None),
+                x_terminal_id: str = Header(default=""),
+                authorization: str | None = Header(default=None)):
     """Venta HTTP transaccional; suma cantidades repetidas y respeta reservas."""
     _auth(x_api_key)
     from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
@@ -443,10 +564,9 @@ def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None)):
     with _tx() as conn:
         # Serializar también contra reservas de tótems y otras escrituras SQLite.
         conn.execute("BEGIN IMMEDIATE")
-        if not conn.execute(
-            "SELECT id FROM cajas WHERE id=? AND estado='abierta'", (body.caja_id,)
-        ).fetchone():
-            raise HTTPException(409, "Caja no abierta")
+        ensure_caja_schema(conn)
+        operador = _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        validate_caja_owner(conn, body.caja_id, x_terminal_id, require_open=True)
         checkout_store.ensure_schema(conn)
         stocks: dict[int, int] = {}
         for pid, required in cantidades.items():
@@ -462,9 +582,9 @@ def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None)):
         monto = total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         cur = conn.execute(
             """INSERT INTO ventas
-               (caja_id, fecha, total, estado, metodo_pago, comprobante)
-               VALUES (?, CURRENT_TIMESTAMP, ?, 'completada', ?, ?)""",
-            (body.caja_id, float(monto), body.metodo_pago, body.comprobante or ""),
+               (caja_id, fecha, total, estado, metodo_pago, comprobante, usuario)
+               VALUES (?, CURRENT_TIMESTAMP, ?, 'completada', ?, ?, ?)""",
+            (body.caja_id, float(monto), body.metodo_pago, body.comprobante or "", operador),
         )
         venta_id = int(cur.lastrowid)
         for pid, qty, price in items:
@@ -495,9 +615,14 @@ def crear_venta(body: VentaIn, x_api_key: str | None = Header(default=None)):
 
 
 @app.get("/ventas/dia/{caja_id}")
-def ventas_dia(caja_id: int, x_api_key: str | None = Header(default=None)):
+def ventas_dia(caja_id: int, x_api_key: str | None = Header(default=None),
+               x_terminal_id: str = Header(default=""),
+               authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        validate_caja_owner(conn, caja_id, x_terminal_id)
         rows = conn.execute(
             """SELECT v.*, COUNT(vi.id) AS items_count FROM ventas v
                LEFT JOIN venta_items vi ON v.id = vi.venta_id
@@ -507,9 +632,17 @@ def ventas_dia(caja_id: int, x_api_key: str | None = Header(default=None)):
 
 
 @app.get("/ventas/{venta_id}/items")
-def items_venta(venta_id: int, x_api_key: str | None = Header(default=None)):
+def items_venta(venta_id: int, x_api_key: str | None = Header(default=None),
+                x_terminal_id: str = Header(default=""),
+                authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        venta = conn.execute("SELECT caja_id FROM ventas WHERE id=?", (venta_id,)).fetchone()
+        if venta is None:
+            raise HTTPException(404, "Venta inexistente")
+        validate_caja_owner(conn, venta["caja_id"], x_terminal_id)
         rows = conn.execute(
             """SELECT vi.*, p.descripcion AS producto_nombre FROM venta_items vi
                JOIN productos p ON vi.producto_id = p.id WHERE vi.venta_id=?""", (venta_id,)).fetchall()
@@ -524,9 +657,20 @@ class FacturaIn(BaseModel):
 
 
 @app.post("/ventas/factura")
-def actualizar_factura(body: FacturaIn, x_api_key: str | None = Header(default=None)):
+def actualizar_factura(body: FacturaIn, x_api_key: str | None = Header(default=None),
+                       x_terminal_id: str = Header(default=""),
+                       authorization: str | None = Header(default=None)):
     _auth(x_api_key)
     with _tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "VENTAS")
+        venta = conn.execute(
+            "SELECT caja_id FROM ventas WHERE id=?", (body.venta_id,),
+        ).fetchone()
+        if venta is None:
+            raise HTTPException(404, "Venta inexistente")
+        validate_caja_owner(conn, venta["caja_id"], x_terminal_id)
         conn.execute(
             "UPDATE ventas SET numero_factura=?, cae=?, vencimiento_cae=? WHERE id=?",
             (body.numero_factura, body.cae, body.vencimiento_cae, body.venta_id),
@@ -786,16 +930,44 @@ def api_ventas_detalle(desde: str, hasta: str, x_api_key: str | None = Header(de
 
 
 @app.get("/cajas/{caja_id}/gastos")
-def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None),
+                    x_terminal_id: str = Header(default=""),
+                    authorization: str | None = Header(default=None)):
     _auth(x_api_key)
-    return _gestor_reposicion().obtener_gastos_caja(caja_id)
+    with _connect() as conn:
+        ensure_caja_schema(conn)
+        _operator_for_terminal(conn, x_terminal_id, authorization, "CAJA")
+        validate_caja_owner(conn, caja_id, x_terminal_id)
+        return [dict(row) for row in conn.execute(
+            "SELECT * FROM gastos WHERE caja_id=? ORDER BY fecha DESC", (caja_id,),
+        )]
 
 
 @app.post("/cajas/{caja_id}/gastos")
-def api_agregar_gasto(caja_id: int, body: dict, x_api_key: str | None = Header(default=None)):
+def api_agregar_gasto(caja_id: int, body: dict,
+                      x_api_key: str | None = Header(default=None),
+                      x_terminal_id: str = Header(default=""),
+                      authorization: str | None = Header(default=None)):
     _auth(x_api_key)
-    with _write_lock:
-        return {"id": _gestor_reposicion().agregar_gasto(caja_id, body["monto"], body["concepto"])}
+    from decimal import Decimal, InvalidOperation
+    try:
+        monto = Decimal(str(body["monto"]))
+    except (KeyError, ValueError, TypeError, InvalidOperation):
+        raise HTTPException(422, "Monto de gasto inválido") from None
+    concepto = str(body.get("concepto") or "").strip()
+    if not monto.is_finite() or monto <= 0 or not concepto:
+        raise HTTPException(422, "Ingresá un concepto y un monto válido")
+    with _tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_caja_schema(conn)
+        operador = _operator_for_terminal(conn, x_terminal_id, authorization, "CAJA")
+        validate_caja_owner(conn, caja_id, x_terminal_id, require_open=True)
+        result = conn.execute(
+            "INSERT INTO gastos(caja_id,monto,concepto,fecha,usuario) "
+            "VALUES(?,?,?,CURRENT_TIMESTAMP,?)",
+            (caja_id, float(monto), concepto, operador),
+        )
+        return {"id": int(result.lastrowid)}
 
 
 @app.get("/admin/datos/conteos")

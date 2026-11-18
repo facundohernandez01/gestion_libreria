@@ -43,7 +43,10 @@ def _server_url() -> str:
     # IntraShop no debe leer configuración de conexión desde una SQLite
     # potencialmente distinta de la base del servidor.
     if es_edicion_intrashop():
-        return url or settings.server_url or "http://127.0.0.1:8000"
+        # Preferencia guardada en la terminal física, no en la SQLite del
+        # servidor ni en un archivo compartido con otras cajas.
+        from core.pos_client_settings import leer_server_url
+        return leer_server_url() or url or settings.server_url or "http://127.0.0.1:8000"
     try:
         from database_manager import DatabaseManager
 
