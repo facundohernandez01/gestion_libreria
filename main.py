@@ -295,10 +295,15 @@ class LibreriaApp:
             self.mostrar_activacion_licencia()
             return
 
-        try:
-            primer_uso = bool(self.db.es_primer_uso())
-        except AttributeError:
-            primer_uso = False
+        # En modo POS cliente, es_primer_uso usa un endpoint protegido
+        # por CONFIGURACION. Consultarlo antes del login impedía iniciar sesión
+        # y también bloqueaba operadores sin permisos administrativos.
+        primer_uso = False
+        if self.modo != "cliente":
+            try:
+                primer_uso = bool(self.db.es_primer_uso())
+            except AttributeError:
+                primer_uso = False
         if primer_uso:
             self.mostrar_primer_uso()
             return
