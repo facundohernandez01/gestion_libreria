@@ -315,7 +315,49 @@ class LibreriaApp:
         if self.modo_web == "stock":
             self.mostrar_ingreso_stock()
             return
-        caja = self.db.obtener_caja_abierta()
+        try:
+            caja = self.db.obtener_caja_abierta()
+        except Exception as exc:
+            import httpx
+
+            if self.modo == "cliente" and isinstance(exc, httpx.HTTPStatusError):
+                if exc.response.status_code == 403 and not self._puede("CAJA"):
+                    # Roles de entregas/solo lectura pueden ingresar sin caja.
+                    self.caja_actual = 0
+                    self.mostrar_ventana_principal()
+                    return
+                if exc.response.status_code in (401, 403):
+                    from adapters.entregas import set_session
+                    from ui.helpers import snack
+
+                    set_session(None)
+                    self.autenticado = False
+                    self.caja_actual = None
+                    self._restauracion_intentada = True
+                    self.mostrar_login()
+                    snack(self.page, "La sesión POS Server venció o perdió permisos. "
+                                    "Ingresá nuevamente.", ok=False)
+                    return
+            if self.modo == "cliente" and isinstance(exc, httpx.RequestError):
+                self._set_vista(ft.Column(
+                    [
+                        ft.Icon(ft.Icons.WIFI_OFF, size=52),
+                        ft.Text("Sin conexión a POS Server",
+                                size=23, weight=ft.FontWeight.BOLD),
+                        ft.Text("No se pudo consultar la caja de esta terminal. "
+                                "Revisá la red y el servidor."),
+                        ft.OutlinedButton(
+                            "Reintentar conexión",
+                            icon=ft.Icons.REFRESH,
+                            on_click=lambda e: self.iniciar(),
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    expand=True,
+                ))
+                return
+            raise
         if caja:
             self.caja_actual = caja["id"]
             self.mostrar_ventana_principal()
