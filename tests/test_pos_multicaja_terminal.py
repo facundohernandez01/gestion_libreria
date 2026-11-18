@@ -352,3 +352,76 @@ def test_fastapi_http_apertura_autenticada_y_rechazo_por_terminal(db):
     assert client.post(
         f"/cajas/{caja}/cerrar", headers=auth_a,
     ).status_code == 200
+
+
+
+def test_login_pos_real_preserva_una_sola_sesion_y_accede_a_su_caja(db, monkeypatch):
+    """Reproduce el 200/login seguido del 403/cajas de la interfaz Flet."""
+    from fastapi.testclient import TestClient
+    from adapters import entregas
+    from core.pos_operator_session import preparar_sesion_operador
+
+    db_path, product_id = db
+    monkeypatch.setattr(pos_auth, "DatabaseManager", lambda: DatabaseManager(db_path))
+    monkeypatch.setattr(terminal_identity, "terminal_id", lambda: TERM_A)
+    asgi = TestClient(api.app)
+    calls = []
+
+    def proxy_post(url, **kwargs):
+        calls.append(("POST", url, kwargs))
+        assert url.startswith("http://127.0.0.1:8000/")
+        return asgi.post(
+            url.removeprefix("http://127.0.0.1:8000"),
+            json=kwargs.get("json"), params=kwargs.get("params"),
+            headers=kwargs.get("headers"),
+        )
+
+    def proxy_get(url, **kwargs):
+        calls.append(("GET", url, kwargs))
+        return asgi.get(
+            url.removeprefix("http://127.0.0.1:8000"),
+            params=kwargs.get("params"), headers=kwargs.get("headers"),
+        )
+
+    monkeypatch.setattr(httpx, "post", proxy_post)
+    monkeypatch.setattr(httpx, "get", proxy_get)
+    client = ApiClient("http://127.0.0.1:8000", KEY)
+    try:
+        user = client.autenticar_usuario("admin", "admin")
+        assert user and user["es_admin"]
+        first_token = entregas._session_token
+        assert first_token
+        assert preparar_sesion_operador("cliente", "admin", "admin")
+        assert entregas._session_token == first_token
+        assert len([request for request in calls if "/pos/auth/login" in request[1]]) == 1
+        assert calls[0][2]["headers"]["X-Terminal-Id"] == TERM_A
+
+        # La petición de caja debe aceptar el bearer del PR #5, no dar 403.
+        assert client.obtener_caja_abierta() is None
+        caja_id = client.abrir_caja(100, "Turno de prueba")
+        assert caja_id > 0
+        assert client.obtener_caja_abierta()["id"] == caja_id
+        venta_id, ok = client.crear_venta(
+            caja_id, [{"producto_id": product_id, "cantidad": 1,
+                       "precio_unitario": 10}],
+        )
+        assert ok and venta_id > 0
+        assert client.obtener_ventas_del_dia(caja_id)[0]["id"] == venta_id
+        assert client.cerrar_caja(caja_id)
+        client.cerrar_sesion_remota()
+        assert entregas._session_token is None
+        assert client.autenticar_usuario("admin", "contraseña inválida") is None
+        assert entregas._session_token is None
+    finally:
+        entregas.set_session(None)
+
+
+def test_formulario_login_no_emite_un_segundo_bearer_sin_terminal():
+    """Evita que un cambio de UI vuelva a sobrescribir el bearer válido."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] /
+              "componente_login.py").read_text(encoding="utf-8")
+    assert '"/pos/auth/login"' not in source
+    assert 'preparar_sesion_operador(' in source
+    assert 'modo != "cliente"' in source
