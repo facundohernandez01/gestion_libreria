@@ -1,6 +1,7 @@
 ---
 import "../styles/global.css";
 const title = "IntraShop · Tu tienda local";
+const basePath = import.meta.env.BASE_URL;
 ---
 <!doctype html>
 <html lang="es">
@@ -13,8 +14,8 @@ const title = "IntraShop · Tu tienda local";
   </head>
   <body>
     <header class="topbar">
-      <a class="brand" href="/intrashop/" aria-label="IntraShop inicio">
-        <img class="brand-logo" src="/intrashop-logo.svg" width="43" height="43" alt=""/>
+      <a class="brand" href={basePath} aria-label="IntraShop inicio">
+        <img class="brand-logo" src={basePath + "intrashop-logo.svg"} width="43" height="43" alt=""/>
         <span>Intra<span class="brand-accent">Shop</span><small>TIENDA LOCAL</small></span>
       </a>
       <div class="header-actions">
@@ -54,7 +55,7 @@ const title = "IntraShop · Tu tienda local";
       </section>
     </main>
 
-    <footer><span class="footer-brand">IntraShop</span><span>Compras dentro de la red local del comercio.</span><a href="/intrashop/admin">Administración de tienda ↗</a></footer>
+    <footer><span class="footer-brand">IntraShop</span><span>Compras dentro de la red local del comercio.</span><a href={basePath + "admin/"}>Administración de tienda ↗</a></footer>
 
     <div id="drawer-backdrop" class="drawer-backdrop" hidden></div>
     <aside id="cart-drawer" class="cart-drawer" aria-label="Carrito de compras" aria-hidden="true">
@@ -86,10 +87,11 @@ const title = "IntraShop · Tu tienda local";
       const placeholder = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" rx="24" fill="#f0f2fa"/><rect x="142" y="80" width="116" height="130" rx="16" fill="#e2e5f5"/><path d="M170 80v-8a30 30 0 0 1 60 0v8" fill="none" stroke="#a6acd0" stroke-width="9" stroke-linecap="round"/><path d="M184 145l12 12 25-27" fill="none" stroke="#8d82d9" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>');
       let products:Product[] = [];
       let cart:CartItem[] = [];
-      const defaultApiBase = window.location.port === "8000" ? window.location.origin : (window.location.protocol + "//" + window.location.hostname + ":8000");
+      const isDesktop = ["tauri:", "asset:"].includes(window.location.protocol) || window.location.hostname === "tauri.localhost";
+      const defaultApiBase = isDesktop ? "http://127.0.0.1:8000" : (window.location.port === "8000" ? window.location.origin : (window.location.protocol + "//" + window.location.hostname + ":8000"));
       const storedApiBase = localStorage.getItem("intrashop_api");
       // Un localhost guardado en otro equipo siempre apunta a ese otro equipo.
-      const safeStoredApi = storedApiBase && !storedApiBase.includes("localhost") && !storedApiBase.includes("127.0.0.1") ? storedApiBase : "";
+      const safeStoredApi = storedApiBase && (isDesktop || (!storedApiBase.includes("localhost") && !storedApiBase.includes("127.0.0.1"))) ? storedApiBase : "";
       let apiBase = window.location.port === "8000" ? window.location.origin : (safeStoredApi || import.meta.env.PUBLIC_POS_URL || defaultApiBase);
       // El catálogo es público en la LAN. Nunca insertar claves en el frontend.
       let totemId = localStorage.getItem("intrashop_totem_id");
@@ -146,7 +148,7 @@ const title = "IntraShop · Tu tienda local";
           $("catalog").innerHTML = "";
           $("connection-message").classList.remove("success");
           $("connection-message").innerHTML = "No se pudo consultar el catálogo: "+escapeHtml(error instanceof Error ? error.message : String(error))+" · Servidor: "+escapeHtml(apiBase)+" <button id=\"connection-config\" class=\"text-button\">Configurar conexión</button>";
-          $("connection-config")?.addEventListener("click", ()=>{window.location.href="/intrashop/admin";});
+          $("connection-config")?.addEventListener("click", ()=>{window.location.href=import.meta.env.BASE_URL+"admin/";});
           $("empty-state").hidden = true;
         }
       }
