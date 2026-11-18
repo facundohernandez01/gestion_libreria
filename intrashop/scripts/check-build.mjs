@@ -5,7 +5,7 @@ import { join } from "node:path";
 const target = process.argv[2];
 assert.ok(["tauri", "server"].includes(target), "Uso: node scripts/check-build.mjs [tauri|server]");
 const base = target === "tauri" ? "/" : "/intrashop/";
-const dist = new URL("../dist/", import.meta.url);
+const dist = new URL(`../${target === "tauri" ? "dist-tauri" : "dist"}/`, import.meta.url);
 const root = decodeURIComponent(dist.pathname);
 
 for (const page of ["index.html", "admin/index.html", "entregas/index.html"]) {
