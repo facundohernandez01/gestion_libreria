@@ -16,6 +16,7 @@ class ApiClient:
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self._headers = {"X-API-Key": api_key}
+        self.ultimo_error_caja = ""
 
     def _pos_headers(self):
         from core.terminal_identity import terminal_id
@@ -179,6 +180,7 @@ class ApiClient:
         return self._get("/cajas/abierta")
 
     def abrir_caja(self, importe_apertura: float = 0.0, observaciones: str = ""):
+        self.ultimo_error_caja = ""
         try:
             result = self._post("/cajas/abrir", params={
                 "importe_apertura": importe_apertura, "observaciones": observaciones
@@ -186,6 +188,12 @@ class ApiClient:
             return int(result["id"])
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (400, 409, 422):
+                try:
+                    self.ultimo_error_caja = str(
+                        exc.response.json().get("detail") or "No se pudo abrir la caja"
+                    )
+                except ValueError:
+                    self.ultimo_error_caja = "No se pudo abrir la caja"
                 return 0
             raise
 
