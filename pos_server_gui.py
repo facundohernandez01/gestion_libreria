@@ -477,7 +477,14 @@ class ServerConsole:
                 kind, payload = self._ui_queue.get_nowait()
                 if kind == "snapshot":
                     self._loading = False
-                    self._render(*payload)
+                    try:
+                        self._render(*payload)
+                    except Exception as exc:
+                        self.summary.set("No se pudieron mostrar los dispositivos")
+                        self.notice.set(
+                            "Error dibujando el panel: " + str(exc) +
+                            " · Pulsá Actualizar para reintentar."
+                        )
                 elif kind == "snapshot_error":
                     self._loading = False
                     self.summary.set("No se pudieron cargar los dispositivos")
