@@ -101,3 +101,49 @@ def logout(authorization: str | None = Header(default=None)):
         with _lock:
             _sessions.pop(authorization[7:], None)
     return {"ok": True}
+
+
+def require_terminal_permission(
+    conn, authorization: str | None, terminal_id: str, permiso: str,
+) -> str:
+    """Valida sesión POS y terminal original en cada operación de caja.
+
+    X-Terminal-Id por sí solo no es autenticación: el token emitido en
+    /pos/auth/login debe estar vinculado al mismo ID. Los permisos se
+    reevalúan desde la base en cada solicitud.
+    """
+    import re
+
+    terminal = (terminal_id or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{7,99}", terminal):
+        raise HTTPException(400, "ID de terminal POS inválido")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(401, "Iniciá sesión en esta terminal POS")
+    token = authorization[7:]
+    with _lock:
+        session = _sessions.get(token)
+        if not session or session[1] <= time.time():
+            _sessions.pop(token, None)
+            raise HTTPException(401, "Sesión POS vencida")
+    if session[3] != terminal:
+        raise HTTPException(403, "La sesión POS pertenece a otra terminal")
+
+    row = conn.execute(
+        """SELECT u.activo, r.es_admin, r.permisos FROM usuarios u
+           LEFT JOIN roles r ON r.id=u.rol_id
+           WHERE u.usuario=? COLLATE NOCASE""",
+        (session[0],),
+    ).fetchone()
+    if row:
+        if not row["activo"]:
+            raise HTTPException(403, "Usuario POS inactivo")
+        if not tiene(normalizar(row["permisos"]), permiso, bool(row["es_admin"])):
+            raise HTTPException(403, "El rol no tiene permiso " + permiso)
+    else:
+        legacy = conn.execute(
+            "SELECT valor FROM config WHERE clave='LOGIN_USUARIO'"
+        ).fetchone()
+        legacy_user = (legacy[0] if legacy and legacy[0] else "admin").strip()
+        if not session[2] or session[0] != legacy_user:
+            raise HTTPException(403, "Usuario POS no autorizado")
+    return session[0]
