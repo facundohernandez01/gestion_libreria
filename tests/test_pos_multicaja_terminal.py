@@ -285,3 +285,70 @@ def test_cliente_http_envia_sesion_y_terminal_sin_claves_en_url(monkeypatch):
         assert kwargs["headers"]["X-API-Key"] == KEY
     finally:
         set_session(None)
+
+
+
+def test_items_y_facturacion_no_permiten_acceder_a_ventas_de_otra_caja(db):
+    path, pid = db
+    a, b = _open(), _open(TERM_B, TOKEN_B)
+    venta_a = _sale(a, pid, 1)["venta_id"]
+    assert len(api.items_venta(venta_a, **headers())) == 1
+    with pytest.raises(HTTPException) as err:
+        api.items_venta(venta_a, **headers(TERM_B, TOKEN_B))
+    assert err.value.status_code == 403
+
+    factura = api.FacturaIn(
+        venta_id=venta_a, numero_factura="TEST-001",
+        cae="CAETEST", vencimiento_cae="2026-11-30",
+    )
+    with pytest.raises(HTTPException) as err:
+        api.actualizar_factura(factura, **headers(TERM_B, TOKEN_B))
+    assert err.value.status_code == 403
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT numero_factura FROM ventas WHERE id=?", (venta_a,)
+        ).fetchone()[0] is None
+
+    assert api.actualizar_factura(factura, **headers()) == {"ok": True}
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT numero_factura FROM ventas WHERE id=?", (venta_a,)
+        ).fetchone()[0] == "TEST-001"
+
+
+def test_fastapi_http_apertura_autenticada_y_rechazo_por_terminal(db):
+    from fastapi.testclient import TestClient
+    client = TestClient(api.app)  # sin lifespan: no iniciar reconciliaciones de MP
+    auth_a = {
+        "X-API-Key": KEY,
+        "X-Terminal-Id": TERM_A,
+        "Authorization": "Bearer " + TOKEN_A,
+    }
+    auth_b = {
+        "X-API-Key": KEY,
+        "X-Terminal-Id": TERM_B,
+        "Authorization": "Bearer " + TOKEN_B,
+    }
+    opened = client.post(
+        "/cajas/abrir", params={"importe_apertura": 10},
+        headers=auth_a,
+    )
+    assert opened.status_code == 200, opened.text
+    caja = opened.json()["id"]
+    assert client.get("/cajas/abierta", headers=auth_a).json()["id"] == caja
+    assert client.get("/cajas/abierta", headers=auth_b).json() is None
+    assert client.post("/cajas/abrir", params={
+        "importe_apertura": 20
+    }, headers=auth_b).status_code == 200
+    assert client.post(
+        f"/cajas/{caja}/cerrar", headers=auth_b,
+    ).status_code == 403
+    assert client.post(
+        f"/cajas/{caja}/cerrar", headers={
+            "X-API-Key": KEY, "X-Terminal-Id": TERM_A,
+            "Authorization": "Bearer " + TOKEN_B,
+        },
+    ).status_code == 403
+    assert client.post(
+        f"/cajas/{caja}/cerrar", headers=auth_a,
+    ).status_code == 200
