@@ -1,11 +1,12 @@
 ---
 import "../styles/global.css";
+const basePath = import.meta.env.BASE_URL;
 ---
 <!doctype html>
 <html lang="es">
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Administración · IntraShop</title></head>
-<body>
-<header class="topbar"><a class="brand" href="/intrashop/"><img src="/intrashop-logo.svg" width="43" height="43" alt=""/><span>Intra<span class="brand-accent">Shop</span><small>ADMINISTRACIÓN</small></span></a><div style="display:flex;gap:18px"><a class="admin-back" href="/intrashop/entregas">Comandas y entregas</a><a class="admin-back" href="/intrashop/">← Volver a la tienda</a></div></header>
+<body data-pos-url={import.meta.env.PUBLIC_POS_URL || ""}>
+<header class="topbar"><a class="brand" href={basePath}><img src={basePath + "intrashop-logo.svg"} width="43" height="43" alt=""/><span>Intra<span class="brand-accent">Shop</span><small>ADMINISTRACIÓN</small></span></a><div style="display:flex;gap:18px"><a class="admin-back" href={basePath + "entregas/"}>Comandas y entregas</a><a class="admin-back" href={basePath}>← Volver a la tienda</a></div></header>
 <main class="admin-main">
 <section class="admin-heading"><span class="section-kicker">CONFIGURACIÓN LOCAL</span><h1>Administración de tienda</h1><p>Configurá la conexión con el POS. Estos datos se guardan en este dispositivo, sin servicios externos.</p></section>
 <div class="admin-layout">
@@ -21,16 +22,18 @@ import "../styles/global.css";
 <p class="admin-hint">No incrustes claves privadas en una compilación pública. Para producción, preferí un proxy local autenticado y dispositivos administrados.</p>
 <h2>Estado del servidor</h2><div id="server-state" class="admin-server-state">Sin comprobar</div>
 </section></div></main>
-<footer><span class="footer-brand">IntraShop</span><span>Panel local de configuración</span><a href="/intrashop/">Ir al catálogo</a></footer>
+<footer><span class="footer-brand">IntraShop</span><span>Panel local de configuración</span><a href={basePath}>Ir al catálogo</a></footer>
 <script is:inline>
 (() => {
   const $ = (id) => document.getElementById(id);
   const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "terminal-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
   const url = $("server-url"), name = $("totem-name");
   const status = $("admin-status"), state = $("server-state");
-  const origin = location.port === "8000" ? location.origin : location.protocol + "//" + location.hostname + ":8000";
+  const isDesktop = ["tauri:", "asset:"].includes(location.protocol) || location.hostname === "tauri.localhost";
+  const origin = location.port === "8000" ? location.origin : (isDesktop ? "http://127.0.0.1:8000" : location.protocol + "//" + location.hostname + ":8000");
+  const configuredPos = document.body.dataset.posUrl || "";
   const stored = localStorage.getItem("intrashop_api") || "";
-  const defaultUrl = stored && !stored.includes("localhost") && !stored.includes("127.0.0.1") ? stored : origin;
+  const defaultUrl = stored && (isDesktop || (!stored.includes("localhost") && !stored.includes("127.0.0.1"))) ? stored : (configuredPos || origin);
   url.value = defaultUrl;
 
   let id = localStorage.getItem("intrashop_totem_id");
@@ -77,7 +80,7 @@ import "../styles/global.css";
       message("Conexión verificada. Ya podés guardar la configuración.", true);
     } catch (error) {
       state.textContent = "Sin conexión";
-      message("Error de conexión: " + error.message + ". Verificá IP, API key y firewall.", false);
+      message("Error de conexión: " + error.message + ". Verificá la IP, el puerto y el firewall.", false);
     } finally { button.disabled = false; button.textContent = "Probar conexión"; }
   });
   $("save-connection").addEventListener("click", async () => {
