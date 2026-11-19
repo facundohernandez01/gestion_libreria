@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_intrashop_cliente_respeta_url_guardada_en_terminal(tmp_path, monkeypatch):
+    monkeypatch.setenv("POS_API_ONLY", "0")
     monkeypatch.setenv("INTRASHOP_EDITION", "1")
     monkeypatch.setenv("SERVER_URL", "http://127.0.0.1:9999")
     path = tmp_path / "preferencias-terminal.db"
@@ -62,6 +63,7 @@ def test_cliente_no_autentica_con_clave_de_config_local(monkeypatch):
 
 
 def test_local_mantiene_fallback_compatibilidad(tmp_path, monkeypatch):
+    monkeypatch.setenv("POS_API_ONLY", "0")
     monkeypatch.setenv("INTRASHOP_EDITION", "0")
     monkeypatch.setenv("MODO_RED", "local")
     monkeypatch.setattr(db_factory.settings, "db_path", str(tmp_path / "local.db"))
@@ -98,7 +100,7 @@ def test_tienda_se_sirve_aunque_build_ocurra_despues_del_arranque(tmp_path, monk
         directory=str(dist), check_dir=False, html=True
     )
     scope = {"type": "http", "method": "GET", "path": "/intrashop/",
-             "root_path": ""}
+             "root_path": "", "headers": []}
 
     # Antes del build: diagnóstico claro, no 404 opaco.
     absent = asyncio.run(static.get_response("", scope))
