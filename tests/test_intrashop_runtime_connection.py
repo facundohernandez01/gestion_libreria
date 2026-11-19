@@ -58,6 +58,7 @@ class FalsoServidorRechazaLogin:
 
 
 def test_cliente_no_autentica_con_clave_de_config_local(monkeypatch):
+    monkeypatch.setenv("POS_API_ONLY", "0")
     monkeypatch.setenv("INTRASHOP_EDITION", "1")
     assert _login_validator()(FalsoServidorRechazaLogin(), "admin", "admin") is False
 
