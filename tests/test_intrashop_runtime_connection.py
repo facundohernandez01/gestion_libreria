@@ -124,3 +124,98 @@ def test_logos_web_usan_prefijo_intrashop(page):
     source = (ROOT / "intrashop" / "src" / "pages" / page).read_text(encoding="utf-8")
     assert 'src="/intrashop/intrashop-logo.svg"' in source
     assert 'src="/intrashop-logo.svg"' not in source
+
+
+def _pos_inicio():
+    """Ejecuta la navegación de arranque sin levantar Flet ni acceder a la DB real."""
+    import utils
+    import types
+    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+    app = next(n for n in tree.body if isinstance(n, ast.ClassDef)
+               and n.name == "LibreriaApp")
+    inicio = next(n for n in app.body if isinstance(n, ast.FunctionDef)
+                  and n.name == "iniciar")
+    ns = {}
+    exec(compile(ast.Module(body=[inicio], type_ignores=[]), "main.py", "exec"), ns)
+    return ns["iniciar"], utils
+
+
+def test_arranque_cliente_no_exige_sesion_admin_antes_de_mostrar_login(monkeypatch):
+    iniciar, utils = _pos_inicio()
+    monkeypatch.setattr(utils, "licencia",
+                        type("LicenciaFake", (), {"esta_activada_local": staticmethod(lambda: True)})(),
+                        raising=False)
+
+    class Db:
+        def es_primer_uso(self):
+            raise AssertionError("Consulta privilegiada antes del login")
+
+    class Pantalla:
+        modo = "cliente"
+        autenticado = False
+        es_web = False
+        es_admin = False
+        db = Db()
+        def __init__(self): self.mostrado = []
+        def mostrar_login(self): self.mostrado.append("login")
+        def mostrar_primer_uso(self): self.mostrado.append("primer_uso")
+
+    pantalla = Pantalla()
+    iniciar(pantalla)
+    assert pantalla.mostrado == ["login"]
+
+
+def test_primer_uso_cliente_se_consulta_despues_del_login_admin(monkeypatch):
+    iniciar, utils = _pos_inicio()
+    monkeypatch.setattr(utils, "licencia",
+                        type("LicenciaFake", (), {"esta_activada_local": staticmethod(lambda: True)})(),
+                        raising=False)
+
+    class Db:
+        def __init__(self): self.consultas = 0
+        def es_primer_uso(self):
+            self.consultas += 1
+            return True
+
+    class Pantalla:
+        modo = "cliente"
+        autenticado = True
+        es_web = False
+        es_admin = True
+        db = Db()
+        def __init__(self): self.mostrado = []
+        def mostrar_primer_uso(self): self.mostrado.append("primer_uso")
+
+    pantalla = Pantalla()
+    iniciar(pantalla)
+    assert pantalla.db.consultas == 1
+    assert pantalla.mostrado == ["primer_uso"]
+
+
+def test_arranque_operador_cliente_no_consulta_endpoint_admin(monkeypatch):
+    iniciar, utils = _pos_inicio()
+    monkeypatch.setattr(utils, "licencia",
+                        type("LicenciaFake", (), {"esta_activada_local": staticmethod(lambda: True)})(),
+                        raising=False)
+
+    class Db:
+        def es_primer_uso(self):
+            raise AssertionError("Un cajero no debe usar la API de administración")
+        def obtener_caja_abierta(self):
+            return {"id": 1}
+
+    class Pantalla:
+        modo = "cliente"
+        autenticado = True
+        es_admin = False
+        modo_web = "admin"
+        es_web = False
+        db = Db()
+        def __init__(self): self.mostrado = []
+        def mostrar_ventana_principal(self): self.mostrado.append("principal")
+        def _puede(self, permiso): return False
+
+    pantalla = Pantalla()
+    iniciar(pantalla)
+    assert pantalla.caja_actual == 1
+    assert pantalla.mostrado == ["principal"]
