@@ -219,3 +219,15 @@ def test_arranque_operador_cliente_no_consulta_endpoint_admin(monkeypatch):
     iniciar(pantalla)
     assert pantalla.caja_actual == 1
     assert pantalla.mostrado == ["principal"]
+
+
+def test_fastapi_compatible_con_flet_web_104():
+    """Flet 1.0.4 pasa openapi_prefix al constructor de FastAPI.
+
+    FastAPI >=0.145 retiró ese argumento, causando que --web falle antes
+    de cargar la app. Ejercitar el contrato contra la versión instalada.
+    """
+    from fastapi import FastAPI
+
+    legacy_app = FastAPI(openapi_prefix="", on_startup=[lambda: None])
+    assert legacy_app is not None
