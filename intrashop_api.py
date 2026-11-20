@@ -153,13 +153,23 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
         with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
             checkout = conn.execute(
-                "SELECT venta_id,caja_id FROM intrashop_checkouts WHERE id=?", (job_id,)
+                "SELECT venta_id,caja_id,mp_cancel_requested FROM intrashop_checkouts WHERE id=?", (job_id,)
             ).fetchone()
             if not checkout:
                 raise RuntimeError("No existe la reserva de IntraShop asociada al pago.")
             if checkout["venta_id"] is not None:
                 with _jobs_lock:
                     _jobs[job_id].update(status="completed", venta_id=checkout["venta_id"], sale_done=True)
+                return
+            if checkout["mp_cancel_requested"]:
+                # Ganó la cancelación antes de confirmar la venta; no crear
+                # comanda, descontar stock ni imprimir un ticket.
+                conn.rollback()
+                with _jobs_lock:
+                    _jobs[job_id].update(
+                        status="cancel_error",
+                        message="Cancelado desde el tótem; si hubo acreditación simultánea, revisar y devolver el pago.",
+                    )
                 return
             # La caja se fijó con la reserva, antes de crear el pago MP.
             # No imputar una venta al último turno/caja que abrió después.
@@ -481,6 +491,15 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
         # esta llamada se atiende inmediatamente al regresar, antes de
         # publicar el QR como disponible para el comprador.
         ok = mp_service.crear_orden(total, pos_ext=pos_ext, store_ext=store_ext, reference=job_id)
+        if not ok and cancel_event.is_set():
+            cierre = _cerrar_qr_checkout(job_id, pos_ext=pos_ext, store_ext=store_ext)
+            with _jobs_lock:
+                _jobs[job_id].update(
+                    status="cancelled" if cierre["estado"] == "closed" else "cancel_error",
+                    message="Pedido cancelado." if cierre["estado"] == "closed" else
+                            "Cierre QR sin confirmar. Revisar Mercado Pago en administración.",
+                )
+            return
         if not ok:
             # Un timeout en PUT no prueba que MP no haya creado el QR.
             # Intentar cerrar únicamente si la orden remota tiene
@@ -520,26 +539,17 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             paid = mp_service.verificar_estado(cancelar=cancel_event.is_set, cancel_event=cancel_event,
                                                pos_ext=pos_ext, reference=job_id)
         if cancel_event.is_set():
-            # Cancelar la visualización no implica que Mercado Pago haya anulado el cobro.
-            # Consultar la referencia del pago después de cerrar la orden evita
-            # perder una venta aprobada justo durante la cancelación.
+            # El usuario ya cerró el modal. Cerrar el QR de su referencia sin
+            # bloquear la UI ni exigir búsqueda posterior de pagos.
             cierre = _cerrar_qr_checkout(
                 job_id, pos_ext=pos_ext, store_ext=store_ext
             )
-            verification = mp_service.verificar_pago_referencia(job_id, total)
-            # El polling por POS no prueba por sí solo referencia y monto.
-            confirmed = verification["estado"] == "approved"
-            if confirmed:
-                with _jobs_lock:
-                    _jobs[job_id].update(status="paid", message="Pago confirmado durante la cancelación; registrando venta")
-                _finalize_sale(job_id, cart, total)
-            else:
-                with _jobs_lock:
-                    _jobs[job_id].update(
-                        status="cancel_error",
-                        message=f"Cancelación solicitada (QR: {cierre['estado']}). "
-                                "Pago sin confirmar. La reserva sigue retenida."
-                    )
+            with _jobs_lock:
+                _jobs[job_id].update(
+                    status="cancelled" if cierre["estado"] == "closed" else "cancel_error",
+                    message="Pedido cancelado; QR cerrado." if cierre["estado"] == "closed"
+                            else "Mercado Pago no confirmó el cierre; revisión administrativa necesaria.",
+                )
             return
         if not paid:
             # El timeout de polling no cierra automáticamente el QR en Mercado Pago.
@@ -572,6 +582,14 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                     status="cancel_error",
                     message="El QR indicó un pago, pero no se pudo validar referencia y monto. "
                             "Reserva retenida hasta conciliar Mercado Pago.",
+                )
+            return
+        if cancel_event.is_set():
+            cierre = _cerrar_qr_checkout(job_id, pos_ext=pos_ext, store_ext=store_ext)
+            with _jobs_lock:
+                _jobs[job_id].update(
+                    status="cancel_error",
+                    message="Pago acreditado simultáneamente con la cancelación; revisar para devolución.",
                 )
             return
         with _jobs_lock:
@@ -1510,8 +1528,18 @@ def cancelar_checkout(checkout_id: str):
             )
         if job.get("status") == "cancelling":
             return {"ok": True, "status": "cancelling"}
+        # Atomicidad con _finalize_sale (que usa BEGIN IMMEDIATE).
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute(
+                "SELECT estado,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)
+            ).fetchone()
+            if not current or current["venta_id"] is not None or current["estado"] == "completed":
+                raise HTTPException(409, "El pago ya fue registrado; no se puede cancelar")
+            checkout_store.request_mp_cancel(conn, checkout_id)
+            conn.commit()
         _cancel_events.setdefault(checkout_id, threading.Event()).set()
-        job.update(status="cancelling", message="Cancelando el pedido y cerrando el QR…")
+        job.update(status="cancelling", message="Cerrando el QR cancelado…")
     return {"ok": True, "status": "cancelling"}
 
 
