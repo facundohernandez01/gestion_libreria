@@ -662,7 +662,15 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                             f"Factura #{resultado.get('numero_factura')} · CAE {resultado.get('cae')}"
                         )
                         if pdf_path:
-                            abrir_pdf(pdf_path)
+                            if imprimir:
+                                from ui.helpers import imprimir_archivo
+                                ok, msg = imprimir_archivo(pdf_path)
+                                if not ok:
+                                    mostrar_error(
+                                        f"Venta #{venta_id} confirmada, pero no se imprimió el ticket: {msg}"
+                                    )
+                            else:
+                                abrir_pdf(pdf_path)
                     else:
                         mostrar_error(resultado.get("message", "Error al facturar"))
                 except Exception as ex:  # noqa: BLE001
