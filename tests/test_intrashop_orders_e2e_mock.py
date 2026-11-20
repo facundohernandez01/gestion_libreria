@@ -343,3 +343,102 @@ def test_conciliacion_periodica_procesa_inciertos_sin_webhook(database, monkeypa
 
     api.reconcile_orders_v1_periodically(StopAfterOneCycle(), interval=10)
     assert seen == [ref]
+
+
+def test_cancelacion_legacy_cierra_qr_sin_buscar_pago_ni_crear_venta(database, monkeypatch):
+    """Cancelar durante el PUT remoto libera el stock tras DELETE confirmado."""
+    from services.mercadopago_service import mp_service
+
+    ref, cart = checkout(database, "legacy-cancel-in-flight")
+    with database[0]() as conn:
+        conn.execute("UPDATE intrashop_checkouts SET mp_api='legacy' WHERE id=?", (ref,))
+        conn.commit()
+    api._jobs[ref].update(pos_ext="POS-TEST", store_ext="STORE-TEST", qr_url="https://example.test/qr")
+    closures = []
+
+    def crear(*args, **kw):
+        # El usuario cancela mientras Mercado Pago responde a PUT.
+        response = api.cancelar_checkout(ref)
+        assert response == {"ok": True, "status": "cancelling"}
+        return True
+
+    monkeypatch.setattr(mp_service, "crear_orden", crear)
+    monkeypatch.setattr(
+        mp_service, "cerrar_orden_referencia",
+        lambda *args, **kw: closures.append(kw.get("pos_ext")) or {"estado": "closed"},
+    )
+    monkeypatch.setattr(
+        mp_service, "verificar_pago_referencia",
+        lambda *args, **kw: (_ for _ in ()).throw(
+            AssertionError("La cancelación no debe esperar búsqueda de pago")
+        ),
+    )
+    api._run_checkout(ref, cart, 50)
+
+    assert closures == ["POS-TEST"]
+    assert counts(database) == (0, 5, 0)
+    with database[0]() as conn:
+        row = conn.execute(
+            "SELECT estado,mp_cancel_requested FROM intrashop_checkouts WHERE id=?", (ref,)
+        ).fetchone()
+        assert (row["estado"], row["mp_cancel_requested"]) == ("cancelled", 1)
+        assert store.available(conn, database[1]) == 5
+        assert conn.execute("SELECT COUNT(*) FROM intrashop_ticket_jobs").fetchone()[0] == 0
+
+
+def test_cancelacion_persistida_impide_venta_confirmada_tardia(database):
+    ref, cart = checkout(database, "late-payment-after-cancel")
+    with database[0]() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        store.request_mp_cancel(conn, ref)
+        conn.commit()
+    api._jobs[ref]["status"] = "paid"
+    api._finalize_sale(ref, cart, 50)
+    assert counts(database) == (0, 5, 0)
+    with database[0]() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM intrashop_ticket_jobs").fetchone()[0] == 0
+
+
+def test_ticket_confirmado_se_imprime_una_vez(database, monkeypatch, tmp_path):
+    from services import intrashop_ticket_service as ticket
+
+    ref, cart = checkout(database, "one-ticket-only")
+    with database[0]() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        caja_id = conn.execute("SELECT caja_id FROM intrashop_checkouts WHERE id=?", (ref,)).fetchone()[0]
+        venta_id = conn.execute(
+            "INSERT INTO ventas(caja_id,fecha,total,estado,metodo_pago) "
+            "VALUES(?,CURRENT_TIMESTAMP,50,'completada','mercadopago_qr')",
+            (caja_id,),
+        ).lastrowid
+        store.set_status(conn, ref, "completed", venta_id)
+        conn.execute(
+            "INSERT INTO intrashop_ticket_jobs(venta_id,checkout_id) VALUES (?,?)",
+            (venta_id, ref),
+        )
+        conn.commit()
+
+    called = []
+    monkeypatch.setenv("INTRASHOP_PRINT_TICKET", "1")
+    monkeypatch.setattr(ticket, "_pdf_ticket", lambda path, *args: path.write_text("ticket de prueba"))
+    monkeypatch.setattr(ticket, "_enviar_a_impresora", lambda path: called.append(path))
+    monkeypatch.setattr(ticket, "time", ticket.time)
+    # Ruta derivada de DB temporal, sin alterar la instalación real.
+    db_file = str(tmp_path / "orders.db")
+    result1 = ticket.emitir_ticket_venta(db_file, venta_id, ref, cart, 50)
+    result2 = ticket.emitir_ticket_venta(db_file, venta_id, ref, cart, 50)
+    assert result1["estado"] == "sent"
+    assert result2["estado"] == "sent"
+    assert len(called) == 1
+    assert called[0].is_file()
+
+
+def test_frontend_descarta_polling_y_cierra_modal_antes_de_llamar_al_servidor():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "intrashop/src/pages/index.astro").read_text(
+        encoding="utf-8",
+    )
+    assert "function cancelCheckout()" in source
+    assert "cerrarPagoCancelado();" in source
+    assert "if (id) solicitarCancelacion(id);" in source
+    assert 'activeCheckoutId !== id || $("payment-modal").hidden' in source
