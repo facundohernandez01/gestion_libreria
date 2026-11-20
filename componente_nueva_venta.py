@@ -690,6 +690,15 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                 comprobante = billing_service.generar_comprobante(venta_id, items, total, metodo_pago)
             except Exception as ex:  # no bloquea la venta
                 print(f"facturación: {ex}")
+        # El ticket de un QR pagado no depende de habilitar la facturación
+        # fiscal. Si no se generó comprobante, emitir ticket interno PDF.
+        if imprimir and metodo_pago == "mercadopago_qr" and not comprobante:
+            try:
+                comprobante = billing_service.generar_ticket_pdf(
+                    venta_id, items, total, metodo_pago
+                )
+            except Exception as ex:  # la venta pagada no se revierte
+                mostrar_error(f"Venta #{venta_id} registrada, error creando ticket: {ex}")
         if imprimir and comprobante:
             from ui.helpers import imprimir_archivo
             ok, msg = imprimir_archivo(comprobante)
