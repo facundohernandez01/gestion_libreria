@@ -69,6 +69,17 @@ def ensure_schema(conn):
         PRIMARY KEY(checkout_id, producto_id)
     )""")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_intrashop_reservas_producto ON intrashop_reservas(producto_id)")
+    # Un ticket por venta; el estado se persiste antes de enviarlo a CUPS.
+    # Nunca se crea un trabajo de impresión para pedidos cancelados.
+    conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_ticket_jobs (
+        venta_id INTEGER PRIMARY KEY REFERENCES ventas(id),
+        checkout_id TEXT NOT NULL UNIQUE REFERENCES intrashop_checkouts(id),
+        estado TEXT NOT NULL DEFAULT 'pending'
+            CHECK(estado IN ('pending','printing','sent','generated','failed')),
+        pdf_path TEXT,
+        error TEXT,
+        updated_at INTEGER NOT NULL DEFAULT 0
+    )""")
 
 
 def binding(conn, terminal_id):
