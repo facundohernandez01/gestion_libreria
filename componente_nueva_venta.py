@@ -763,7 +763,8 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
     qr_spin = ft.ProgressRing(width=18, height=18, visible=False)
 
     def pagar_con_qr(e):
-        if pagando_qr["activo"]:
+        if pagando_qr["activo"] or pagando_qr.get("cerrando"):
+            mostrar_error("Esperá a que se cierre la orden QR anterior.")
             return
         if not carrito:
             mostrar_error("El carrito está vacío")
@@ -823,12 +824,15 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
             mostrar_error(m)
 
         def _registrar_pago_confirmado():
-            # No declarar un cobro cancelado si MP lo aprobó durante el cierre.
+            # Cancelar gana la carrera sobre el registro local de la venta.
+            # Un cobro simultáneo se revisa en MP, no genera venta ni ticket.
+            if cancel_event.is_set() or pagando_qr["cancelado"]:
+                return
             pagando_qr["activo"] = False
             qr_spin.visible = False
             col_izquierda.content = log_box
             page.update()
-            confirmar_venta(metodo_pago="mercadopago_qr", emitir_factura=auto_qr)
+            confirmar_venta(metodo_pago="mercadopago_qr", imprimir=True, emitir_factura=auto_qr)
 
         def _cerrar_y_verificar():
             # Nunca cancelar a ciegas la orden de otra referencia en el POS.
@@ -849,17 +853,30 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                     "Revisá Mercado Pago antes de reintentar el cobro."
                 )
 
+        def _cerrar_cancelado():
+            # No reabrir modal ni verificar repetidamente un pago tras cancelar.
+            # Se cierra solo la referencia actual, sin tocar otro cobro del POS.
+            cierre = mp_service.cerrar_orden_referencia(
+                referencia, pos_ext=pos_ext, store_ext=store_ext
+            )
+            if cierre["estado"] not in ("closed", "not_active"):
+                import logging
+                logging.getLogger(__name__).warning(
+                    "Cobro QR %s cancelado localmente, cierre remoto incierto: %s",
+                    referencia, cierre["estado"],
+                )
+
         def proceso():
             try:
                 creado = mp_service.crear_orden(
                     total, cb=_set_qr, pos_ext=pos_ext,
                     store_ext=store_ext, reference=referencia,
                 )
+                if cancel_event.is_set():
+                    _cerrar_cancelado()
+                    return
                 if not creado:
                     # Un timeout en PUT podría haber creado la orden remota.
-                    _cerrar_y_verificar()
-                    return
-                if cancel_event.is_set():
                     _cerrar_y_verificar()
                     return
                 pagado = mp_service.verificar_estado(
@@ -867,37 +884,50 @@ def NuevaVentaView(db_manager, caja_id, on_confirmar, on_cerrar, filter_mode, pa
                     cancel_event=cancel_event, pos_ext=pos_ext,
                     reference=referencia,
                 )
-                if cancel_event.is_set() or not pagado:
+                if cancel_event.is_set():
+                    _cerrar_cancelado()
+                    return
+                if not pagado:
                     _cerrar_y_verificar()
                     return
                 pago = mp_service.verificar_pago_referencia(referencia, total)
+                if cancel_event.is_set():
+                    _cerrar_cancelado()
+                    return
                 if pago["estado"] == "approved":
                     _registrar_pago_confirmado()
                 else:
                     # El polling por POS no demuestra que este checkout esté pagado.
                     _cerrar_y_verificar()
             except Exception:
-                try:
-                    _cerrar_y_verificar()
-                except Exception:
-                    _fin_qr(
-                        "Error durante el cierre del QR. Verificá Mercado Pago "
-                        "antes de reintentar el cobro."
-                    )
+                if cancel_event.is_set():
+                    try:
+                        _cerrar_cancelado()
+                    except Exception:
+                        pass
+                else:
+                    try:
+                        _cerrar_y_verificar()
+                    except Exception:
+                        _fin_qr(
+                            "Error durante el cierre del QR. Verificá Mercado Pago "
+                            "antes de reintentar el cobro."
+                        )
+            finally:
+                pagando_qr["cerrando"] = False
 
         def cancelar_qr():
             if not pagando_qr["activo"] or cancel_event.is_set():
                 return
             pagando_qr["cancelado"] = True
+            pagando_qr["cerrando"] = True
             cancel_event.set()
-            btn_cancelar_qr.disabled = True
-            qr_estado.value = "Cancelando la orden en Mercado Pago…"
-            try:
-                page.update()
-            except Exception:
-                pass
+            pagando_qr["activo"] = False
+            qr_spin.visible = False
+            col_izquierda.content = log_box
+            mostrar_mensaje("Cobro QR cancelado.", N.BLUE_GREY_700)
 
-        # La cancelación se solicita; el worker confirma el cierre remoto.
+        # El modal se libera inmediatamente; el worker cierra el QR remoto.
         pagar_con_qr._cancelar = cancelar_qr  # type: ignore[attr-defined]
         page.run_thread(proceso)
 
