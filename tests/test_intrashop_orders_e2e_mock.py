@@ -442,3 +442,36 @@ def test_frontend_descarta_polling_y_cierra_modal_antes_de_llamar_al_servidor():
     assert "cerrarPagoCancelado();" in source
     assert "if (id) solicitarCancelacion(id);" in source
     assert 'activeCheckoutId !== id || $("payment-modal").hidden' in source
+
+
+def test_reinicio_recupera_solo_tickets_pendientes(database, monkeypatch):
+    from services import intrashop_ticket_service as ticket
+
+    ref, cart = checkout(database, "recover-pending-ticket")
+    with database[0]() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        caja = conn.execute(
+            "SELECT caja_id FROM intrashop_checkouts WHERE id=?", (ref,)
+        ).fetchone()[0]
+        venta_id = conn.execute(
+            "INSERT INTO ventas(caja_id,fecha,total,estado,metodo_pago) "
+            "VALUES(?,CURRENT_TIMESTAMP,50,'completada','mercadopago_qr')",
+            (caja,),
+        ).lastrowid
+        store.set_status(conn, ref, "completed", venta_id)
+        conn.execute(
+            "INSERT INTO intrashop_ticket_jobs(venta_id,checkout_id) VALUES (?,?)",
+            (venta_id, ref),
+        )
+        conn.commit()
+    llamadas = []
+    monkeypatch.setattr(
+        ticket, "emitir_ticket_venta", lambda *args: llamadas.append(args)
+    )
+    assert api.recover_pending_tickets() == 1
+    assert llamadas[0][1:3] == (venta_id, ref)
+    with database[0]() as conn:
+        conn.execute("UPDATE intrashop_ticket_jobs SET estado='sent' WHERE venta_id=?", (venta_id,))
+        conn.commit()
+    assert api.recover_pending_tickets() == 0
+    assert len(llamadas) == 1
