@@ -17,12 +17,19 @@ def _code(name):
     return ast.get_source_segment(SOURCE, node)
 
 
-def test_cancelar_pos_no_equivale_a_cerrar_solo_el_modal():
+def test_cancelar_pos_cierra_interfaz_sin_esperar_respuesta_remota():
     code = _code("cancelar_qr")
     assert "cancel_event.set()" in code
-    assert 'qr_estado.value = "Cancelando la orden en Mercado Pago…"' in code
-    assert 'pagando_qr["activo"] = False' not in code
-    assert 'mostrar_error("Pago QR cancelado")' not in code
+    assert 'pagando_qr["activo"] = False' in code
+    assert "col_izquierda.content = log_box" in code
+    assert 'mostrar_mensaje("Cobro QR cancelado."' in code
+    assert "verificar_pago_referencia" not in code
+
+
+def test_worker_no_registra_venta_tras_cancelar():
+    code = _code("_registrar_pago_confirmado")
+    assert 'if cancel_event.is_set() or pagando_qr["cancelado"]:' in code
+    assert 'confirmar_venta(metodo_pago="mercadopago_qr", imprimir=True' in code
 
 
 def test_pos_exige_referencia_unica_e_importe_verificado():
