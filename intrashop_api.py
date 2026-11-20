@@ -1528,18 +1528,22 @@ def cancelar_checkout(checkout_id: str):
             )
         if job.get("status") == "cancelling":
             return {"ok": True, "status": "cancelling"}
-        # Atomicidad con _finalize_sale (que usa BEGIN IMMEDIATE).
-        with _connect() as conn:
-            conn.execute("BEGIN IMMEDIATE")
-            current = conn.execute(
-                "SELECT estado,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)
-            ).fetchone()
-            if not current or current["venta_id"] is not None or current["estado"] == "completed":
-                raise HTTPException(409, "El pago ya fue registrado; no se puede cancelar")
-            checkout_store.request_mp_cancel(conn, checkout_id)
-            conn.commit()
+    # Nunca adquirir el lock SQLite mientras se tiene _jobs_lock:
+    # _finalize_sale utiliza el orden inverso dentro de su transacción.
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT estado,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)
+        ).fetchone()
+        if not current or current["venta_id"] is not None or current["estado"] == "completed":
+            raise HTTPException(409, "El pago ya fue registrado; no se puede cancelar")
+        checkout_store.request_mp_cancel(conn, checkout_id)
+        conn.commit()
+    with _jobs_lock:
         _cancel_events.setdefault(checkout_id, threading.Event()).set()
-        job.update(status="cancelling", message="Cerrando el QR cancelado…")
+        job = _jobs.get(checkout_id)
+        if job and job.get("status") not in {"completed", "paid_sale_error"}:
+            job.update(status="cancelling", message="Cerrando el QR cancelado…")
     return {"ok": True, "status": "cancelling"}
 
 
