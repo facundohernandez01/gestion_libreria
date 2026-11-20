@@ -223,17 +223,23 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
                 "INSERT OR IGNORE INTO intrashop_ticket_jobs(venta_id,checkout_id) VALUES (?,?)",
                 (venta_id, job_id),
             )
+            # La ruta real importa en instalaciones multi-caja y en tests
+            # con SQLite temporal; no asumir otra DB por settings globales.
+            actual_db_path = conn.execute("PRAGMA database_list").fetchone()["file"] or DB_PATH
             conn.commit()
         with _jobs_lock:
             _jobs[job_id].update(status="completed", sale_done=True, venta_id=venta_id, total=total, message="Pago confirmado y venta registrada")
         _save_internal_receipt(venta_id, cart, total, job_id)
-        # El ticket no demora la respuesta del tótem ni condiciona la venta.
-        from services.intrashop_ticket_service import emitir_ticket_venta
-        threading.Thread(
-            target=emitir_ticket_venta,
-            args=(DB_PATH, venta_id, job_id, cart, total),
-            daemon=True,
-        ).start()
+        # Fallar al imprimir jamás revierte una venta que ya hizo COMMIT.
+        try:
+            from services.intrashop_ticket_service import emitir_ticket_venta
+            threading.Thread(
+                target=emitir_ticket_venta,
+                args=(actual_db_path, venta_id, job_id, cart, total),
+                daemon=True,
+            ).start()
+        except Exception:
+            logger.exception("Venta #%s confirmada pero no se pudo iniciar su impresión", venta_id)
     except Exception as exc:
         logger.exception("No se pudo registrar la venta de IntraShop tras el pago")
         with _connect() as conn:
