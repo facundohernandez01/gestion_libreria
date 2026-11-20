@@ -69,6 +69,14 @@ async def _lifespan(_app: FastAPI):
                 name="intrashop-startup-reconciliation",
                 daemon=True,
             ).start()
+            # Reanudar tickets de ventas confirmadas que quedaron PENDING.
+            # No reimprimir SENT/PRINTING para evitar duplicaciones.
+            from intrashop_api import recover_pending_tickets
+            threading.Thread(
+                target=recover_pending_tickets,
+                name="intrashop-pending-tickets",
+                daemon=True,
+            ).start()
             # La conciliación continua no depende de disponer de
             # webhook público (POS Server puede operar solo en LAN).
             from intrashop_api import reconcile_orders_v1_periodically
