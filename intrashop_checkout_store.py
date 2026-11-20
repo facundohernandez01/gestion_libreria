@@ -177,10 +177,15 @@ def set_mp_order_id(conn, checkout_id, order_id):
 
 
 def request_mp_cancel(conn, checkout_id):
-    """Persistir el pedido de cancelación antes de avisar al worker."""
+    """Persistir la cancelación para ambas APIs antes de avisar al worker.
+
+    También sirve de barrera transaccional contra una venta aprobada tarde:
+    un QR cancelado por el usuario nunca se convierte automáticamente en
+    una comanda ni en un ticket.
+    """
     conn.execute(
         "UPDATE intrashop_checkouts SET mp_cancel_requested=1,updated_at=? "
-        "WHERE id=? AND mp_api='orders_v1' AND estado NOT IN ('completed','cancelled')",
+        "WHERE id=? AND estado NOT IN ('completed','cancelled')",
         (int(time.time()), checkout_id),
     )
 
