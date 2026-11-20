@@ -218,10 +218,22 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
             ensure_schema(conn)
             register_paid_sale(conn, venta_id, job_id, job.get("totem_id"), job.get("totem_nombre"))
             checkout_store.set_status(conn, job_id, "completed", venta_id)
+            # Solo las ventas efectivamente confirmadas crean trabajo de ticket.
+            conn.execute(
+                "INSERT OR IGNORE INTO intrashop_ticket_jobs(venta_id,checkout_id) VALUES (?,?)",
+                (venta_id, job_id),
+            )
             conn.commit()
-        _save_internal_receipt(venta_id, cart, total, job_id)
         with _jobs_lock:
             _jobs[job_id].update(status="completed", sale_done=True, venta_id=venta_id, total=total, message="Pago confirmado y venta registrada")
+        _save_internal_receipt(venta_id, cart, total, job_id)
+        # El ticket no demora la respuesta del tótem ni condiciona la venta.
+        from services.intrashop_ticket_service import emitir_ticket_venta
+        threading.Thread(
+            target=emitir_ticket_venta,
+            args=(DB_PATH, venta_id, job_id, cart, total),
+            daemon=True,
+        ).start()
     except Exception as exc:
         logger.exception("No se pudo registrar la venta de IntraShop tras el pago")
         with _connect() as conn:
