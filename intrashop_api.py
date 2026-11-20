@@ -273,6 +273,36 @@ def _save_internal_receipt(venta_id: int, cart: list[dict], total: float, job_id
         logger.exception("No se pudo guardar el comprobante interno de IntraShop")
 
 
+def recover_pending_tickets() -> int:
+    """Al reiniciar POS Server, imprimir ventas cobradas cuyo job sigue PENDING.
+
+    Nunca reimprime trabajos PRINTING/SENT: pudieron haber llegado a CUPS
+    aunque el servidor se haya interrumpido antes de registrar la respuesta.
+    """
+    from services.intrashop_ticket_service import emitir_ticket_venta
+
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        rows = conn.execute(
+            """SELECT t.venta_id,t.checkout_id,c.items_json,c.total
+               FROM intrashop_ticket_jobs t
+               JOIN intrashop_checkouts c ON c.id=t.checkout_id
+               WHERE t.estado='pending' AND c.estado='completed'
+               AND c.venta_id=t.venta_id
+               ORDER BY t.venta_id LIMIT 100"""
+        ).fetchall()
+        database_path = conn.execute("PRAGMA database_list").fetchone()["file"] or DB_PATH
+    for row in rows:
+        try:
+            emitir_ticket_venta(
+                database_path, row["venta_id"], row["checkout_id"],
+                json.loads(row["items_json"]), row["total"],
+            )
+        except Exception:
+            logger.exception("No se pudo recuperar ticket de venta #%s", row["venta_id"])
+    return len(rows)
+
+
 def _cerrar_qr_checkout(checkout_id: str, pos_ext: str, store_ext: str) -> dict:
     """Cierra solo el QR de esta referencia y guarda el resultado auditable.
 
