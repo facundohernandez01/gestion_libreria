@@ -68,11 +68,17 @@ def credenciales_configuradas(db_manager) -> bool:
 
 
 def validar_login(db_manager, usuario: str, clave: str) -> bool:
-    """Compatibilidad: True si las credenciales son válidas."""
+    """Validación real; en cliente nunca usar credenciales locales de respaldo."""
+    from core.db_factory import modo_actual
+
     try:
-        return db_manager.autenticar_usuario(usuario, clave) is not None
+        if db_manager.autenticar_usuario(usuario, clave) is not None:
+            return True
     except Exception:
         pass
+    if modo_actual() == "cliente":
+        # Fallar cerrado: config local jamás sustituye al login del servidor.
+        return False
     try:
         user_ok = (db_manager.get_config_value("LOGIN_USUARIO")
                    or _USUARIO_DEFAULT).strip()
@@ -105,13 +111,20 @@ def LoginView(db_manager, on_login, page: ft.Page):
         text_align=ft.TextAlign.CENTER)
 
     def ingresar(e=None):
+        from core.db_factory import modo_actual
+        error_conexion = None
         try:
             usuario = db_manager.autenticar_usuario(
                 usuario_field.value, clave_field.value)
-        except Exception:
+        except Exception as exc:
             usuario = None
-        if usuario is None and validar_login(
-                db_manager, usuario_field.value, clave_field.value):
+            # No imprimir tokens, claves ni respuestas HTTP completas.
+            error_conexion = str(exc) if isinstance(
+                exc, (ConnectionError, RuntimeError)
+            ) else "No se pudo iniciar sesión con POS Server. Verificá la conexión."
+        if (usuario is None and error_conexion is None
+                and modo_actual() != "cliente" and validar_login(
+                    db_manager, usuario_field.value, clave_field.value)):
             from core.permisos import permisos_todos
 
             usuario = {
@@ -121,22 +134,25 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "permisos": permisos_todos(),
             }
         if usuario:
-            # Obtener una sesión de operador del servidor; el rol se verifica allí.
-            try:
-                import httpx
-                from adapters.entregas import EntregasAdapter, set_session
-                from core.db_factory import _server_url, modo_actual
-                from core.settings import settings
-                base = _server_url() if modo_actual() == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
-                response = httpx.post(base.rstrip("/") + "/pos/auth/login",
-                    json={"usuario": usuario_field.value, "clave": clave_field.value}, timeout=4)
-                if response.status_code == 200:
-                    set_session(response.json()["access_token"])
-                else:
+            # ApiClient ya obtuvo y almacenó la sesión POS en modo cliente.
+            # Repetir el login generaba otro token y podía borrar la sesión
+            # válida si esa segunda solicitud fallaba por timeout.
+            if modo_actual() != "cliente":
+                try:
+                    import httpx
+                    from adapters.entregas import set_session
+                    from core.settings import settings
+                    base = "http://127.0.0.1:" + str(settings.api_port)
+                    response = httpx.post(base + "/pos/auth/login",
+                        json={"usuario": usuario_field.value,
+                              "clave": clave_field.value}, timeout=4)
+                    if response.status_code == 200:
+                        set_session(response.json()["access_token"])
+                    else:
+                        set_session(None)
+                except Exception:
+                    from adapters.entregas import set_session
                     set_session(None)
-            except Exception:
-                from adapters.entregas import set_session
-                set_session(None)
             if recordar_cb.value:
                 _guardar_recordado(usuario_field.value or "", clave_field.value or "")
             else:
@@ -146,9 +162,11 @@ def LoginView(db_manager, on_login, page: ft.Page):
             except TypeError:
                 on_login(usuario)
             return
-        error_text.value = "Usuario o clave incorrectos"
+        error_text.value = error_conexion or "Usuario o clave incorrectos"
         error_text.visible = True
-        clave_field.value = ""
+        # Preservar el campo si el fallo es de conexión (no fue validado).
+        if not error_conexion:
+            clave_field.value = ""
         page.update()
         try:
             page.run_task(clave_field.focus)

@@ -69,6 +69,14 @@ async def _lifespan(_app: FastAPI):
                 name="intrashop-startup-reconciliation",
                 daemon=True,
             ).start()
+            # Reanudar tickets de ventas confirmadas que quedaron PENDING.
+            # No reimprimir SENT/PRINTING para evitar duplicaciones.
+            from intrashop_api import recover_pending_tickets
+            threading.Thread(
+                target=recover_pending_tickets,
+                name="intrashop-pending-tickets",
+                daemon=True,
+            ).start()
             # La conciliación continua no depende de disponer de
             # webhook público (POS Server puede operar solo en LAN).
             from intrashop_api import reconcile_orders_v1_periodically
@@ -95,30 +103,48 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespan)
 
-# La interfaz Astro compilada se publica desde el mismo servidor FastAPI.
-# Si dist no existe, la API continúa funcionando normalmente.
+# Servir Astro desde el mismo puerto, incluso si pnpm build se ejecuta
+# después de arrancar Uvicorn. El montaje anterior solo se registraba
+# al importar api_server si ya existía dist/index.html: en otro orden de
+# arranque /intrashop/ devolvía 404 hasta reiniciar POS Server.
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 INTRASHOP_DIST = Path(__file__).resolve().parent / "intrashop" / "dist"
-if (INTRASHOP_DIST / "index.html").is_file():
-    class AstroStaticFiles(StaticFiles):
-        async def get_response(self, path, scope):
-            # Astro static builds output admin/index.html or admin.html.
-            try:
-                return await super().get_response(path, scope)
-            except StarletteHTTPException as exc:
-                if exc.status_code != 404:
-                    raise
-            clean = path.strip("/")
-            if not clean or "." in clean.rsplit("/", 1)[-1]:
-                raise StarletteHTTPException(status_code=404)
-            for candidate in (clean + "/index.html", clean + ".html"):
-                if (INTRASHOP_DIST / candidate).is_file():
-                    return await super().get_response(candidate, scope)
-            raise StarletteHTTPException(status_code=404)
 
-    app.mount("/intrashop", AstroStaticFiles(directory=str(INTRASHOP_DIST), html=True), name="intrashop")
+
+class AstroStaticFiles(StaticFiles):
+    async def check_config(self):
+        # StaticFiles exige directorio existente en su primer request.
+        # La carpeta se puede generar mientras el servidor ya está activo.
+        if INTRASHOP_DIST.is_dir():
+            await super().check_config()
+
+    async def get_response(self, path, scope):
+        if not (INTRASHOP_DIST / "index.html").is_file():
+            return PlainTextResponse(
+                "La tienda IntraShop no está compilada. "
+                "Ejecutá 'pnpm run build' en intrashop/ y recargá esta página.",
+                status_code=503,
+            )
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+        clean = path.strip("/")
+        if not clean or "." in clean.rsplit("/", 1)[-1]:
+            raise StarletteHTTPException(status_code=404)
+        for candidate in (clean + "/index.html", clean + ".html"):
+            if (INTRASHOP_DIST / candidate).is_file():
+                return await super().get_response(candidate, scope)
+        raise StarletteHTTPException(status_code=404)
+
+
+app.mount("/intrashop", AstroStaticFiles(
+    directory=str(INTRASHOP_DIST), html=True, check_dir=False
+), name="intrashop")
 
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -168,7 +194,7 @@ def _tx():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "pos-lan", "capabilities": ["intrashop-entregas-v1", "pos-operator-sessions-v1"]}
+    return {"ok": True, "service": "pos-lan", "capabilities": ["intrashop-entregas-v1", "pos-operator-sessions-v1"], "intrashop_compilada": (INTRASHOP_DIST / "index.html").is_file()}
 
 
 @app.get("/config")
@@ -375,7 +401,8 @@ def cerrar_caja(caja_id: int, observaciones: str = "",
         pending = conn.execute(
             """SELECT id FROM intrashop_checkouts
                WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
-               LIMIT 1"""
+               AND (caja_id=? OR caja_id IS NULL) LIMIT 1""",
+            (caja_id,),
         ).fetchone()
         if pending:
             raise HTTPException(

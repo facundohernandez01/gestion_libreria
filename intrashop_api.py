@@ -152,14 +152,40 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
     try:
         with _connect() as conn:
             conn.execute("BEGIN IMMEDIATE")
-            already = conn.execute("SELECT venta_id FROM intrashop_checkouts WHERE id=? AND venta_id IS NOT NULL", (job_id,)).fetchone()
-            if already:
+            checkout = conn.execute(
+                "SELECT venta_id,caja_id,mp_cancel_requested FROM intrashop_checkouts WHERE id=?", (job_id,)
+            ).fetchone()
+            if not checkout:
+                raise RuntimeError("No existe la reserva de IntraShop asociada al pago.")
+            if checkout["venta_id"] is not None:
                 with _jobs_lock:
-                    _jobs[job_id].update(status="completed", venta_id=already["venta_id"], sale_done=True)
+                    _jobs[job_id].update(status="completed", venta_id=checkout["venta_id"], sale_done=True)
                 return
-            caja = conn.execute("SELECT id FROM cajas WHERE estado='abierta' ORDER BY id DESC LIMIT 1").fetchone()
+            if checkout["mp_cancel_requested"]:
+                # Ganó la cancelación antes de confirmar la venta; no crear
+                # comanda, descontar stock ni imprimir un ticket.
+                conn.rollback()
+                with _jobs_lock:
+                    _jobs[job_id].update(
+                        status="cancel_error",
+                        message="Cancelado desde el tótem; si hubo acreditación simultánea, revisar y devolver el pago.",
+                    )
+                return
+            # La caja se fijó con la reserva, antes de crear el pago MP.
+            # No imputar una venta al último turno/caja que abrió después.
+            if checkout["caja_id"] is None:
+                raise RuntimeError(
+                    "Checkout anterior sin caja asignada: se requiere conciliación administrativa."
+                )
+            caja = conn.execute(
+                "SELECT id FROM cajas WHERE id=? AND estado='abierta'",
+                (checkout["caja_id"],),
+            ).fetchone()
             if not caja:
-                raise RuntimeError("No hay una caja abierta. Abrí la caja en el POS antes de cobrar.")
+                raise RuntimeError(
+                    "La caja original del checkout está cerrada; "
+                    "venta pendiente de conciliación en su caja de origen."
+                )
             for item in cart:
                 p = conn.execute(
                     "SELECT stock_actual, disponible_tienda, descripcion FROM productos WHERE id=?",
@@ -192,10 +218,28 @@ def _finalize_sale(job_id: str, cart: list[dict], total: float) -> None:
             ensure_schema(conn)
             register_paid_sale(conn, venta_id, job_id, job.get("totem_id"), job.get("totem_nombre"))
             checkout_store.set_status(conn, job_id, "completed", venta_id)
+            # Solo las ventas efectivamente confirmadas crean trabajo de ticket.
+            conn.execute(
+                "INSERT OR IGNORE INTO intrashop_ticket_jobs(venta_id,checkout_id) VALUES (?,?)",
+                (venta_id, job_id),
+            )
+            # La ruta real importa en instalaciones multi-caja y en tests
+            # con SQLite temporal; no asumir otra DB por settings globales.
+            actual_db_path = conn.execute("PRAGMA database_list").fetchone()["file"] or DB_PATH
             conn.commit()
-        _save_internal_receipt(venta_id, cart, total, job_id)
         with _jobs_lock:
             _jobs[job_id].update(status="completed", sale_done=True, venta_id=venta_id, total=total, message="Pago confirmado y venta registrada")
+        _save_internal_receipt(venta_id, cart, total, job_id)
+        # Fallar al imprimir jamás revierte una venta que ya hizo COMMIT.
+        try:
+            from services.intrashop_ticket_service import emitir_ticket_venta
+            threading.Thread(
+                target=emitir_ticket_venta,
+                args=(actual_db_path, venta_id, job_id, cart, total),
+                daemon=True,
+            ).start()
+        except Exception:
+            logger.exception("Venta #%s confirmada pero no se pudo iniciar su impresión", venta_id)
     except Exception as exc:
         logger.exception("No se pudo registrar la venta de IntraShop tras el pago")
         with _connect() as conn:
@@ -227,6 +271,36 @@ def _save_internal_receipt(venta_id: int, cart: list[dict], total: float, job_id
             conn.commit()
     except Exception:
         logger.exception("No se pudo guardar el comprobante interno de IntraShop")
+
+
+def recover_pending_tickets() -> int:
+    """Al reiniciar POS Server, imprimir ventas cobradas cuyo job sigue PENDING.
+
+    Nunca reimprime trabajos PRINTING/SENT: pudieron haber llegado a CUPS
+    aunque el servidor se haya interrumpido antes de registrar la respuesta.
+    """
+    from services.intrashop_ticket_service import emitir_ticket_venta
+
+    with _connect() as conn:
+        checkout_store.ensure_schema(conn)
+        rows = conn.execute(
+            """SELECT t.venta_id,t.checkout_id,c.items_json,c.total
+               FROM intrashop_ticket_jobs t
+               JOIN intrashop_checkouts c ON c.id=t.checkout_id
+               WHERE t.estado='pending' AND c.estado='completed'
+               AND c.venta_id=t.venta_id
+               ORDER BY t.venta_id LIMIT 100"""
+        ).fetchall()
+        database_path = conn.execute("PRAGMA database_list").fetchone()["file"] or DB_PATH
+    for row in rows:
+        try:
+            emitir_ticket_venta(
+                database_path, row["venta_id"], row["checkout_id"],
+                json.loads(row["items_json"]), row["total"],
+            )
+        except Exception:
+            logger.exception("No se pudo recuperar ticket de venta #%s", row["venta_id"])
+    return len(rows)
 
 
 def _cerrar_qr_checkout(checkout_id: str, pos_ext: str, store_ext: str) -> dict:
@@ -465,6 +539,15 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
         # esta llamada se atiende inmediatamente al regresar, antes de
         # publicar el QR como disponible para el comprador.
         ok = mp_service.crear_orden(total, pos_ext=pos_ext, store_ext=store_ext, reference=job_id)
+        if not ok and cancel_event.is_set():
+            cierre = _cerrar_qr_checkout(job_id, pos_ext=pos_ext, store_ext=store_ext)
+            with _jobs_lock:
+                _jobs[job_id].update(
+                    status="cancelled" if cierre["estado"] == "closed" else "cancel_error",
+                    message="Pedido cancelado." if cierre["estado"] == "closed" else
+                            "Cierre QR sin confirmar. Revisar Mercado Pago en administración.",
+                )
+            return
         if not ok:
             # Un timeout en PUT no prueba que MP no haya creado el QR.
             # Intentar cerrar únicamente si la orden remota tiene
@@ -504,26 +587,17 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
             paid = mp_service.verificar_estado(cancelar=cancel_event.is_set, cancel_event=cancel_event,
                                                pos_ext=pos_ext, reference=job_id)
         if cancel_event.is_set():
-            # Cancelar la visualización no implica que Mercado Pago haya anulado el cobro.
-            # Consultar la referencia del pago después de cerrar la orden evita
-            # perder una venta aprobada justo durante la cancelación.
+            # El usuario ya cerró el modal. Cerrar el QR de su referencia sin
+            # bloquear la UI ni exigir búsqueda posterior de pagos.
             cierre = _cerrar_qr_checkout(
                 job_id, pos_ext=pos_ext, store_ext=store_ext
             )
-            verification = mp_service.verificar_pago_referencia(job_id, total)
-            # El polling por POS no prueba por sí solo referencia y monto.
-            confirmed = verification["estado"] == "approved"
-            if confirmed:
-                with _jobs_lock:
-                    _jobs[job_id].update(status="paid", message="Pago confirmado durante la cancelación; registrando venta")
-                _finalize_sale(job_id, cart, total)
-            else:
-                with _jobs_lock:
-                    _jobs[job_id].update(
-                        status="cancel_error",
-                        message=f"Cancelación solicitada (QR: {cierre['estado']}). "
-                                "Pago sin confirmar. La reserva sigue retenida."
-                    )
+            with _jobs_lock:
+                _jobs[job_id].update(
+                    status="cancelled" if cierre["estado"] == "closed" else "cancel_error",
+                    message="Pedido cancelado; QR cerrado." if cierre["estado"] == "closed"
+                            else "Mercado Pago no confirmó el cierre; revisión administrativa necesaria.",
+                )
             return
         if not paid:
             # El timeout de polling no cierra automáticamente el QR en Mercado Pago.
@@ -556,6 +630,14 @@ def _run_checkout(job_id: str, cart: list[dict], total: float) -> None:
                     status="cancel_error",
                     message="El QR indicó un pago, pero no se pudo validar referencia y monto. "
                             "Reserva retenida hasta conciliar Mercado Pago.",
+                )
+            return
+        if cancel_event.is_set():
+            cierre = _cerrar_qr_checkout(job_id, pos_ext=pos_ext, store_ext=store_ext)
+            with _jobs_lock:
+                _jobs[job_id].update(
+                    status="cancel_error",
+                    message="Pago acreditado simultáneamente con la cancelación; revisar para devolución.",
                 )
             return
         with _jobs_lock:
@@ -885,6 +967,7 @@ class BindingIn(BaseModel):
     store_external_id: str = Field(min_length=1, max_length=100)
     qr_url: str = ""
     nombre: str = ""
+    caja_id: int | None = Field(default=None, gt=0)
 
 
 @router.get("/admin/mp-bindings")
@@ -907,6 +990,14 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
             totem = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.terminal_id,)).fetchone()
             if not totem:
                 raise HTTPException(404, "El tótem no está registrado en POS Server")
+        if body.caja_id is not None:
+            if body.terminal_type != "totem":
+                raise HTTPException(400, "La caja de cobro se vincula únicamente a tótems")
+            active = conn.execute(
+                "SELECT id FROM cajas WHERE id=? AND estado='abierta'", (body.caja_id,)
+            ).fetchone()
+            if not active:
+                raise HTTPException(409, "La caja seleccionada no está abierta")
         duplicate = conn.execute(
             "SELECT terminal_id, nombre FROM intrashop_mp_bindings "
             "WHERE pos_external_id=? AND terminal_id<>? LIMIT 1",
@@ -923,12 +1014,13 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
             raise HTTPException(409, "No se puede reasignar un QR con cobros activos")
         try:
             conn.execute("""INSERT INTO intrashop_mp_bindings
-                (terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre)
-                VALUES (?,?,?,?,?,?) ON CONFLICT(terminal_id) DO UPDATE SET
+                (terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre,caja_id)
+                VALUES (?,?,?,?,?,?,?) ON CONFLICT(terminal_id) DO UPDATE SET
                 terminal_type=excluded.terminal_type,pos_external_id=excluded.pos_external_id,
-                store_external_id=excluded.store_external_id,qr_url=excluded.qr_url,nombre=excluded.nombre""",
+                store_external_id=excluded.store_external_id,qr_url=excluded.qr_url,
+                nombre=excluded.nombre,caja_id=excluded.caja_id""",
                 (body.terminal_id,body.terminal_type,body.pos_external_id,
-                 body.store_external_id,body.qr_url,body.nombre))
+                 body.store_external_id,body.qr_url,body.nombre,body.caja_id))
             conn.commit()
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Este POS Mercado Pago ya está asignado a otra terminal")
@@ -958,11 +1050,75 @@ def desvincular_binding(terminal_id: str, operador: str = Depends(require_config
 def pending_checkouts(operador: str = Depends(require_config)):
     with _connect() as conn:
         checkout_store.ensure_schema(conn)
-        return [dict(row) for row in conn.execute("""SELECT id,totem_id,pos_external_id,
+        return [dict(row) for row in conn.execute("""SELECT id,totem_id,pos_external_id,caja_id,
             estado,total,created_at,updated_at,qr_close_status,qr_close_checked_at,
             mp_api,mp_order_id,mp_cancel_requested FROM intrashop_checkouts
             WHERE estado NOT IN ('completed','cancelled','failed')
             ORDER BY created_at DESC LIMIT 100""")]
+
+
+class AssignOriginCajaIn(BaseModel):
+    caja_id: int = Field(gt=0)
+    confirmacion: str
+
+
+@router.post("/admin/checkouts/{checkout_id}/assign-caja")
+def assign_checkout_origin_caja(
+    checkout_id: str, body: AssignOriginCajaIn,
+    operador: str = Depends(require_config),
+):
+    """Recuperación excepcional: checkout antiguo sin caja; no crea ni libera ventas.
+
+    Solo un administrador puede fijar una caja ABIERTA, con confirmación
+    explícita y auditoría. No modifica asignaciones ya existentes ni cambia
+    el origen de una venta registrada. Después hay que conciliar con MP.
+    """
+    if body.confirmacion != "ASIGNAR CAJA A CHECKOUT ANTIGUO":
+        raise HTTPException(400, "Confirmación administrativa requerida")
+    with _reconcile_lock:
+        if checkout_id in _reconciling:
+            raise HTTPException(409, "Hay una conciliación de este checkout en curso")
+        _reconciling.add(checkout_id)
+    try:
+        with _connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            checkout_store.ensure_schema(conn)
+            row = conn.execute(
+                "SELECT estado,venta_id,caja_id FROM intrashop_checkouts WHERE id=?",
+                (checkout_id,),
+            ).fetchone()
+            if row is None:
+                raise HTTPException(404, "Checkout inexistente")
+            if row["venta_id"] is not None or row["estado"] in (
+                "completed", "cancelled", "failed"
+            ):
+                raise HTTPException(409, "El checkout ya está cerrado o tiene una venta")
+            if row["caja_id"] is not None:
+                raise HTTPException(409, "La caja del checkout ya está fijada y no puede cambiarse")
+            if not conn.execute(
+                "SELECT 1 FROM cajas WHERE id=? AND estado='abierta'",
+                (body.caja_id,),
+            ).fetchone():
+                raise HTTPException(409, "La caja elegida no está abierta")
+            conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_auditoria (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, checkout_id TEXT NOT NULL,
+                operador TEXT NOT NULL, accion TEXT NOT NULL,
+                fecha TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)""")
+            conn.execute(
+                "UPDATE intrashop_checkouts SET caja_id=?,updated_at=? WHERE id=? "
+                "AND caja_id IS NULL AND venta_id IS NULL",
+                (body.caja_id, int(time.time()), checkout_id),
+            )
+            conn.execute(
+                "INSERT INTO intrashop_auditoria(checkout_id,operador,accion) "
+                "VALUES (?,?,?)",
+                (checkout_id, operador, f"ASIGNACION_CAJA_HISTORICA:{body.caja_id}"),
+            )
+            conn.commit()
+        return {"ok": True, "caja_id": body.caja_id, "requiere_conciliacion": True}
+    finally:
+        with _reconcile_lock:
+            _reconciling.discard(checkout_id)
 
 
 class ResolveMpOrderIn(BaseModel):
@@ -1313,10 +1469,6 @@ def presencia_totem(body: TotemPresenceIn, request: Request):
 def iniciar_checkout(body: CheckoutIn):
     _ensure_schema()
     cart, total = _load_cart(body.items)
-    with _connect() as conn:
-        caja = conn.execute("SELECT id FROM cajas WHERE estado='abierta' ORDER BY id DESC LIMIT 1").fetchone()
-    if not caja:
-        raise HTTPException(409, "El POS no tiene una caja abierta. Abrí la caja antes de habilitar compras.")
     if not settings.mp_activo:
         raise HTTPException(503, "Mercado Pago está deshabilitado en la configuración del POS")
     totem_nombre = None
@@ -1348,7 +1500,7 @@ def iniciar_checkout(body: CheckoutIn):
         _jobs[job_id] = {"status": "queued", "message": "Stock reservado; preparando cobro",
                          "total": total, "items": cart, "created_at": time.time(),
                          "sale_done": False, "mp_api": mp_api, "totem_id": body.totem_id,
-                         "totem_nombre": totem_nombre,
+                         "totem_nombre": totem_nombre, "caja_id": binding["caja_id"],
                          "pos_ext": binding["pos_external_id"],
                          "store_ext": binding["store_external_id"],
                          "qr_url": binding["qr_url"]}
@@ -1356,7 +1508,7 @@ def iniciar_checkout(body: CheckoutIn):
     worker = _run_checkout_orders_v1 if mp_api == "orders_v1" else _run_checkout
     threading.Thread(target=worker, args=(job_id, cart, total), daemon=True).start()
     return {"checkout_id": job_id, "status": "queued", "total": total,
-            "items": cart, "mp_api": mp_api}
+            "items": cart, "mp_api": mp_api, "caja_id": binding["caja_id"]}
 
 
 @router.post("/checkout/{checkout_id}/cancel")
@@ -1424,8 +1576,22 @@ def cancelar_checkout(checkout_id: str):
             )
         if job.get("status") == "cancelling":
             return {"ok": True, "status": "cancelling"}
+    # Nunca adquirir el lock SQLite mientras se tiene _jobs_lock:
+    # _finalize_sale utiliza el orden inverso dentro de su transacción.
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT estado,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)
+        ).fetchone()
+        if not current or current["venta_id"] is not None or current["estado"] == "completed":
+            raise HTTPException(409, "El pago ya fue registrado; no se puede cancelar")
+        checkout_store.request_mp_cancel(conn, checkout_id)
+        conn.commit()
+    with _jobs_lock:
         _cancel_events.setdefault(checkout_id, threading.Event()).set()
-        job.update(status="cancelling", message="Cancelando el pedido y cerrando el QR…")
+        job = _jobs.get(checkout_id)
+        if job and job.get("status") not in {"completed", "paid_sale_error"}:
+            job.update(status="cancelling", message="Cerrando el QR cancelado…")
     return {"ok": True, "status": "cancelling"}
 
 
@@ -1435,7 +1601,7 @@ def estado_checkout(checkout_id: str):
         job = _jobs.get(checkout_id)
         if not job:
             with _connect() as conn:
-                row = conn.execute("SELECT estado,total,venta_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
+                row = conn.execute("SELECT estado,total,venta_id,caja_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)).fetchone()
             if not row:
                 raise HTTPException(404, "Checkout inexistente")
             persisted = row["estado"]
@@ -1451,5 +1617,6 @@ def estado_checkout(checkout_id: str):
                 message = ("El servidor se reinició. El estado del pago no está confirmado. "
                            "No reintentes ni liberes stock hasta que un administrador concilie en Mercado Pago.")
             return {"status": status, "total": row["total"],
-                    "venta_id": row["venta_id"], "message": message}
+                    "venta_id": row["venta_id"], "caja_id": row["caja_id"],
+                    "message": message}
         return {k: v for k, v in job.items() if k not in {"sale_done", "created_at"}}

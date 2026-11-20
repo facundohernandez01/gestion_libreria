@@ -40,10 +40,10 @@ def _modo_red() -> str:
 
 def _server_url() -> str:
     url = os.getenv("SERVER_URL", "").strip()
-    # IntraShop no debe leer configuración de conexión desde una SQLite
-    # potencialmente distinta de la base del servidor.
-    if es_edicion_intrashop():
-        return url or settings.server_url or "http://127.0.0.1:8000"
+    # La URL guardada en "Configurar conexión LAN" es un ajuste LOCAL
+    # de esta terminal, incluso cuando el POS es cliente obligatorio.
+    # La SQLite de esta terminal solo almacena esta preferencia; todas las
+    # operaciones de negocio siguen yendo a POS Server por ApiClient.
     try:
         from database_manager import DatabaseManager
 

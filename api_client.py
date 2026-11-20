@@ -69,21 +69,40 @@ class ApiClient:
         return r.json()
 
     def autenticar_usuario(self, usuario: str, clave: str):
+        """Autenticar siempre contra POS Server; distinguir fallo LAN de 401."""
+        from core.terminal_identity import terminal_id
         try:
-            from core.terminal_identity import terminal_id
-            response = httpx.post(self.base_url + "/pos/auth/login",
+            response = httpx.post(
+                self.base_url + "/pos/auth/login",
                 json={"usuario": usuario, "clave": clave},
-                headers={"X-Terminal-Id": terminal_id()}, timeout=8)
-            if response.status_code != 200:
-                return None
+                headers={"X-Terminal-Id": terminal_id()},
+                timeout=8,
+            )
+        except httpx.RequestError as exc:
+            # No reportar una desconexión como si la contraseña fuera inválida.
+            raise ConnectionError(
+                f"No se pudo conectar a POS Server ({self.base_url}). "
+                "Verificá la URL, la red y que el servidor esté iniciado."
+            ) from exc
+        if response.status_code == 401:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"POS Server rechazó el inicio de sesión (HTTP {response.status_code}). "
+                "Revisá el estado del servidor y su base de datos."
+            )
+        try:
             data = response.json()
             from adapters.entregas import set_session
             set_session(data["access_token"])
             return {"usuario": data["usuario"], "nombre": data["usuario"],
-                    "rol": data.get("rol", "OPERADOR"), "es_admin": data.get("es_admin", False),
+                    "rol": data.get("rol", "OPERADOR"),
+                    "es_admin": data.get("es_admin", False),
                     "permisos": data.get("permisos", {}), "activo": True}
-        except Exception:
-            return None
+        except (KeyError, ValueError, TypeError) as exc:
+            raise RuntimeError(
+                "POS Server devolvió una respuesta de sesión incompleta."
+            ) from exc
 
     def health(self) -> bool:
         try:

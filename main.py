@@ -295,13 +295,18 @@ class LibreriaApp:
             self.mostrar_activacion_licencia()
             return
 
-        try:
-            primer_uso = bool(self.db.es_primer_uso())
-        except AttributeError:
-            primer_uso = False
-        if primer_uso:
-            self.mostrar_primer_uso()
-            return
+        # En modo cliente, es_primer_uso() requiere una sesión ADMIN del
+        # servidor. Nunca consultarlo antes del login: ApiClient rechaza
+        # correctamente el endpoint sin un Bearer token.
+        # En modo local se conserva el asistente previo al login.
+        if self.modo != "cliente":
+            try:
+                primer_uso = bool(self.db.es_primer_uso())
+            except AttributeError:
+                primer_uso = False
+            if primer_uso:
+                self.mostrar_primer_uso()
+                return
         if not self.autenticado:
             if self.es_web and not self._restauracion_intentada:
                 self._restauracion_intentada = True
@@ -312,6 +317,17 @@ class LibreriaApp:
                     pass
             self.mostrar_login()
             return
+
+        # En cliente, sólo un operador autenticado con rol administrador
+        # puede consultar/ejecutar el primer uso en la SQLite de POS Server.
+        # No hacer esa consulta para cajeros ni terminales de stock.
+        if self.modo == "cliente" and self.es_admin:
+            try:
+                if self.db.es_primer_uso():
+                    self.mostrar_primer_uso()
+                    return
+            except AttributeError:
+                pass
         if self.modo_web == "stock":
             self.mostrar_ingreso_stock()
             return

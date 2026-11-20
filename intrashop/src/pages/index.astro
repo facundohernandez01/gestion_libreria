@@ -14,7 +14,7 @@ const title = "IntraShop · Tu tienda local";
   <body>
     <header class="topbar">
       <a class="brand" href="/intrashop/" aria-label="IntraShop inicio">
-        <img class="brand-logo" src="/intrashop-logo.svg" width="43" height="43" alt=""/>
+        <img class="brand-logo" src="/intrashop/intrashop-logo.svg" width="43" height="43" alt=""/>
         <span>Intra<span class="brand-accent">Shop</span><small>TIENDA LOCAL</small></span>
       </a>
       <div class="header-actions">
@@ -27,21 +27,6 @@ const title = "IntraShop · Tu tienda local";
     </header>
 
     <main>
-      <section class="hero">
-        <div class="hero-copy">
-          <span class="eyebrow"><span></span> COMPRÁ EN TU COMERCIO</span>
-          <h1>Lo que necesitás,<br /><em>a un paso.</em></h1>
-          <p>Explorá el catálogo disponible y prepará tu pedido desde tu dispositivo.</p>
-          <div class="hero-note"><span class="shield">✓</span> Stock sincronizado con el local</div>
-        </div>
-        <div class="hero-art" aria-hidden="true">
-          <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
-          <div class="bag"><div class="bag-handle"></div><div class="bag-star">✦</div><div class="bag-line"></div></div>
-          <div class="float-card float-card-one"><span class="float-icon">✓</span><span><b>Compra simple</b><small>En pocos pasos</small></span></div>
-          <div class="float-card float-card-two"><span class="float-icon purple">⌁</span><span><b>Pago por QR</b><small>Mercado Pago</small></span></div>
-        </div>
-      </section>
-
       <section class="catalog-section">
         <div class="section-heading">
           <div><span class="section-kicker">CATÁLOGO</span><h2>Encontrá tus productos</h2><p>Disponibilidad actual del comercio.</p></div>
@@ -95,7 +80,6 @@ const title = "IntraShop · Tu tienda local";
       let totemId = localStorage.getItem("intrashop_totem_id");
       if(!totemId){totemId=makeId();localStorage.setItem("intrashop_totem_id",totemId);}
       let totemName=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
-      let polling = false;
       let activeCheckoutId = "";
       let checkoutPending = false;
       let cancelRequestedDuringCreation = false;
@@ -172,6 +156,22 @@ const title = "IntraShop · Tu tienda local";
         $("cart-drawer").setAttribute("aria-hidden",String(!open));
       }
       function openPayment() { $("payment-modal").hidden = false; $("payment-spinner").hidden=false; $("payment-result").hidden=true; $("payment-done").hidden=true; $("qr-container").hidden=true; $("payment-message").textContent="Preparando tu cobro…"; }
+      // Cancelar es una acción local instantánea. El cierre del QR sigue en
+      // segundo plano: nunca dejar el modal bloqueado por una consulta a MP.
+      function cerrarPagoCancelado() {
+        $("payment-modal").hidden = true;
+        $("payment-order").hidden = true;
+        $("qr-container").hidden = true;
+        $("payment-cancel").hidden = true;
+        $<HTMLButtonElement>("payment-cancel").disabled = false;
+        $("payment-spinner").hidden = true;
+        activeCheckoutId = "";
+      }
+      function solicitarCancelacion(id:string) {
+        // El servidor persiste la cancelación; no esperar respuesta para cerrar UI.
+        void api("/tienda/checkout/"+encodeURIComponent(id)+"/cancel",{method:"POST"})
+          .catch(error=>console.error("No se pudo solicitar el cierre QR:",error));
+      }
       async function startCheckout() {
         if (checkoutPending || activeCheckoutId) return;
         checkoutPending = true;
@@ -181,48 +181,40 @@ const title = "IntraShop · Tu tienda local";
         $("payment-order").hidden=true; $("payment-cancel").hidden=false; activeCheckoutId="";
         try {
           await reportPresence();
+          // Si se cancela mientras reportPresence aún responde, no crear el pedido.
+          if (cancelRequestedDuringCreation) return;
           const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({totem_id:totemId,items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
-          activeCheckoutId = result.checkout_id;
-          checkoutPending = false;
           if (cancelRequestedDuringCreation) {
-            $("payment-message").textContent = "Cancelando orden recién creada…";
-            void cancelCheckout();
-            pollCheckout(result.checkout_id);
+            solicitarCancelacion(result.checkout_id);
             return;
           }
+          activeCheckoutId = result.checkout_id;
           const orderItems = result.items || cart.map(i=>({descripcion:i.product.descripcion,cantidad:i.quantity,precio_unitario:i.product.precio_lista}));
           $("payment-order-items").innerHTML = orderItems.map((item:any)=>"<div class=\"payment-order-item\"><span>"+escapeHtml(item.descripcion)+" <b>× "+item.cantidad+"</b></span><strong>"+money(item.precio_unitario*item.cantidad)+"</strong></div>").join("");
           $("payment-order-count").textContent = orderItems.reduce((sum:number,item:any)=>sum+item.cantidad,0)+" unidades";
           $("payment-order-total").textContent = money(result.total);
           $("payment-order").hidden = false;
-          $("payment-cancel").hidden = false;
           $("payment-message").textContent = "Escaneá el QR y confirmá el pago desde Mercado Pago.";
-          pollCheckout(result.checkout_id);
+          void pollCheckout(result.checkout_id);
         } catch(error) {
+          if (!cancelRequestedDuringCreation) showPaymentResult((error as Error).message,false);
+        } finally {
           checkoutPending = false;
-          showPaymentResult((error as Error).message,false);
         }
       }
-      async function cancelCheckout() {
-        if (!activeCheckoutId) {
-          if (checkoutPending) { cancelRequestedDuringCreation = true; $("payment-message").textContent = "Se cancelará apenas el servidor responda…"; return; }
-          $("payment-modal").hidden=true; return;
-        }
-        $<HTMLButtonElement>("payment-cancel").disabled = true;
-        $("payment-message").textContent = "Solicitando cancelación del pedido…";
-        try {
-          await api("/tienda/checkout/"+encodeURIComponent(activeCheckoutId)+"/cancel",{method:"POST"});
-          $("payment-message").textContent = "Cancelación solicitada. Verificando estado…";
-        } catch(error) {
-          $("payment-message").textContent = (error as Error).message;
-          $<HTMLButtonElement>("payment-cancel").disabled = false;
-        }
+      function cancelCheckout() {
+        // Invalida el polling y cierra tanto el botón X como Cancelar.
+        cancelRequestedDuringCreation = true;
+        const id = activeCheckoutId;
+        cerrarPagoCancelado();
+        if (id) solicitarCancelacion(id);
       }
       async function pollCheckout(id:string) {
-        if (polling) return; polling=true;
         try {
-          while (!$("payment-modal").hidden) {
+          while (activeCheckoutId === id && !$("payment-modal").hidden) {
             const state = await api("/tienda/checkout/"+encodeURIComponent(id));
+            // Descartar respuestas que llegaron después de cancelar/cerrar.
+            if (activeCheckoutId !== id || $("payment-modal").hidden) return;
             $("payment-message").textContent = state.message || "Procesando pago…";
             if (state.qr_url) { $<HTMLImageElement>("payment-qr").src=state.qr_url; $("qr-container").hidden=false; }
             if (["completed","error","expired","paid_sale_error","cancelled","cancel_error","reconciliation_required"].includes(state.status)) {
@@ -237,8 +229,9 @@ const title = "IntraShop · Tu tienda local";
             }
             await new Promise(resolve=>setTimeout(resolve,2000));
           }
-        } catch(error) { showPaymentResult((error as Error).message,false); }
-        finally { polling=false; }
+        } catch(error) {
+          if (activeCheckoutId === id && !$("payment-modal").hidden) showPaymentResult((error as Error).message,false);
+        }
       }
       function showPaymentResult(message:string,success:boolean) {
         $("payment-spinner").hidden=true; $("payment-result").hidden=false; $("payment-result").className="payment-result "+(success?"success":"error"); $("payment-result").textContent=message; $("payment-done").hidden=false;
@@ -250,7 +243,7 @@ const title = "IntraShop · Tu tienda local";
       $("cart-close").addEventListener("click",()=>openCart(false));
       $("drawer-backdrop").addEventListener("click",()=>openCart(false));
       $("checkout").addEventListener("click",startCheckout);
-      $("payment-close").addEventListener("click",()=>{if(activeCheckoutId) void cancelCheckout(); else if (!checkoutPending) $("payment-modal").hidden=true;});
+      $("payment-close").addEventListener("click",cancelCheckout);
       $("payment-cancel").addEventListener("click",cancelCheckout);
       $("payment-done").addEventListener("click",()=>{if(activeCheckoutId || checkoutPending) return;$("payment-modal").hidden=true;$("payment-order").hidden=true;});
       $<HTMLInputElement>("search").addEventListener("input",()=>{window.clearTimeout((window as any).__searchTimer);(window as any).__searchTimer=window.setTimeout(()=>loadProducts($<HTMLInputElement>("search").value.trim()),250);});
