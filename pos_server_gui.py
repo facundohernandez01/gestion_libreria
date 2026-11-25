@@ -560,6 +560,7 @@ class ServerConsole:
             # La IP observada no define identidad: sólo ip_vinculada confirma.
             from intrashop_entregas import ensure_schema
             ensure_schema(conn)
+            conn.commit()
             totems = [dict(row) for row in conn.execute(
                 "SELECT id,nombre,ip_vinculada,ip_address,ultimo_contacto "
                 "FROM intrashop_totems ORDER BY id"
