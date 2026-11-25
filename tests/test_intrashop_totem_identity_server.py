@@ -137,7 +137,6 @@ def test_checkout_rechaza_uuid_ajeno_a_ip_del_equipo(server_db, monkeypatch):
             "INSERT INTO productos(codigo,descripcion,precio_lista,stock_actual,disponible_tienda) "
             "VALUES('TEST-IP','Prueba',10,5,1)"
         ).lastrowid
-        conn.execute("BEGIN IMMEDIATE")
         vincular_ip(conn, "totem-001", "192.168.30.42")
         conn.commit()
     monkeypatch.setattr(api.settings, "mp_activo", True)
