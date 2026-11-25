@@ -161,11 +161,17 @@ class ServerConsole:
         notebook.add(sessions, text="Operadores POS")
         notebook.add(pending_tab, text="Conciliación")
 
-        ttk.Label(devices, text="Verde: actividad en los últimos 90 segundos. Gris: sin señal reciente.").pack(anchor="w", pady=(0, 8))
+        ttk.Label(devices, text="Los tótems 001–008 están disponibles. Asigná y confirmá una IP antes de cobrar; reservarla en el DHCP del router.", wraplength=870).pack(anchor="w", pady=(0, 8))
         self.totems = self._table(devices, [
-            ("estado", "Estado", 110), ("nombre", "Nombre", 220), ("id", "Identificador", 260),
-            ("ip", "IP registrada", 140), ("contacto", "Último contacto", 170), ("qr", "QR", 145)])
-        ttk.Button(devices, text="Configurar QR del tótem seleccionado", command=self.configure_totem_qr).pack(anchor="w", pady=(8, 0))
+            ("estado", "Estado", 105), ("nombre", "Nombre", 155), ("id", "Identificador", 145),
+            ("ip", "IP vinculada", 120), ("observada", "IP observada", 115),
+            ("contacto", "Último contacto", 155), ("qr", "QR", 105)])
+        actions_totems = ttk.Frame(devices)
+        actions_totems.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions_totems, text="Crear siguiente tótem", command=self.provision_totem).pack(side="left", padx=(0, 8))
+        ttk.Button(actions_totems, text="Vincular / cambiar IP", command=self.bind_totem_ip).pack(side="left", padx=(0, 8))
+        ttk.Button(actions_totems, text="Quitar IP", command=self.unbind_totem_ip).pack(side="left", padx=(0, 8))
+        ttk.Button(actions_totems, text="Configurar QR", command=self.configure_totem_qr).pack(side="left")
         self.totems.tag_configure("online", foreground="#12834a")
         self.totems.tag_configure("offline", foreground="#7a8799")
 
@@ -203,6 +209,8 @@ class ServerConsole:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Actualizar listado", command=self.refresh)
         if kind == "totem":
+            menu.add_command(label="Vincular / cambiar IP…", command=self.bind_totem_ip)
+            menu.add_command(label="Quitar vinculación IP", command=self.unbind_totem_ip)
             menu.add_command(label="Configurar QR…", command=self.configure_totem_qr)
             menu.add_command(label="Editar nombre del tótem", command=self.rename_totem)
             menu.add_command(label="Eliminar tótem sin asignaciones", command=self.delete_totem)
@@ -219,6 +227,94 @@ class ServerConsole:
         finally:
             menu.grab_release()
             menu.destroy()
+
+    def provision_totem(self):
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import provisionar
+
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                created = provisionar(conn, 1)
+                conn.commit()
+            messagebox.showinfo("Tótem creado",
+                created[0]["nombre"] + " (" + created[0]["id"] +
+                ") disponible. Asignale IP y, luego, el QR desde POS Server.")
+            self.refresh()
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("No se pudo crear el tótem", str(exc))
+
+    def bind_totem_ip(self):
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import vincular_ip
+
+        selected = self.totems.selection()
+        if not selected:
+            messagebox.showinfo("Vinculación IP", "Seleccioná un tótem.")
+            return
+        values = self.totems.item(selected[0], "values")
+        totem_id, nombre = values[2], values[1]
+        # La IP observada ayuda a elegir, pero no concede asociación automática.
+        default = str(values[3]) if values[3] not in ("—", "", None) else ""
+        if not default:
+            default = str(values[4]) if values[4] not in ("—", "", None) else ""
+        ip = simpledialog.askstring(
+            "Vincular IP a " + str(nombre),
+            "IP fija/reservada del equipo que abre la tienda:",
+            initialvalue=default, parent=self.root,
+        )
+        if ip is None:
+            return
+        ip = ip.strip()
+        if not messagebox.askyesno(
+            "Confirmar identidad del tótem",
+            f"¿Vincular la IP {ip} a {nombre} ({totem_id})?\n\n"
+            "Se conservará su asociación Mercado Pago, caja y pedidos.\n"
+            "Una IP reutilizada por otro equipo podría suplantar este tótem. "
+            "Reservala desde el router.",
+            parent=self.root,
+        ):
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                vincular_ip(conn, str(totem_id), ip)
+                conn.commit()
+            self.notice.set(f"{nombre} vinculado a {ip}. Identidad persistente en POS Server.")
+            self.refresh()
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("No se pudo vincular la IP", str(exc))
+
+    def unbind_totem_ip(self):
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import desvincular_ip
+
+        selected = self.totems.selection()
+        if not selected:
+            return
+        values = self.totems.item(selected[0], "values")
+        totem_id, nombre = values[2], values[1]
+        if not messagebox.askyesno(
+            "Desvincular IP",
+            f"¿Quitar la IP de {nombre}?\nEl QR y el historial permanecerán.",
+            parent=self.root,
+        ):
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                if not desvincular_ip(conn, str(totem_id)):
+                    raise ValueError("El tótem ya no existe.")
+                conn.commit()
+            self.refresh()
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo desvincular la IP", str(exc))
 
     def configure_totem_qr(self):
         """Asistente local: consulta POS autorizados y exige confirmación explícita."""
@@ -461,11 +557,13 @@ class ServerConsole:
     def _snapshot(self):
         with sqlite3.connect(settings.db_path, timeout=3) as conn:
             conn.row_factory = sqlite3.Row
-            # Una lectura agrupada cada 15 s; no se hace polling de la red.
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(intrashop_totems)")}
-            ip_col = "ip" if "ip" in columns else ("ip_address" if "ip_address" in columns else None)
-            fields = "id,nombre,ultimo_contacto" + ("," + ip_col if ip_col else "")
-            totems = [dict(row) for row in conn.execute("SELECT " + fields + " FROM intrashop_totems ORDER BY nombre COLLATE NOCASE")]
+            # La IP observada no define identidad: sólo ip_vinculada confirma.
+            from intrashop_entregas import ensure_schema
+            ensure_schema(conn)
+            totems = [dict(row) for row in conn.execute(
+                "SELECT id,nombre,ip_vinculada,ip_address,ultimo_contacto "
+                "FROM intrashop_totems ORDER BY id"
+            )]
             bindings = [dict(row) for row in conn.execute(
                 "SELECT terminal_id,terminal_type,nombre,pos_external_id FROM intrashop_mp_bindings ORDER BY terminal_type,nombre")]
             pending_rows = [dict(row) for row in conn.execute("SELECT id,estado,pos_external_id,total FROM intrashop_checkouts WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid') ORDER BY created_at DESC LIMIT 100")]
@@ -525,8 +623,10 @@ class ServerConsole:
             online = bool(last and timedelta(0) <= now - last <= timedelta(seconds=self.ONLINE_SECONDS))
             online_count += int(online)
             device_rows.append((("● En línea" if online else "○ Sin señal",
-                                 item["nombre"], item["id"], item.get("ip", item.get("ip_address", "—")),
-                                 item["ultimo_contacto"], "● Vinculado" if item["id"] in assigned_totems else "○ Pendiente"), "online" if online else "offline"))
+                                 item["nombre"], item["id"], item["ip_vinculada"] or "—",
+                                 item["ip_address"] or "—", item["ultimo_contacto"],
+                                 "● Vinculado" if item["id"] in assigned_totems else "○ Pendiente"),
+                                "online" if online else "offline"))
         self._fill(self.totems, device_rows)
         self._fill(self.pending_tree, [((p["id"],p["estado"],p["pos_external_id"],p["total"]),None) for p in pending_rows])
         self._fill(self.qr_tree, [
