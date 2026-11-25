@@ -1415,59 +1415,148 @@ def release_checkout(checkout_id: str, body: ReleaseRequest, operador: str = Dep
             _reconciling.discard(checkout_id)
 
 
-class TotemRegisterIn(BaseModel):
-    id: str = Field(min_length=8, max_length=64)
-    nombre: str = Field(min_length=1, max_length=80)
-
-
+# La identidad está en POS Server; ningún cliente público puede registrar,
+# renombrar o alterar IP / QR desde el navegador.
 @router.post("/totems/register")
-def registrar_totem(body: TotemRegisterIn, request: Request, x_api_key: str | None = Header(default=None)):
-    """Alta LAN sin clave solo para nuevos dispositivos; nunca asigna QR ni permisos."""
+def registrar_totem_obsoleto():
+    raise HTTPException(410, "El alta desde el navegador fue deshabilitada. Configurá el tótem en POS Server.")
+
+
+@router.get("/totems/identity")
+def identidad_totem(request: Request):
+    """Resolver por IP de origen observada. No crea ni cambia nombres."""
     from intrashop_entregas import ensure_schema
-    authenticated = bool(settings.api_key and x_api_key == settings.api_key)
+    from services.intrashop_totem_registry import ip_cliente, resolve_ip
+
+    try:
+        ip = ip_cliente(request)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     with _connect() as conn:
         ensure_schema(conn)
-        row = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.id,)).fetchone()
-        if row:
-            if authenticated:
-                conn.execute("""UPDATE intrashop_totems SET nombre=?, ip_address=?,
-                    ultimo_contacto=CURRENT_TIMESTAMP WHERE id=?""",
-                    (body.nombre.strip(), request.client.host if request.client else None, body.id))
-            else:
-                conn.execute("""UPDATE intrashop_totems SET ip_address=?,
-                    ultimo_contacto=CURRENT_TIMESTAMP WHERE id=?""",
-                    (request.client.host if request.client else None, body.id))
-            nombre = body.nombre.strip() if authenticated else row["nombre"]
-        else:
-            conn.execute("""INSERT INTO intrashop_totems(id, nombre, ip_address)
-                VALUES (?, ?, ?)""",
-                (body.id, body.nombre.strip(), request.client.host if request.client else None))
-            nombre = body.nombre.strip()
+        checkout_store.ensure_schema(conn)
+        row = resolve_ip(conn, ip)
+        if not row:
+            return {
+                "paired": False, "ip": ip, "id": None, "nombre": None,
+                "qr_assigned": False,
+                "message": "Equipo sin vincular. Asigná esta IP a un tótem en POS Server.",
+            }
+        conn.execute(
+            "UPDATE intrashop_totems SET ultimo_contacto=CURRENT_TIMESTAMP,ip_address=? "
+            "WHERE id=?",
+            (ip, row["id"]),
+        )
+        assigned = conn.execute(
+            "SELECT 1 FROM intrashop_mp_bindings "
+            "WHERE terminal_id=? AND terminal_type='totem' AND qr_url<>''",
+            (row["id"],),
+        ).fetchone()
         conn.commit()
-    return {"id": body.id, "nombre": nombre, "ok": True, "qr_pendiente": True}
-
-
-class TotemPresenceIn(BaseModel):
-    id: str = Field(min_length=8, max_length=64)
+    return {
+        "paired": True, "ip": ip, "id": row["id"], "nombre": row["nombre"],
+        "qr_assigned": bool(assigned),
+    }
 
 
 @router.post("/totems/presence")
-def presencia_totem(body: TotemPresenceIn, request: Request):
+def presencia_totem_legacy(request: Request):
+    """Compatibilidad sin autorregistro; el ID opcional nunca manda sobre la IP."""
+    return identidad_totem(request)
+
+
+class TotemProvisionIn(BaseModel):
+    cantidad: int = Field(default=1, ge=1, le=20)
+
+
+class TotemLinkIpIn(BaseModel):
+    ip: str = Field(min_length=3, max_length=45)
+
+
+@router.get("/admin/totems")
+def admin_listar_totems(operador: str = Depends(require_config)):
     from intrashop_entregas import ensure_schema
+
     with _connect() as conn:
         ensure_schema(conn)
-        row = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.id,)).fetchone()
-        if not row:
-            raise HTTPException(404, "Tótem no registrado")
-        conn.execute("UPDATE intrashop_totems SET ultimo_contacto=CURRENT_TIMESTAMP, ip_address=? WHERE id=?",
-                     (request.client.host if request.client else None, body.id))
+        checkout_store.ensure_schema(conn)
+        return [dict(row) for row in conn.execute(
+            """SELECT t.id,t.nombre,t.ip_vinculada,t.ip_address,t.ultimo_contacto,
+                      b.pos_external_id,b.caja_id
+               FROM intrashop_totems t
+               LEFT JOIN intrashop_mp_bindings b
+                 ON b.terminal_id=t.id AND b.terminal_type='totem'
+               ORDER BY t.id"""
+        )]
+
+
+@router.post("/admin/totems/provision")
+def admin_provisionar_totems(body: TotemProvisionIn, operador: str = Depends(require_config)):
+    from intrashop_entregas import ensure_schema
+    from services.intrashop_totem_registry import provisionar
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_schema(conn)
+        try:
+            creados = provisionar(conn, body.cantidad)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
         conn.commit()
-    return {"ok": True, "id": body.id, "nombre": row["nombre"]}
+    return {"ok": True, "totems": creados}
+
+
+@router.put("/admin/totems/{totem_id}/ip")
+def admin_confirmar_ip(totem_id: str, body: TotemLinkIpIn,
+                       operador: str = Depends(require_config)):
+    from intrashop_entregas import ensure_schema
+    from services.intrashop_totem_registry import vincular_ip
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_schema(conn)
+        try:
+            result = vincular_ip(conn, totem_id, body.ip)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        conn.commit()
+    return {"ok": True, "totem": result}
+
+
+@router.delete("/admin/totems/{totem_id}/ip")
+def admin_desvincular_ip(totem_id: str, operador: str = Depends(require_config)):
+    from intrashop_entregas import ensure_schema
+    from services.intrashop_totem_registry import desvincular_ip
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_schema(conn)
+        if not desvincular_ip(conn, totem_id):
+            raise HTTPException(404, "Tótem inexistente")
+        conn.commit()
+    return {"ok": True}
 
 
 @router.post("/checkout")
-def iniciar_checkout(body: CheckoutIn):
+def iniciar_checkout(body: CheckoutIn, request: Request = None):
     _ensure_schema()
+    # El ID que envía el navegador no da permisos: debe coincidir con la
+    # IP confirmada en POS Server. request=None conserva tests directos;
+    # FastAPI siempre inyecta el request real en producción.
+    if request is not None:
+        from services.intrashop_totem_registry import ip_cliente, resolve_ip
+        try:
+            ip = ip_cliente(request)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        with _connect() as conn:
+            from intrashop_entregas import ensure_schema
+            ensure_schema(conn)
+            identified = resolve_ip(conn, ip)
+        if not identified:
+            raise HTTPException(403, "Esta IP no está vinculada a un tótem en POS Server.")
+        if body.totem_id != identified["id"]:
+            raise HTTPException(403, "El ID del tótem no coincide con la IP confirmada en POS Server.")
     cart, total = _load_cart(body.items)
     if not settings.mp_activo:
         raise HTTPException(503, "Mercado Pago está deshabilitado en la configuración del POS")
