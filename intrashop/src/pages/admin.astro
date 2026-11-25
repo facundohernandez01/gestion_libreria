@@ -7,14 +7,15 @@ import "../styles/global.css";
 <body>
 <header class="topbar"><a class="brand" href="/intrashop/"><img src="/intrashop/intrashop-logo.svg" width="43" height="43" alt=""/><span>Intra<span class="brand-accent">Shop</span><small>ADMINISTRACIÓN</small></span></a><div style="display:flex;gap:18px"><a class="admin-back" href="/intrashop/entregas">Comandas y entregas</a><a class="admin-back" href="/intrashop/">← Volver a la tienda</a></div></header>
 <main class="admin-main">
-<section class="admin-heading"><span class="section-kicker">CONFIGURACIÓN LOCAL</span><h1>Administración de tienda</h1><p>Configurá la conexión con el POS. Estos datos se guardan en este dispositivo, sin servicios externos.</p></section>
+<section class="admin-heading"><span class="section-kicker">CONFIGURACIÓN LOCAL</span><h1>Administración de tienda</h1><p>La identidad de cada tótem y su QR pertenecen a POS Server. El navegador sólo guarda la dirección del servidor, nunca la vinculación.</p></section>
 <div class="admin-layout">
 <section class="admin-panel"><h2>Conexión al servidor</h2><p>Usá la dirección IP del equipo que ejecuta el POS. Evitá <code>localhost</code> en tablets o TV.</p>
-<div id="connection-form"><label for="totem-name">Nombre de este tótem</label><input id="totem-name" type="text" maxlength="80" required placeholder="Tótem Entrada 1"/><p class="admin-hint">Identifica este dispositivo en las comandas y permite asignarlo a cajas específicas.</p>
+<div id="connection-form">
+<div class="admin-tip"><strong>Identidad administrada en POS Server</strong><p id="totem-info" class="admin-hint">Consultando vínculo IP…</p><p class="admin-hint">Abrí POS Server → Tótems → Vincular / cambiar IP; elegí un tótem 001–008 y confirmá la IP. Luego configurá su QR. Para estabilidad, reservá esa IP en el router (DHCP).</p></div>
 <label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="http://192.168.1.100:8000" autocomplete="url"/>
 <button id="discover-server" type="button" class="admin-test-button">Detectar servidor cercano</button><div id="discover-results" role="status"></div>
-<p class="admin-hint">La conexión al catálogo no necesita usuario, contraseña ni API key. La administración y los cobros conservan su seguridad independiente.</p>
-<div class="admin-actions"><button id="save-connection" class="primary-button" type="button">Conectar y guardar</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
+<p class="admin-hint">La tienda recupera el tótem a partir de la IP confirmada en POS Server. La caché del navegador no puede cambiar su identidad ni el QR.</p>
+<div class="admin-actions"><button id="save-connection" class="primary-button" type="button">Guardar conexión</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
 </div><div id="admin-status" role="status" class="admin-status"></div></section>
 <section class="admin-panel"><h2>Conexión LAN</h2><p>Usá la IP de la computadora que ejecuta POS Server. El catálogo se consulta sin credenciales.</p>
 <div class="admin-tip"><strong>Variables de entorno de Astro</strong><code>PUBLIC_POS_URL=http://192.168.1.100:8000</code></div>
@@ -25,17 +26,13 @@ import "../styles/global.css";
 <script is:inline>
 (() => {
   const $ = (id) => document.getElementById(id);
-  const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "terminal-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
-  const url = $("server-url"), name = $("totem-name");
+  const url = $("server-url");
   const status = $("admin-status"), state = $("server-state");
   const origin = location.port === "8000" ? location.origin : location.protocol + "//" + location.hostname + ":8000";
   const stored = localStorage.getItem("intrashop_api") || "";
   const defaultUrl = stored && !stored.includes("localhost") && !stored.includes("127.0.0.1") ? stored : origin;
   url.value = defaultUrl;
 
-  let id = localStorage.getItem("intrashop_totem_id");
-  if (!id) { id = makeId(); localStorage.setItem("intrashop_totem_id", id); }
-  name.value = localStorage.getItem("intrashop_totem_name") || "Tótem " + id.slice(0, 8);
   function message(text, ok) { status.textContent = text; status.className = "admin-status " + (ok ? "success" : "error"); }
   async function request(base, path, options = {}) {
     const controller = new AbortController();
@@ -47,6 +44,24 @@ import "../styles/global.css";
       return data;
     } finally { clearTimeout(timer); }
   }
+  async function refreshIdentity(base) {
+    const info = $("totem-info");
+    try {
+      const identity = await request(base, "/tienda/totems/identity");
+      if (identity.paired) {
+        info.textContent = identity.nombre + " (" + identity.id + ") · IP " + identity.ip +
+          (identity.qr_assigned ? " · QR vinculado" : " · Pendiente asociar QR");
+      } else {
+        info.textContent = "Sin vinculación · IP observada " + identity.ip +
+          ". Asignala a un tótem desde la consola de POS Server.";
+      }
+      return identity;
+    } catch (error) {
+      info.textContent = "Identidad no disponible: " + String(error.message || error);
+      throw error;
+    }
+  }
+  void refreshIdentity(defaultUrl).catch(()=>{});
   $("discover-server").addEventListener("click", async () => {
     const button = $("discover-server"), box = $("discover-results");
     button.disabled = true; button.textContent = "Buscando servidores…";
@@ -90,12 +105,15 @@ import "../styles/global.css";
       const health = await request(base, "/health");
       if (health.service !== "pos-lan") throw new Error("No es un servidor POS compatible.");
       await request(base, "/tienda/productos");
-      const registration = await request(base, "/tienda/totems/register", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, nombre: name.value.trim() }) });
+      const identity = await refreshIdentity(base);
       localStorage.setItem("intrashop_api", base);
       localStorage.removeItem("intrashop_key");
-      localStorage.setItem("intrashop_totem_name", registration.nombre);
-      state.textContent = "Conectado · tótem registrado";
-      message("Tótem registrado como " + registration.nombre + ". Aparecerá en POS Server. Falta asociar un QR para cobrar.", true);
+      localStorage.removeItem("intrashop_totem_id");
+      localStorage.removeItem("intrashop_totem_name");
+      state.textContent = identity.paired ? "Conectado · identidad desde POS Server" : "Conectado · esperando IP vinculada";
+      message(identity.paired
+        ? "Conexión guardada. Identidad: "+identity.nombre+(identity.qr_assigned ? " · QR activo." : " · Falta asignar QR en POS Server.")
+        : "Conexión guardada. Para cobrar, vinculá la IP "+identity.ip+" desde POS Server.", true);
     } catch (error) {
       message("No se guardó la configuración: " + error.message + ". Revisá la IP, el puerto y que POS Server esté iniciado.", false);
     } finally { button.disabled = false; button.textContent = "Conectar y guardar"; }
