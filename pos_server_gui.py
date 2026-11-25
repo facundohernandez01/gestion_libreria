@@ -571,16 +571,20 @@ class ServerConsole:
         return totems, bindings, pending_rows
 
     @staticmethod
-    def _fill(table, rows):
+    def _fill(table, rows, identity_index=0):
+        # No restaurar selección por columna Estado: puede repetirse en
+        # múltiples filas y provocar asignaciones QR/IP al tótem equivocado.
         selected = table.selection()
-        previous = table.item(selected[0], "values")[0] if selected else None
+        old_values = table.item(selected[0], "values") if selected else ()
+        previous = old_values[identity_index] if len(old_values) > identity_index else None
         table.delete(*table.get_children())
         for row in rows:
             values, tag = row
             table.insert("", "end", values=values, tags=(tag,) if tag else ())
-        if previous:
+        if previous is not None:
             for item in table.get_children():
-                if table.item(item, "values")[0] == previous:
+                values = table.item(item, "values")
+                if len(values) > identity_index and values[identity_index] == previous:
                     table.selection_set(item)
                     break
 
@@ -628,7 +632,7 @@ class ServerConsole:
                                  item["ip_address"] or "—", item["ultimo_contacto"],
                                  "● Vinculado" if item["id"] in assigned_totems else "○ Pendiente"),
                                 "online" if online else "offline"))
-        self._fill(self.totems, device_rows)
+        self._fill(self.totems, device_rows, identity_index=2)
         self._fill(self.pending_tree, [((p["id"],p["estado"],p["pos_external_id"],p["total"]),None) for p in pending_rows])
         self._fill(self.qr_tree, [
             ((b["terminal_id"], b["terminal_type"], b["nombre"], b["pos_external_id"]), None)
