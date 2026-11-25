@@ -1480,6 +1480,7 @@ def admin_listar_totems(operador: str = Depends(require_config)):
     with _connect() as conn:
         ensure_schema(conn)
         checkout_store.ensure_schema(conn)
+        conn.commit()
         return [dict(row) for row in conn.execute(
             """SELECT t.id,t.nombre,t.ip_vinculada,t.ip_address,t.ultimo_contacto,
                       b.pos_external_id,b.caja_id
