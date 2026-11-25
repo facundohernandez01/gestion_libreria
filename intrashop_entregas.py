@@ -46,6 +46,21 @@ def ensure_schema(conn):
     totem_columns = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_totems)")}
     if "ip_address" not in totem_columns:
         conn.execute("ALTER TABLE intrashop_totems ADD COLUMN ip_address TEXT")
+    # Identidad durable: la IP de vinculación NO se actualiza por heartbeats.
+    # ip_address queda como último origen observado (telemetría).
+    if "ip_vinculada" not in totem_columns:
+        conn.execute("ALTER TABLE intrashop_totems ADD COLUMN ip_vinculada TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_intrashop_totems_ip_vinculada "
+        "ON intrashop_totems(ip_vinculada) WHERE ip_vinculada IS NOT NULL"
+    )
+    # Tótems disponibles desde POS Server, sin alta desde el navegador.
+    # Los registros legacy y sus QR no se alteran.
+    for numero in range(1, 9):
+        conn.execute(
+            "INSERT OR IGNORE INTO intrashop_totems(id,nombre) VALUES (?,?)",
+            (f"totem-{numero:03d}", f"Tótem {numero:03d}"),
+        )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_intrashop_entregas_estado ON intrashop_entregas(estado, fecha_creacion)")
 
 
