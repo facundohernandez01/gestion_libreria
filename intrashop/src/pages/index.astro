@@ -32,6 +32,7 @@ const title = "IntraShop · Tu tienda local";
           <div><span class="section-kicker">CATÁLOGO</span><h2>Encontrá tus productos</h2><p>Disponibilidad actual del comercio.</p></div>
           <label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" placeholder="Buscar productos..." autocomplete="off" /></label>
         </div>
+        <div id="totem-state" class="notice" role="status">Consultando tótem asignado por POS Server…</div>
         <div id="category-filters" class="category-filters" aria-label="Filtrar por categoría"></div>
         <div id="connection-message" class="notice">Conectando con el servidor del local…</div>
         <div id="catalog" class="product-grid" aria-live="polite"></div>
@@ -64,7 +65,6 @@ const title = "IntraShop · Tu tienda local";
     </div>
 
     <script>
-      const makeId = () => typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "terminal-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 12);
       type Product = { id:number; codigo:string; descripcion:string; categoria:string; marca:string; precio_lista:number; stock_actual:number; imagen_url:string };
       type CartItem = { product:Product; quantity:number };
       const $ = <T extends HTMLElement>(id:string) => document.getElementById(id) as T;
@@ -76,10 +76,11 @@ const title = "IntraShop · Tu tienda local";
       // Un localhost guardado en otro equipo siempre apunta a ese otro equipo.
       const safeStoredApi = storedApiBase && !storedApiBase.includes("localhost") && !storedApiBase.includes("127.0.0.1") ? storedApiBase : "";
       let apiBase = window.location.port === "8000" ? window.location.origin : (safeStoredApi || import.meta.env.PUBLIC_POS_URL || defaultApiBase);
-      // El catálogo es público en la LAN. Nunca insertar claves en el frontend.
-      let totemId = localStorage.getItem("intrashop_totem_id");
-      if(!totemId){totemId=makeId();localStorage.setItem("intrashop_totem_id",totemId);}
-      let totemName=localStorage.getItem("intrashop_totem_name")||("Tótem "+totemId.slice(0,8));
+      // POS Server identifica cada equipo por IP confirmada. No hay UUID
+      // persistente en caché: borrar localStorage no afecta la relación QR.
+      let totemId = "";
+      let totemName = "";
+      let totemReady = false;
       let activeCheckoutId = "";
       let checkoutPending = false;
       let cancelRequestedDuringCreation = false;
@@ -92,21 +93,24 @@ const title = "IntraShop · Tu tienda local";
         return body;
       };
       async function reportPresence(){
-        try {
-          let data;
-          try {
-            data = await api("/tienda/totems/presence",{method:"POST",
-              body:JSON.stringify({id:totemId})});
-          } catch(error) {
-            if (!(error instanceof Error) || !error.message.includes("Tótem no registrado")) throw error;
-            data = await api("/tienda/totems/register",{method:"POST",
-              body:JSON.stringify({id:totemId,nombre:totemName})});
-          }
-          if(data.nombre){totemName=data.nombre;localStorage.setItem("intrashop_totem_name",totemName);}
-        } catch {}
+        const identity = await api("/tienda/totems/identity");
+        totemId = identity.paired ? String(identity.id) : "";
+        totemName = identity.paired ? String(identity.nombre) : "";
+        totemReady = Boolean(identity.paired && identity.qr_assigned);
+        const state = $("totem-state");
+        state.classList.toggle("success",totemReady);
+        state.textContent = totemReady
+          ? totemName+" · Vinculado con QR en POS Server"
+          : identity.paired
+            ? totemName+" · Falta vincular Mercado Pago desde POS Server"
+            : "Equipo sin vincular ("+String(identity.ip || "IP desconocida")+"). Asigná su IP en POS Server para habilitar compras.";
+        updateCart();
+        return identity;
       }
-      void reportPresence();
-      setInterval(reportPresence,30000);
+      void reportPresence().catch(error=>{
+        $("totem-state").textContent="No se pudo verificar el tótem: "+String(error.message || error);
+      });
+      setInterval(()=>{void reportPresence().catch(()=>{totemReady=false;updateCart();$("totem-state").textContent="Sin comunicación con POS Server: cobro deshabilitado.";});},30000);
       function renderProducts(list:Product[]) {
         const categories = [...new Set(products.map(p => (p.categoria || "").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es"));
         $("category-filters").innerHTML = ["<button type=\"button\" class=\"category-chip "+(selectedCategory===""?"active":"")+"\" data-category=\"\">Todas</button>", ...categories.map(cat=>"<button type=\"button\" class=\"category-chip "+(selectedCategory===cat?"active":"")+"\" data-category=\""+escapeHtml(cat)+"\">"+escapeHtml(cat)+"</button>")].join("");
@@ -139,7 +143,7 @@ const title = "IntraShop · Tu tienda local";
         $("cart-items").innerHTML = cart.length ? cart.map(({product:p,quantity:q})=>`
           <div class="cart-item"><img src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"")+p.imagen_url) : placeholder}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><strong>${money(p.precio_lista*q)}</strong></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
         $("cart-total").textContent = money(cart.reduce((sum,item)=>sum+item.product.precio_lista*item.quantity,0));
-        $("checkout").toggleAttribute("disabled",cart.length===0);
+        $("checkout").toggleAttribute("disabled",cart.length===0 || !totemReady);
       }
       function addProduct(id:number, delta=1) {
         const product = products.find(p=>p.id===id) || cart.find(i=>i.product.id===id)?.product;
@@ -180,8 +184,10 @@ const title = "IntraShop · Tu tienda local";
         $("payment-message").textContent = "Generando el cobro con Mercado Pago…";
         $("payment-order").hidden=true; $("payment-cancel").hidden=false; activeCheckoutId="";
         try {
-          await reportPresence();
-          // Si se cancela mientras reportPresence aún responde, no crear el pedido.
+          const identity = await reportPresence();
+          if (!identity.paired || !identity.qr_assigned || !totemId)
+            throw new Error("El equipo no tiene un tótem con QR confirmado en POS Server.");
+          // Si se cancela mientras el servidor responde, no crear el pedido.
           if (cancelRequestedDuringCreation) return;
           const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({totem_id:totemId,items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
           if (cancelRequestedDuringCreation) {
