@@ -182,6 +182,7 @@ class ServerConsole:
         ttk.Button(actions_totems, text="Configurar QR", command=self.configure_totem_qr).pack(side="left")
         actions_baja = ttk.Frame(devices)
         actions_baja.pack(fill="x", pady=(6, 0))
+        ttk.Button(actions_baja, text="Generar código de acceso", command=self.generate_pair_code).pack(side="left", padx=(0, 8))
         ttk.Button(actions_baja, text="Eliminar tótem…", command=self.delete_totem).pack(side="left", padx=(0, 8))
         ttk.Button(actions_baja, text="Restaurar eliminado", command=self.restore_totem).pack(side="left", padx=(0, 18))
         ttk.Checkbutton(actions_baja, text="Mostrar eliminados", variable=self.mostrar_eliminados,
@@ -227,6 +228,7 @@ class ServerConsole:
             menu.add_command(label="Vincular / cambiar IP…", command=self.bind_totem_ip)
             menu.add_command(label="Desvincular equipo (solo IP)", command=self.unbind_totem_ip)
             menu.add_command(label="Configurar QR…", command=self.configure_totem_qr)
+            menu.add_command(label="Generar código de acceso al tótem", command=self.generate_pair_code)
             menu.add_command(label="Editar nombre del tótem", command=self.rename_totem)
             menu.add_command(label="Eliminar tótem…", command=self.delete_totem)
             menu.add_command(label="Restaurar tótem eliminado", command=self.restore_totem)
@@ -341,6 +343,35 @@ class ServerConsole:
         link.configure(command=use_ip)
         threading.Thread(target=worker, name="intrashop-lan-scan", daemon=True).start()
         window.after(150, completed)
+
+    def generate_pair_code(self):
+        """Código de un solo uso para habilitar checkout en este navegador."""
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_auth import generar_codigo
+
+        selection = self.totems.selection()
+        if not selection:
+            messagebox.showinfo("Código de acceso", "Seleccioná primero un tótem.")
+            return
+        values = self.totems.item(selection[0], "values")
+        totem_id, nombre = str(values[2]), str(values[1])
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                code = generar_codigo(conn, totem_id)
+                conn.commit()
+            messagebox.showinfo(
+                "Código temporal · " + nombre,
+                f"Código válido por 10 minutos:\n\n{code}\n\n"
+                "Ingresalo en la tienda desde el equipo cuya IP ya vinculaste.\n"
+                "No envíes el código por enlaces o chats públicos.\n"
+                "No se guarda en el navegador como localStorage.",
+                parent=self.root,
+            )
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("Código de acceso", str(exc), parent=self.root)
 
     def provision_totem(self):
         from intrashop_entregas import ensure_schema
