@@ -189,8 +189,8 @@ jobs:
             reverse_proxy 127.0.0.1:8108
           }
           EOF
-          caddy validate --config /tmp/intrashop-ci.caddyfile
-          caddy run --config /tmp/intrashop-ci.caddyfile >/tmp/caddy-https-ci.log 2>&1 &
+          caddy validate --config /tmp/intrashop-ci.caddyfile --adapter caddyfile
+          caddy run --config /tmp/intrashop-ci.caddyfile --adapter caddyfile >/tmp/caddy-https-ci.log 2>&1 &
           CA="$HOME/.local/share/caddy/pki/authorities/local/root.crt"
           for i in $(seq 1 50); do
             if [ -s "$CA" ] && curl --fail --silent --cacert "$CA" https://localhost:8443/health >/tmp/https-health.json; then
