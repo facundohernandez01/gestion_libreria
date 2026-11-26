@@ -75,3 +75,33 @@ def opciones_http(url: str, *, origen=None) -> dict:
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_verify_locations(cadata=data["ca"])
     return {"verify": context, "trust_env": False}
+
+
+def vincular_pos(url: str, codigo: str, terminal_id: str) -> str:
+    """Canjear un código exclusivamente con la CA del comercio ya confirmada."""
+    import httpx
+
+    url = validar_url_servidor(url)
+    options = opciones_http(url)
+    if not isinstance(options.get("verify"), ssl.SSLContext):
+        raise ValueError("Importá y confirmá primero el kit de conexión del comercio.")
+    code = (codigo or "").strip()
+    if not code or len(code) > 32:
+        raise ValueError("Ingresá un código de vinculación válido.")
+    try:
+        response = httpx.post(
+            url + "/pos/devices/pair",
+            json={"codigo": code, "terminal_id": terminal_id},
+            timeout=10, follow_redirects=False, **options,
+        )
+    except httpx.RequestError as exc:
+        raise ConnectionError("No se pudo establecer una conexión segura con POS Server.") from exc
+    if response.status_code != 200:
+        raise ValueError("No se pudo vincular la caja. Verificá el código y su vencimiento.")
+    try:
+        token = response.json()["credential"]
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ValueError("Respuesta de vinculación inválida.") from exc
+    if not isinstance(token, str) or not token.startswith("posd_") or len(token) != 53:
+        raise ValueError("Credencial de terminal inválida.")
+    return token
