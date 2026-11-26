@@ -194,15 +194,29 @@ def LoginView(db_manager, on_login, page: ft.Page):
                      ft.dropdown.Option("servidor", "Servidor"),
                      ft.dropdown.Option("cliente", "Cliente LAN")])
         url = ft.TextField(label="URL del servidor POS", value=_server_url(), width=290)
-        estado = ft.Text("Se guarda en esta terminal. Reiniciá el POS para aplicar el cambio.", size=12, color=N.AMBER_400)
+        clave = ft.TextField(
+            label="Clave LAN de POS Server (opcional si ya está configurada)",
+            password=True, can_reveal_password=True, width=290,
+            hint_text="Pegá la clave copiada desde POS Server",
+        )
+        estado = ft.Text("La clave se guarda en archivo privado de esta terminal (0600), nunca en la URL.", size=12, color=N.AMBER_400)
         def guardar(e):
-            db_local.set_config("MODO_RED", modo.value)
-            db_local.set_config("SERVER_URL", (url.value or "").strip())
+            try:
+                if (clave.value or "").strip():
+                    from core.settings import guardar_clave_lan_local
+                    guardar_clave_lan_local(clave.value)
+                db_local.set_config("MODO_RED", modo.value)
+                db_local.set_config("SERVER_URL", (url.value or "").strip())
+            except ValueError as exc:
+                estado.value = str(exc)
+                page.update()
+                return
+            clave.value = ""
             cerrar_dialogo(page)
             estado.value = "Configuración guardada. Reiniciá el POS."
             page.update()
         dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
-            content=ft.Column([modo, url, estado], tight=True, spacing=12),
+            content=ft.Column([modo, url, clave, estado], tight=True, spacing=12),
             actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
                      ft.FilledButton("Guardar", on_click=guardar)])
         abrir_dialogo(page, dlg)
