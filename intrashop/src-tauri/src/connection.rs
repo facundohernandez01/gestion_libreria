@@ -12,7 +12,7 @@ struct Manifest {
     ca_sha256: String,
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct VerifiedKit {
     pub servidor: String,
     pub huella: String,
@@ -176,4 +176,35 @@ fn image_path_is_restricted() {
     assert!(allowed_image("/tienda/productos/42/imagen"));
     assert!(!allowed_image("/tienda/productos/../imagen"));
     assert!(!allowed_image("/tienda/productos/42/imagen?url=http://other"));
+}
+
+
+// Discovery uses the confirmed CA only, never sends a session or pairing code.
+pub async fn discover_verified(kit: &VerifiedKit) -> Result<Vec<String>, String> {
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").map_err(|_| "Red LAN no disponible")?;
+    socket.connect(format!("{}:443", kit.servidor.trim_start_matches("https://")))
+        .map_err(|_| "No se encontró una interfaz LAN")?;
+    let local = socket.local_addr().map_err(|_| "Interfaz LAN no disponible")?;
+    let std::net::IpAddr::V4(ip) = local.ip() else { return Err("Se requiere IPv4 LAN".into()); };
+    if !ip.is_private() { return Err("Se requiere una red privada".into()); }
+    let [a,b,c,_] = ip.octets();
+    let mut found = Vec::new();
+    // Small bounded batches; no scanning outside the interface's /24.
+    for start in (1u16..255).step_by(24) {
+        let mut tasks = Vec::new();
+        for host in start..(start+24).min(255) {
+            let mut candidate = kit.clone();
+            candidate.servidor = format!("https://{a}.{b}.{c}.{host}");
+            tasks.push(tauri::async_runtime::spawn(async move {
+                match tokio::time::timeout(Duration::from_millis(1000), verify_server(&candidate)).await {
+                    Ok(Ok(())) => Some(candidate.servidor),
+                    _ => None,
+                }
+            }));
+        }
+        for task in tasks {
+            if let Ok(Some(url)) = task.await { found.push(url); }
+        }
+    }
+    Ok(found)
 }

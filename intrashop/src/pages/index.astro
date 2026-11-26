@@ -38,6 +38,7 @@ const title = "IntraShop · Tu tienda local";
           <label for="native-fingerprint">Huella SHA-256 indicada por POS Server</label>
           <input id="native-fingerprint" type="text" autocomplete="off" required />
           <button id="native-connect" type="submit">Conectar con mi comercio</button>
+          <button id="native-discover" type="button">Buscar comercio en la red</button>
           <p id="native-status" role="status"></p>
         </form>
         <div id="totem-state" class="notice" role="status">Consultando tótem asignado por POS Server…</div>
@@ -346,6 +347,24 @@ const title = "IntraShop · Tu tienda local";
           try {await reportPresence();} catch(error){$("totem-state").textContent=String(error);}
           await loadProducts();
         }).catch(error=>{$("native-status").textContent=String(error);});
+        $("native-discover").addEventListener("click", async ()=>{
+          const file=$<HTMLInputElement>("native-kit").files?.[0];
+          const huella=$<HTMLInputElement>("native-fingerprint").value;
+          if(!file || file.size>1024*1024 || !huella.trim()){
+            $("native-status").textContent="Seleccioná el kit y confirmá su huella antes de buscar.";
+            return;
+          }
+          const button=$<HTMLButtonElement>("native-discover");
+          button.disabled=true;
+          $("native-status").textContent="Buscando servidores con el certificado autorizado…";
+          try{
+            const found:string[]=await native.invoke("detectar_comercio",{bytes:Array.from(new Uint8Array(await file.arrayBuffer())),huella});
+            $("native-status").textContent=found.length
+              ? "Servidor verificado: "+found.join(", ")+". Si cambió la dirección del servidor, solicitá un kit actualizado para conectar."
+              : "No se encontró un servidor con el certificado autorizado en este segmento.";
+          }catch(error){$("native-status").textContent=String(error);}
+          finally{button.disabled=false;}
+        });
         $("native-connection").addEventListener("submit", async event => {
           event.preventDefault();
           const button = $<HTMLButtonElement>("native-connect");

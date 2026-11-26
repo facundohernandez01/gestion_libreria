@@ -136,10 +136,16 @@ async fn tienda_imagen(path: String, state: State<'_, Session>) -> Result<String
     Ok(format!("data:{mime};base64,{}", base64::engine::general_purpose::STANDARD.encode(bytes)))
 }
 
+#[tauri::command]
+async fn detectar_comercio(bytes: Vec<u8>, huella: String) -> Result<Vec<String>, String> {
+    let kit = connection::read_kit(&bytes, &huella)?;
+    connection::discover_verified(&kit).await
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(Session::default())
-        .invoke_handler(tauri::generate_handler![verificar_kit_totem, restaurar_comercio, tienda_request, tienda_imagen])
+        .invoke_handler(tauri::generate_handler![verificar_kit_totem, restaurar_comercio, tienda_request, tienda_imagen, detectar_comercio])
         .run(tauri::generate_context!())
         .expect("error while running IntraShop");
 }
