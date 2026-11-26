@@ -215,12 +215,21 @@ def health():
     return {"ok": True, "service": "pos-lan", "capabilities": ["intrashop-entregas-v1", "pos-operator-sessions-v1"], "intrashop_compilada": (INTRASHOP_DIST / "index.html").is_file()}
 
 
+# La API_KEY compartida no equivale a sesión de administrador. Jamás
+# transmitir tokens MP ni claves de usuario a las terminales POS.
+_SENSITIVE_CONFIG = {
+    "ACCESS_TOKEN", "MP_ACCESS_TOKEN", "LOGIN_CLAVE", "API_KEY",
+    "AFIP_KEY", "AFIP_KEY_FILE", "MP_CLIENT_SECRET", "MP_OAUTH_ENCRYPTION_KEY",
+}
+
+
 @app.get("/config")
 def get_config(x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
         rows = conn.execute("SELECT clave, valor FROM config").fetchall()
-    return {r["clave"]: r["valor"] for r in rows}
+    return {r["clave"]: r["valor"] for r in rows
+            if r["clave"].upper() not in _SENSITIVE_CONFIG}
 
 
 class ConfigIn(BaseModel):
@@ -231,6 +240,11 @@ class ConfigIn(BaseModel):
 @app.post("/config")
 def set_config(body: ConfigIn, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
+    if body.clave.strip().upper() in _SENSITIVE_CONFIG:
+        raise HTTPException(
+            403, "Este parámetro sensible solo puede configurarse "
+                 "desde la administración local de POS Server.",
+        )
     with _tx() as conn:
         conn.execute(
             "INSERT INTO config (clave, valor) VALUES (?,?) "
