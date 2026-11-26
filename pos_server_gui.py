@@ -404,7 +404,7 @@ class ServerConsole:
 
         window = tk.Toplevel(self.root)
         window.title("IntraShop · Instalar o conectar un equipo")
-        window.geometry("670x525")
+        window.geometry("710x550")
         window.minsize(575, 455)
         window.transient(self.root)
         pane = ttk.Frame(window, padding=18)
@@ -452,8 +452,13 @@ class ServerConsole:
         export_button.pack(side="left", padx=(0, 7))
         build_button = ttk.Button(actions, text="Ver ejecutables")
         build_button.pack(side="left", padx=(0, 7))
-        setup_button = ttk.Button(pane, text="Configurar HTTPS local", command=self.configure_https_ip)
-        setup_button.pack(anchor="w", pady=(12, 0))
+        advanced_button = ttk.Menubutton(pane, text="Ayuda de conexión")
+        advanced_menu = tk.Menu(advanced_button, tearoff=0)
+        advanced_menu.add_command(label="Preparar conexión segura", command=self.configure_https_ip)
+        advanced_menu.add_command(label="Información técnica", command=lambda: messagebox.showinfo(
+            "Información técnica", url, parent=window))
+        advanced_button.configure(menu=advanced_menu)
+        advanced_button.pack(anchor="w", pady=(12, 0))
 
         def refresh(*_):
             selected = role.get()
@@ -461,31 +466,26 @@ class ServerConsole:
             role_builds = available[selected]
             if selected == "servidor":
                 detail = (
-                    "1. Este equipo ejecuta POS Server y conserva la base SQLite.\n"
-                    "2. Configurá HTTPS local desde el botón inferior.\n"
-                    "3. Abrí la consola y creá las cajas y tótems.\n"
-                    "4. Desde este asistente podés preparar kits para otras PCs.\n\n"
-                    "La app POS Server se empaquetará junto a POS y Tauri "
-                    "en el instalador unificado de distribución."
+                    "1. Usá este equipo como servidor principal del comercio.\n"
+                    "2. Creá tus cajas y tótems desde Administración.\n"
+                    "3. Prepará la conexión de los demás equipos desde este asistente.\n\n"
+                    "El servidor conserva los productos, ventas y pedidos."
                 )
             elif selected == "pos":
                 detail = (
-                    "1. Instalá el POS de escritorio en la caja.\n"
-                    "2. Importá la CA pública del comercio, aprobando su huella.\n"
-                    "3. Configurá la conexión con el servidor HTTPS y "
-                    "la clave LAN copiada directamente por el administrador.\n"
-                    "4. Iniciá sesión con un operador y sus permisos de caja.\n\n"
-                    "El kit no contiene contraseñas ni clave LAN."
+                    "1. Instalá la aplicación de caja en el equipo.\n"
+                    "2. Exportá el kit de conexión y llevalo a la caja.\n"
+                    "3. Seguí las instrucciones del kit para autorizar el comercio.\n"
+                    "4. Iniciá sesión con tu usuario de caja.\n\n"
+                    "El kit no incluye contraseñas."
                 )
             else:
                 detail = (
-                    "1. La tienda web puede abrirse desde cualquier PC/táctil.\n"
-                    "2. Para el instalador Tauri Windows, debe existir un "
-                    "ejecutable compilado y probado en «Ver ejecutables».\n"
-                    "3. Importá el certificado del comercio con su huella verificada.\n"
-                    "4. POS Server identifica el tótem y autoriza el navegador "
-                    "con un código de uso único.\n\n"
-                    "Cambiar de navegador no cambia su ID ni su asociación QR."
+                    "1. Prepará el tótem en la lista de equipos del servidor.\n"
+                    "2. Exportá el kit de conexión y llevalo al equipo.\n"
+                    "3. Seguí las instrucciones del kit y abrí la tienda.\n"
+                    "4. Ingresá el código de acceso generado desde Acciones del tótem.\n\n"
+                    "El nombre y el QR se conservan en el servidor."
                 )
             steps.configure(state="normal")
             steps.delete("1.0", "end")
@@ -493,11 +493,10 @@ class ServerConsole:
             steps.configure(state="disabled")
             if not url.startswith("https://"):
                 current.set(
-                    "Estado: HTTPS todavía no activo. Usá «Configurar HTTPS local» "
-                    "antes de distribuir kits de producción."
+                    "Conexión segura pendiente. Abrí «Ayuda de conexión» para prepararla."
                 )
             else:
-                current.set("Servidor: " + url + " · Acceso con certificado LAN privado")
+                current.set("Conexión segura preparada. Comprobá el estado del servidor antes de continuar.")
             builds.set(
                 "Instaladores encontrados: " +
                 (", ".join(entry["nombre"] for entry in role_builds) if role_builds
@@ -510,8 +509,7 @@ class ServerConsole:
                 fingerprint = None
             if tls_ready and not fingerprint:
                 current.set(
-                    "HTTPS está configurado, pero falta exportar la CA pública. "
-                    "Terminá el asistente HTTPS antes de repartir dispositivos."
+                    "Falta completar la preparación de la conexión. Abrí «Ayuda de conexión»."
                 )
             export_button.configure(state="normal" if tls_ready and fingerprint
                                     and selected in ("pos", "totem") else "disabled")
@@ -1381,7 +1379,7 @@ class ServerConsole:
             ((user, time.strftime("%d/%m/%Y %H:%M", time.localtime(exp))), None)
             for user, exp in active])
         self.summary.set(
-            f"Tótems: {len(totems)} · En línea: {online_count} · QR asignados: {len(bindings)}"
+            f"Tótems: {sum(not bool(t['retirado']) for t in totems)} · En línea: {online_count} · QR asignados: {len(bindings)}"
             f" · Operadores: {len(active)} · Operaciones bloqueantes: {len(pending_rows)}")
         self.notice.set("Última actualización: " + datetime.now().strftime("%H:%M:%S"))
 
