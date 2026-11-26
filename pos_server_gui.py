@@ -42,6 +42,9 @@ class ServerConsole:
         self.url = tk.StringVar(value=url_visible(ip_lan(), self.port))
         self.summary = tk.StringVar(value="Cargando dispositivos…")
         self.notice = tk.StringVar(value="")
+        self._admin_unlock_until = 0.0
+        self._admin_fails = 0
+        self._admin_fail_since = 0.0
         self.mostrar_eliminados = tk.BooleanVar(value=False)
         self._style()
         self._build()
@@ -322,9 +325,21 @@ class ServerConsole:
             messagebox.showerror("Asistente HTTPS", str(exc), parent=self.root)
 
     def _autorizar_kit_instalacion(self) -> bool:
-        """Exige administrador existente; no se crea una clave maestra global."""
+        """Clave ADMIN del comercio, sesión local de 10 minutos y límite de intentos."""
         from database_manager import DatabaseManager
 
+        now = time.monotonic()
+        if now < self._admin_unlock_until:
+            return True
+        if now - self._admin_fail_since > 600:
+            self._admin_fails = 0
+        if self._admin_fails >= 5:
+            messagebox.showerror(
+                "Administración temporalmente bloqueada",
+                "Demasiados intentos. Volvé a intentarlo después de 10 minutos.",
+                parent=self.root,
+            )
+            return False
         usuario = simpledialog.askstring(
             "Autorizar kit de instalación",
             "Usuario ADMIN de este comercio:", parent=self.root,
@@ -344,6 +359,9 @@ class ServerConsole:
         # No almacenar credenciales en memoria, logs, URL ni manifest.
         clave = None
         if not actor or not actor.get("es_admin") or not actor.get("activo"):
+            if self._admin_fails == 0:
+                self._admin_fail_since = now
+            self._admin_fails += 1
             messagebox.showerror(
                 "Administración no autorizada",
                 "Las credenciales no son de un administrador activo. "
@@ -352,6 +370,8 @@ class ServerConsole:
                 parent=self.root,
             )
             return False
+        self._admin_fails = 0
+        self._admin_unlock_until = time.monotonic() + 10 * 60
         return True
 
     def distribution_wizard(self):
@@ -537,10 +557,21 @@ class ServerConsole:
         refresh()
 
     def configure_admin_password(self):
-        """Inicialización/rotación local física del administrador del POS."""
+        """Primer uso físico o rotación autorizada; nunca reset remoto sin clave."""
         from services.passwords import hash_password, validar_nueva_clave
         from database_manager import DatabaseManager
 
+        try:
+            with sqlite3.connect(settings.db_path) as conn:
+                ya_configurado = conn.execute(
+                    """SELECT COUNT(*) FROM usuarios u JOIN roles r ON r.id=u.rol_id
+                       WHERE u.activo=1 AND r.es_admin=1"""
+                ).fetchone()[0] > 0
+        except sqlite3.Error as exc:
+            messagebox.showerror("ADMIN", str(exc), parent=self.root)
+            return
+        if ya_configurado and not self._autorizar_kit_instalacion():
+            return
         first = simpledialog.askstring(
             "Contraseña ADMIN segura",
             "Nueva contraseña del administrador (mínimo 12 caracteres):",
@@ -595,6 +626,7 @@ class ServerConsole:
             from pos_auth import _sessions, _lock
             with _lock:
                 _sessions.clear()
+            self._admin_unlock_until = 0.0
             self.notice.set(
                 "Contraseña ADMIN actualizada y sesiones anteriores revocadas."
             )
@@ -609,6 +641,8 @@ class ServerConsole:
 
     def copy_lan_key(self):
         """La clave se entrega sólo a un operador con acceso físico a esta PC."""
+        if not self._autorizar_kit_instalacion():
+            return
         if not messagebox.askyesno(
             "Clave de conexión de POS Server",
             "Esta clave permite acceder a las operaciones LAN del servidor.\n"
@@ -725,6 +759,8 @@ class ServerConsole:
 
     def generate_pair_code(self):
         """Código de un solo uso para habilitar checkout en este navegador."""
+        if not self._autorizar_kit_instalacion():
+            return
         from intrashop_entregas import ensure_schema
         from services.intrashop_totem_auth import generar_codigo
 
@@ -753,6 +789,8 @@ class ServerConsole:
             messagebox.showerror("Código de acceso", str(exc), parent=self.root)
 
     def provision_totem(self):
+        if not self._autorizar_kit_instalacion():
+            return
         from intrashop_entregas import ensure_schema
         from services.intrashop_totem_registry import provisionar
 
@@ -771,6 +809,8 @@ class ServerConsole:
             messagebox.showerror("No se pudo crear el tótem", str(exc))
 
     def bind_totem_ip(self, suggested_ip=None):
+        if not self._autorizar_kit_instalacion():
+            return
         from intrashop_entregas import ensure_schema
         from services.intrashop_totem_registry import vincular_ip
 
@@ -820,6 +860,8 @@ class ServerConsole:
             messagebox.showerror("No se pudo vincular la IP", str(exc))
 
     def unbind_totem_ip(self):
+        if not self._autorizar_kit_instalacion():
+            return
         from intrashop_entregas import ensure_schema
         from services.intrashop_totem_registry import desvincular_ip
 
@@ -861,6 +903,8 @@ class ServerConsole:
 
     def configure_totem_qr(self):
         """Asistente local: consulta POS autorizados y exige confirmación explícita."""
+        if not self._autorizar_kit_instalacion():
+            return
         selected = self.totems.selection()
         if not selected:
             messagebox.showinfo("Asignación QR", "Seleccioná primero un tótem.")
@@ -1040,6 +1084,8 @@ class ServerConsole:
 
     def delete_totem(self):
         """Retira un tótem de pruebas sin borrar pagos ni comandas históricas."""
+        if not self._autorizar_kit_instalacion():
+            return
         from intrashop_entregas import ensure_schema
         import intrashop_checkout_store as checkout_store
         from services.intrashop_totem_registry import resumen_retiro, retirar_totem
@@ -1107,6 +1153,8 @@ class ServerConsole:
             messagebox.showerror("No se pudo eliminar el tótem", str(exc), parent=self.root)
 
     def restore_totem(self):
+        if not self._autorizar_kit_instalacion():
+            return
         from intrashop_entregas import ensure_schema
         from services.intrashop_totem_registry import restaurar_totem
 
