@@ -806,9 +806,9 @@ class ServerConsole:
             messagebox.showinfo(
                 "Código temporal · " + nombre,
                 f"Código válido por 10 minutos:\n\n{code}\n\n"
-                "Ingresalo en la tienda desde el equipo cuya IP ya vinculaste.\n"
+                "Ingresalo en la tienda del equipo que querés vincular.\n"
                 "No envíes el código por enlaces o chats públicos.\n"
-                "No se guarda en el navegador como localStorage.",
+                "El código solo se puede utilizar una vez.",
                 parent=self.root,
             )
         except (ValueError, sqlite3.Error) as exc:
@@ -829,7 +829,7 @@ class ServerConsole:
                 conn.commit()
             messagebox.showinfo("Tótem creado",
                 created[0]["nombre"] + " (" + created[0]["id"] +
-                ") disponible. Asignale IP y, luego, el QR desde POS Server.")
+                ") disponible. Generá su código de acceso y configurá el QR.")
             self.refresh()
         except (ValueError, sqlite3.Error) as exc:
             messagebox.showerror("No se pudo crear el tótem", str(exc))
