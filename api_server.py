@@ -814,7 +814,9 @@ def api_ventas_detalle(desde: str, hasta: str, x_api_key: str | None = Header(de
 @app.get("/cajas/{caja_id}/gastos")
 def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
-    return _gestor_reposicion().obtener_gastos_caja(caja_id)
+    from database_manager import DatabaseManager
+    # La caja se lee de la MISMA SQLite que utiliza /cajas/{id}/cerrar.
+    return DatabaseManager(DB_PATH).obtener_gastos_caja(caja_id)
 
 
 @app.post("/cajas/{caja_id}/gastos")
@@ -825,7 +827,8 @@ def api_agregar_gasto(caja_id: int, body: dict, x_api_key: str | None = Header(d
             importe, concepto = body["monto"], body["concepto"]
         except KeyError:
             raise HTTPException(422, "Indicá monto y concepto del gasto.") from None
-        gasto_id = _gestor_reposicion().agregar_gasto(caja_id, importe, concepto)
+        from database_manager import DatabaseManager
+        gasto_id = DatabaseManager(DB_PATH).agregar_gasto(caja_id, importe, concepto)
         if not gasto_id:
             raise HTTPException(
                 409, "No se pudo registrar el gasto. Comprobá que la caja siga abierta "
