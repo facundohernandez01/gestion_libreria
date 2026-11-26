@@ -183,3 +183,40 @@ def test_modal_de_cierre_tiene_arqueo_y_refresca_desde_bd():
     assert "Faltante:" in code and "Sobrante:" in code
     assert "current[\"resumen\"][\"cobros_pendientes\"]" in code
     assert "snapshot=snapshot" in code
+
+
+def test_no_se_pueden_agregar_gastos_despues_del_cierre(caja_db):
+    path, local = caja_db
+    caja = _abrir()
+    assert local.agregar_gasto(caja, 5, "Movilidad") > 0
+    assert api.cerrar_caja(
+        caja, x_api_key="TEST-LAN-KEY",
+        body=api.CierreCajaIn(importe_contado=95),
+    )["ok"]
+    assert local.agregar_gasto(caja, 2, "Gasto posterior") == 0
+    with pytest.raises(HTTPException) as exc:
+        api.api_agregar_gasto(
+            caja, {"monto": 2, "concepto": "Gasto posterior"},
+            x_api_key="TEST-LAN-KEY",
+        )
+    assert exc.value.status_code == 409
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT COUNT(*) FROM gastos WHERE caja_id=?", (caja,)
+        ).fetchone()[0] == 1
+
+
+def test_rechaza_arqueo_no_finito(caja_db):
+    path, _ = caja_db
+    caja = _abrir()
+    for count in (float("nan"), float("inf"), -1):
+        with pytest.raises(HTTPException) as exc:
+            api.cerrar_caja(
+                caja, x_api_key="TEST-LAN-KEY",
+                body=api.CierreCajaIn(importe_contado=count),
+            )
+        assert exc.value.status_code == 409
+    with sqlite3.connect(path) as conn:
+        assert conn.execute(
+            "SELECT estado FROM cajas WHERE id=?", (caja,)
+        ).fetchone()[0] == "abierta"
