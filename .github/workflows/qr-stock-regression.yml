@@ -2,7 +2,7 @@ name: QR and stock regression
 
 on:
   push:
-    branches: [feature/mercadopago-oauth]
+    branches: [feature/mercadopago-oauth, fix/intrashop-checkout-caja-link-20261116]
   pull_request:
     paths:
       - "componente_nueva_venta.py"
