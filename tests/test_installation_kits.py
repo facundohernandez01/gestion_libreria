@@ -178,3 +178,25 @@ def test_pos_rechaza_kit_de_totem_y_huella_adulterada(ca_publica, tmp_path):
         archive.writestr("intrashop-root-ca.crt", public)
     with pytest.raises(ValueError):
         client_tls.leer_kit(forged)
+
+
+def test_mp_bindings_usa_confianza_local(monkeypatch):
+    from adapters import mp_bindings, entregas
+    import ssl
+    import httpx
+    base = "https://192.168.1.10"
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    monkeypatch.setattr(mp_bindings, "modo_actual", lambda: "cliente")
+    monkeypatch.setattr(mp_bindings, "_server_url", lambda: base)
+    monkeypatch.setattr(entregas, "_session_token", "test-session")
+    def tls(url):
+        assert url == base
+        return {"verify": context, "trust_env": False}
+    monkeypatch.setattr(mp_bindings, "opciones_http", tls)
+    def request(method, url, **kwargs):
+        assert url == base + "/tienda/admin/mp-bindings"
+        assert kwargs["verify"] is context
+        assert kwargs["trust_env"] is False
+        return httpx.Response(200, json=[], request=httpx.Request(method, url))
+    monkeypatch.setattr(mp_bindings.httpx, "request", request)
+    assert mp_bindings.listar() == []

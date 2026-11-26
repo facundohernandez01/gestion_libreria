@@ -236,7 +236,9 @@ def ConfigModal(page: ft.Page):
         else:
             url = _server_url() if modo == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
             try:
-                respuesta = httpx.get(url.rstrip("/") + "/health", timeout=2.5)
+                from services.client_tls import opciones_http
+                respuesta = httpx.get(url.rstrip("/") + "/health", timeout=2.5,
+                    **(opciones_http(url) if modo == "cliente" else {"trust_env": False}))
                 if respuesta.status_code == 200:
                     red_modo_activo.value = "● " + modo.upper() + " ACTIVO · " + url
                     red_modo_activo.color = N.GREEN_400
@@ -544,10 +546,12 @@ def ConfigModal(page: ft.Page):
             import httpx
             if not _session_token:
                 raise ValueError("Iniciá sesión como administrador en el servidor POS.")
+            from services.client_tls import opciones_http
+            base = _server_url().rstrip("/")
             response = httpx.request(
-                method, _server_url().rstrip("/") + "/tienda/admin/mp-oauth/" + path,
+                method, base + "/tienda/admin/mp-oauth/" + path,
                 json=payload, headers={"Authorization": "Bearer " + _session_token},
-                timeout=25)
+                timeout=25, **opciones_http(base))
             response.raise_for_status()
             return response.json()
         from services import mp_oauth_bridge as bridge
@@ -713,9 +717,11 @@ def ConfigModal(page: ft.Page):
                     from adapters.entregas import _session_token
                     if not _session_token:
                         raise ValueError("Iniciá sesión como administrador del servidor POS.")
+                    from services.client_tls import opciones_http
+                    base = _server_url().rstrip("/")
                     response = httpx.get(
-                        _server_url().rstrip("/") + "/tienda/admin/mp-oauth/pos",
-                        headers={"Authorization": "Bearer " + _session_token}, timeout=45)
+                        base + "/tienda/admin/mp-oauth/pos",
+                        headers={"Authorization": "Bearer " + _session_token}, timeout=45, **opciones_http(base))
                     if response.status_code == 200:
                         results = response.json().get("results", [])
                     elif response.status_code != 409:
@@ -809,10 +815,12 @@ def ConfigModal(page: ft.Page):
                     from adapters.entregas import _session_token
                     if not _session_token:
                         raise ValueError("Iniciá sesión como administrador del servidor POS.")
+                    from services.client_tls import opciones_http
+                    base = _server_url().rstrip("/")
                     response = httpx.post(
-                        _server_url().rstrip("/") + "/tienda/admin/mp-oauth/pos/create",
+                        base + "/tienda/admin/mp-oauth/pos/create",
                         json={"nombre": nombre, "store_id": selected_store},
-                        headers={"Authorization": "Bearer " + _session_token}, timeout=45)
+                        headers={"Authorization": "Bearer " + _session_token}, timeout=45, **opciones_http(base))
                     if response.status_code == 200:
                         p_ext = response.json()["pos_external_id"]
                         created = True
@@ -994,13 +1002,15 @@ def ConfigModal(page: ft.Page):
         import httpx
         if not _session_token:
             raise ValueError("Iniciá sesión en el servidor antes de configurar Mercado Pago.")
+        from services.client_tls import opciones_http
+        base = _server_url().rstrip("/")
         response = httpx.put(
-            _server_url().rstrip("/") + "/tienda/admin/mp-credentials",
+            base + "/tienda/admin/mp-credentials",
             json={"access_token":token_field.value.strip(),
                   "user_id":user_field.value.strip(),
                   "enabled":bool(mp_activo_switch.value)},
             headers={"Authorization":"Bearer "+_session_token},
-            timeout=12)
+            timeout=12, **opciones_http(base))
         response.raise_for_status()
 
     # Confirmación explícita antes de modificar una asignación de cobro.

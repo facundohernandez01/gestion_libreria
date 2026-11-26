@@ -1,5 +1,6 @@
 """Administración de asignaciones MP desde caja local o cliente LAN."""
 import httpx
+from services.client_tls import opciones_http
 from core.settings import settings
 from core.db_factory import modo_actual, _server_url
 
@@ -8,7 +9,7 @@ def _remote(method, path, data=None):
     from adapters.entregas import _session_token
     base = _server_url() if modo_actual()=="cliente" else "http://127.0.0.1:"+str(settings.api_port)
     response = httpx.request(method, base.rstrip("/")+"/tienda/admin/mp-bindings"+path,
-        json=data, headers={"Authorization":"Bearer "+(_session_token or "")}, timeout=8)
+        json=data, headers={"Authorization":"Bearer "+(_session_token or "")}, timeout=8, **(opciones_http(base) if modo_actual() == "cliente" else {"trust_env": False}))
     response.raise_for_status()
     return response.json()
 
