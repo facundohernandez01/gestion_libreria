@@ -271,6 +271,12 @@ class ServerConsole:
             return
         values = self.totems.item(selected[0], "values")
         totem_id, nombre = values[2], values[1]
+        if str(values[0]).startswith("× Eliminado"):
+            messagebox.showinfo(
+                "Tótem eliminado", "Restaurá el tótem antes de vincular una IP.",
+                parent=self.root,
+            )
+            return
         # La IP observada ayuda a elegir, pero no concede asociación automática.
         default = str(values[3]) if values[3] not in ("—", "", None) else ""
         if not default:
@@ -603,6 +609,14 @@ class ServerConsole:
             return
         values = self.totems.item(selection[0], "values")
         totem_id, nombre = str(values[2]), str(values[1])
+        if not str(values[0]).startswith("× Eliminado"):
+            messagebox.showinfo(
+                "El tótem ya está activo",
+                "Para restaurar, marcá «Mostrar eliminados» y seleccioná "
+                "una fila con estado «Eliminado».",
+                parent=self.root,
+            )
+            return
         if not messagebox.askyesno(
             "Restaurar tótem",
             f"¿Volver a habilitar {nombre} ({totem_id})?\n\n"
