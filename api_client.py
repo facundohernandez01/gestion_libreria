@@ -177,6 +177,27 @@ class ApiClient:
                 return 0
             raise
 
+    def obtener_resumen_caja(self, caja_id: int) -> dict:
+        return self._get(f"/cajas/{int(caja_id)}/resumen")
+
+    def cerrar_caja_arqueo(self, caja_id: int, importe_contado: float,
+                           observaciones: str = "") -> dict:
+        """Cierre JSON; nunca convertir un 409 en falso sin explicación."""
+        try:
+            return self._post(
+                f"/cajas/{int(caja_id)}/cerrar",
+                json={"importe_contado": importe_contado,
+                      "observaciones": observaciones},
+            )
+        except httpx.HTTPStatusError as exc:
+            try:
+                detalle = exc.response.json().get("detail")
+            except (ValueError, AttributeError, TypeError):
+                detalle = None
+            if exc.response.status_code in (400, 404, 409, 422):
+                raise ValueError(str(detalle or "POS Server rechazó el cierre de caja.")) from exc
+            raise
+
     def cerrar_caja(self, caja_id: int, observaciones: str = ""):
         try:
             result = self._post(f"/cajas/{int(caja_id)}/cerrar",
