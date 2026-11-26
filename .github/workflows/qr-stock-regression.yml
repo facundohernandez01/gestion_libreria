@@ -182,6 +182,7 @@ jobs:
           python pos_server.py --headless --host 0.0.0.0 --port 8108 >/tmp/pos-https-ci.log 2>&1 &
           cat >/tmp/intrashop-ci.caddyfile <<'EOF'
           {
+            admin off
             auto_https disable_redirects
           }
           https://localhost:8443 {
