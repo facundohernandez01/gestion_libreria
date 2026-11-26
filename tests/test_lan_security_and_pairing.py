@@ -150,3 +150,21 @@ def test_cors_y_credenciales_no_son_publicas():
     assert 'self.api_key = _default_secure_api_key(self.db_path)' in settings
     login = (root / "componente_login.py").read_text()
     assert 'json.dumps({"usuario": usuario})' in login
+
+
+@pytest.mark.parametrize("mutation", [
+    "UPDATE intrashop_totems SET retirado=1 WHERE id='totem-001'",
+    "UPDATE intrashop_totems SET ip_vinculada='192.168.33.82' WHERE id='totem-001'",
+])
+def test_sesion_residual_no_autoriza_totem_inactivo_o_reasignado(db, mutation):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        vincular_ip(conn, "totem-001", "192.168.33.81")
+        codigo = auth.generar_codigo(conn, "totem-001")
+        _, cookie = auth.canjear_codigo(conn, "192.168.33.81", codigo)
+        conn.commit()
+        assert auth.autorizado(conn, "192.168.33.81", "totem-001", cookie)
+        # Simular una inconsistencia de mantenimiento sin revocación explícita.
+        conn.execute(mutation)
+        conn.commit()
+        assert not auth.autorizado(conn, "192.168.33.81", "totem-001", cookie)
