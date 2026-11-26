@@ -2036,15 +2036,30 @@ class DatabaseManager:
 
     # ---------- gastos ----------
     def agregar_gasto(self, caja_id: int, monto: float, concepto: str) -> int:
-        if not concepto or not concepto.strip() or float(monto) <= 0:
+        from decimal import Decimal, InvalidOperation
+        try:
+            importe = Decimal(str(monto))
+        except (ValueError, TypeError, InvalidOperation):
+            return 0
+        if not concepto or not concepto.strip() or not importe.is_finite() or importe <= 0:
             return 0
         with self._connect() as conn:
             try:
+                conn.execute("BEGIN IMMEDIATE")
+                # El gasto y el cierre comparten el lock de SQLite: después
+                # de cerrar no se permite alterar el arqueo histórico.
+                abierta = conn.execute(
+                    "SELECT 1 FROM cajas WHERE id=? AND estado='abierta'",
+                    (int(caja_id),),
+                ).fetchone()
+                if not abierta:
+                    conn.rollback()
+                    return 0
                 cur = conn.execute(
                     """INSERT INTO gastos
                        (caja_id, monto, concepto, fecha, usuario)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (caja_id, float(monto), concepto.strip(), datetime.now(),
+                    (caja_id, float(importe), concepto.strip(), datetime.now(),
                      self._usuario()),
                 )
                 conn.commit()
