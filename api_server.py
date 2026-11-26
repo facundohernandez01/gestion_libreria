@@ -207,8 +207,40 @@ def _connect() -> sqlite3.Connection:
 
 def _auth(x_api_key: str | None) -> None:
     import secrets
+    if x_api_key and x_api_key.startswith("posd_"):
+        from services.lan_https import habilitado
+        from services.pos_device_credentials import autorizado
+        if habilitado():
+            with _connect() as conn:
+                if autorizado(conn, x_api_key):
+                    return
+        raise HTTPException(status_code=401, detail="Terminal no autorizada")
     if not API_KEY or not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="API key inválida")
+
+
+class PosDevicePairIn(BaseModel):
+    codigo: str
+    terminal_id: str
+
+
+@app.post("/pos/devices/pair")
+def pair_pos_device(body: PosDevicePairIn, request: Request):
+    from services.lan_https import habilitado
+    from services.pos_device_credentials import canjear
+    from fastapi.responses import JSONResponse
+
+    if not habilitado() or request.url.scheme != "https":
+        raise HTTPException(403, "La vinculación requiere una conexión segura.")
+    if len(body.codigo) > 32 or len(body.terminal_id) > 100:
+        raise HTTPException(400, "Datos de vinculación inválidos.")
+    try:
+        with _tx() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            token = canjear(conn, body.codigo, body.terminal_id)
+    except ValueError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return JSONResponse({"credential": token}, headers={"Cache-Control": "no-store"})
 
 
 @contextmanager
