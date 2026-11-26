@@ -1,204 +1,146 @@
-# HTTPS local sin pagar certificados — IntraShop (Ubuntu + Caddy)
+# HTTPS local IntraShop sin DNS ni certificados pagos
 
-## Qué se obtiene
+## La opción para usuarios del software
 
-Una sola URL para POS, tótems y tienda: `https://pos.home.arpa/intrashop/`.
-El navegador habla HTTPS con Caddy. Caddy entrega tráfico a FastAPI solo
-por `127.0.0.1:8000` en **la misma PC**; FastAPI no queda abierto por HTTP en
-la LAN. La CA y los certificados se crean gratis con `tls internal`.
+**Nadie necesita tener DNS, dominio público ni conocimientos de servidores.**
+IntraShop usa directamente la dirección IP privada de la computadora que
+ejecuta POS Server. Ejemplo:
 
-**No necesita dominio público, port forwarding, IP fija pública ni conexión
-entrante de Internet.** Para que los equipos confíen en el certificado hay
-que distribuir una sola vez el **certificado raíz público** de Caddy,
-nunca `root.key`, claves privadas ni archivos de credenciales.
+- POS y API: `https://192.168.1.100`
+- Tienda/tótem: `https://192.168.1.100/intrashop/`
 
-## Requisitos
+Caddy genera gratuitamente el certificado TLS con su CA privada y lo renueva
+automáticamente. **El único requisito que no puede omitirse es que cada
+dispositivo cliente autorice una vez la CA raíz pública del POS Server.**
+No es seguro evitarlo pulsando «Continuar de todos modos» ni deshabilitando
+la verificación de certificados. Solo se confía en el certificado del comercio,
+no en una CA privada compartida entre instalaciones.
 
-- La PC con POS Server tiene IP LAN estable, preferiblemente una reserva DHCP.
-- Todas las PCs y tótems están en una LAN que pueden alcanzar al servidor en
-  443/TCP. El servidor NO permite conexiones desde la LAN a 8000/TCP.
-- DNS interno del router que resuelva `pos.home.arpa` a esa IP. Como
-  alternativa temporal, incluir la misma entrada en `/etc/hosts` de cada
-  Linux o `C:\Windows\System32\drivers\etc\hosts` en Windows.
-- Caddy instalado como servicio en la PC servidor (Ubuntu 24.04).
-- Python y el POS ya funcionan localmente; Astro compilado `pnpm run build`.
-- `API_KEY` de LAN y clave ADMIN ya configuradas como credenciales seguras.
+## Instalación guiada en Ubuntu/Kubuntu
 
-Ejemplo para IP reservada `192.168.1.100` (CAMBIAR por IP real):
+**Desde la aplicación POS Server:** pulsar **HTTPS local**, confirmar la IP de
+la PC y seguir el asistente. Este abre una terminal para solicitar una vez los
+permisos administrativos, instalar/configurar Caddy y generar el archivo
+`.env` necesario. **El usuario no debe editar el .env ni configurar DNS.**
+
+También se puede ejecutar manualmente el mismo asistente desde la carpeta
+de IntraShop:
+
+```bash
+python3 deploy/configurar_https_ip.py
+```
+
+Para indicar una IP concreta, por ejemplo por tener varias tarjetas de red:
+
+```bash
+python3 deploy/configurar_https_ip.py --ip 192.168.1.100
+```
+
+Para ver qué se crearía **sin modificar archivos ni instalar Caddy**:
+
+```bash
+python3 deploy/configurar_https_ip.py --ip 192.168.1.100 --mostrar-config
+```
+
+El asistente:
+
+1. Detecta o solicita la IP IPv4 privada; nunca usa dominios ni escanea Internet.
+2. Instala Caddy mediante `apt` si falta, con autorización de sudo.
+3. Valida el Caddyfile antes de aplicarlo. Si existía una configuración
+   ajena a IntraShop pide permiso y guarda una copia; no la reemplaza
+   silenciosamente.
+4. Configura Caddy en el puerto 443 y FastAPI como backend en
+   `127.0.0.1:8000`. Nunca expone la API HTTP al resto de la LAN.
+5. Crea o actualiza automáticamente `.env` con
+   `INTRASHOP_ENFORCE_HTTPS=1` y
+   `POS_PUBLIC_URL=https://IP_DEL_SERVIDOR`, conservando el resto
+   de configuraciones, incluidas las credenciales existentes.
+6. Intenta exportar **solo el certificado raíz público** y mostrar su
+   huella SHA-256, nunca su clave privada.
+
+**Reiniciar POS Server** después de finalizar el asistente. Si el servicio
+Caddy quedó configurado correctamente, en la LAN únicamente hay que ingresar
+a `https://IP_DEL_SERVIDOR/intrashop/`.
+
+No modificar ni borrar `libreria.db`, carpetas de datos de Caddy ni sus
+claves privadas. Si el IP del servidor cambia, ejecutar otra vez el
+asistente y actualizar la dirección en las terminales. Por eso se recomienda
+activar la **reserva DHCP** en el router, pero no hace falta que el usuario
+configure DNS.
+
+### La parte que requiere aprobación en cada cliente
+
+Cada POS cliente, tótem, PC o tablet debe confiar en el certificado raíz
+**público** emitido por el servidor. En Ubuntu, el asistente intenta
+copiarlo a:
 
 ```text
-192.168.1.100   pos.home.arpa
+~/.local/share/intrashop/certificados/intrashop-root-ca.crt
 ```
 
-La DNS o el archivo hosts **no** prueba identidad del servidor; instalar y
-validar la CA de Caddy sí permite autenticar su certificado. No guardar
-contraseñas o claves LAN en el hosts.
-
-## 1. Instalar y configurar Caddy (servidor Ubuntu)
-
-Instalar Caddy desde el repositorio oficial, o desde los paquetes disponibles
-para Ubuntu. Confirmar `caddy version` y que el servicio arranca con
-`systemctl status caddy`.
-
-Desde la carpeta del repositorio:
-
-```bash
-sudo cp deploy/Caddyfile.intrashop-lan.example /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl restart caddy
-sudo systemctl status caddy --no-pager
-```
-
-El ejemplo usa `pos.home.arpa`; cambiar el nombre **en Caddyfile, DNS y
-POS_PUBLIC_URL a la vez** si elegís otro. Caddy utiliza `tls internal`,
-generando la raíz CA local y el certificado del servidor.
-
-**No es necesario cambiar Caddy para WebSockets de Flet:** su reverse_proxy
-maneja WebSocket automáticamente.
-
-## 2. Iniciar POS Server sólo por loopback
-
-En el `.env` que utiliza el POS Server, colocar:
-
-```dotenv
-INTRASHOP_ENFORCE_HTTPS=1
-POS_PUBLIC_URL=https://pos.home.arpa
-```
-
-No activar `POS_CORS_ORIGINS=*`. No incrustar API keys en Astro. El
-`POS_PUBLIC_URL` debe coincidir exactamente con el certificado.
-
-Iniciar mediante la misma GUI:
-
-```bash
-python pos_server.py
-```
-
-O como servicio sin GUI:
-
-```bash
-python pos_server.py --headless
-```
-
-Con `INTRASHOP_ENFORCE_HTTPS=1` el POS Server **fuerza** Uvicorn a
-`127.0.0.1`, incluso si una configuración anterior pedía `0.0.0.0`.
-Uvicorn procesa `X-Forwarded-Proto` y `X-Forwarded-For` exclusivamente
-si llegan desde `127.0.0.1` o `::1` (Caddy local). Se rechaza todo HTTP
-directo por la aplicación; nunca se permite confiar en proxies arbitrarios.
-
-No utilizar simultáneamente otra instancia vieja del servidor en 0.0.0.0.
-Si existe un servicio previo, detenerlo primero; revisar:
-
-```bash
-ss -ltnp | grep -E ':443|:8000'
-```
-
-La salida de `:8000` debe mostrar solo `127.0.0.1:8000`. Debe existir
-un listener en `:443` de Caddy. Al abrir `https://pos.home.arpa/health`
-desde otra PC debería aparecer el estado del POS Server. Una llamada
-`http://IP_SERVIDOR:8000/health` desde la LAN **debe fallar**.
-
-## 3. Instalar la CA en todos los equipos
-
-En Ubuntu cuando Caddy corre como servicio de systemd, la raíz **pública**
-normalmente está en:
+También puede estar en la ruta de datos de Caddy:
 
 ```text
 /var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt
 ```
 
-Copiar **solo** ese `root.crt` a cada PC/tótem de confianza. Antes de
-instalarla, comparar su huella digital con una huella obtenida directamente
-en la PC servidor (fuera del canal LAN susceptible a suplantación):
+1. Exportar/copiar **solo el `.crt` público** a cada equipo autorizado,
+   idealmente por USB o mediante un canal autenticado.
+2. **Verificar su huella SHA-256** contra la mostrada físicamente en POS Server
+   para impedir que un atacante entregue una CA falsa.
+3. El operador autoriza una vez la instalación de esa CA en el equipo.
+   En Windows, utilizar «Entidades de certificación raíz de confianza» con
+   permisos de administrador; en Ubuntu, la carpeta
+   `/usr/local/share/ca-certificates/` y `sudo update-ca-certificates`;
+   Android/iPadOS/iOS tienen procedimientos y restricciones propios.
+4. Confirmar que el navegador abra `https://IP_DEL_SERVIDOR/intrashop/`
+   **sin advertencias de certificado**. Si el navegador mantiene una
+   advertencia, no habilitar cobros hasta corregirla.
+
+En POS Python/Linux, `httpx` puede no usar automáticamente la CA del sistema:
+tras instalarla con `update-ca-certificates`, usar
+`SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` en el servicio/terminal
+que arranca el POS. En Windows puede ser necesario un bundle PEM confiable
+para `httpx`. **Nunca usar `verify=False`.**
+
+Para un producto final descargable, la autorización del certificado deberá
+quedar dentro del instalador de POS/tótem con un aviso explícito y
+verificación de la huella; no es posible instalar una CA confiable
+silenciosamente desde una página web no confiable. El asistente Linux del
+servidor ya está implementado; **el instalador multiplataforma de clientes
+aún es una tarea pendiente**.
+
+## Verificación técnica
+
+En el servidor:
 
 ```bash
-openssl x509 -in root.crt -noout -fingerprint -sha256
+ss -ltnp | grep -E ':443|:8000'
 ```
 
-En Ubuntu cliente:
+Esperado: Caddy en 443 y Python **solo** en `127.0.0.1:8000`, no
+`0.0.0.0:8000`.
+
+Desde un cliente con la CA autorizada:
 
 ```bash
-sudo install -m 0644 root.crt /usr/local/share/ca-certificates/intrashop-root.crt
-sudo update-ca-certificates
+curl -fsS https://192.168.1.100/health
 ```
 
-Firefox puede requerir importar la CA desde sus ajustes de certificados
-si no usa el almacén de confianza del sistema. En Windows, importar
-`root.crt` en el almacén **Entidades de certificación raíz de confianza**
-con permisos administrativos. En Android, importar la CA del usuario por los
-ajustes de seguridad/certificados; no todas las apps Android confían en CAs
-de usuario. Comprobar cada navegador con `https://pos.home.arpa` sin
-advertencias. **No desactivar validación TLS ni usar --insecure o -k**.
+La URL `http://192.168.1.100:8000/health` no debe estar disponible desde
+la LAN. HTTPS obliga a pasar por Caddy para login, API de ventas, cierre
+de caja, catálogo y cobros. La identidad del tótem y su QR siguen
+administrados por POS Server, con código de emparejamiento.
 
-Distribuir la CA solo a dispositivos administrados. Una CA raíz es una
-autoridad de confianza importante; no entregar su **clave privada** ni
-permitir que cualquier equipo de la red configure el Caddy.
+## Para usuarios que *sí* tienen un dominio
 
-## 4. Conectar POS y tótems
+Una URL con nombre (mDNS, DNS local, nombre público) es opcional y
+no es un requisito del instalador. Un dominio propio con DNS-01
+permite usar certificados públicos gratuitos, normalmente sin importar
+la CA local en cada PC, pero requiere una integración adicional de
+gestión DNS. Para pequeños comercios, el modo IP privada es más directo.
 
-- En POS cliente → **Configurar conexión LAN**: usar
-  `https://pos.home.arpa`, sin `:8000`. Configurar la clave LAN en el
-  archivo local privado de la terminal y reiniciar el POS.
-- **POS Python con httpx:** HTTPX puede utilizar su propia colección
-  `certifi` en lugar del almacén de certificados del sistema. En un POS
-  cliente Ubuntu, después de `update-ca-certificates`, definir
-  `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` en el entorno del
-  proceso POS (o en su archivo de entorno), y comprobar la conexión al
-  servidor. Ese bundle incluye las CAs públicas y la raíz instalada de
-  IntraShop. **No utilizar `verify=False` ni deshabilitar certificados.**
-  En Windows, usar un bundle PEM con las CAs públicas más la CA local
-  o un cliente HTTP configurado para usar el almacén de certificados del
-  sistema; instalar la CA en Windows por sí sola no garantiza que HTTPX
-  la utilice.
-- En cada tótem: entrar a `https://pos.home.arpa/intrashop/`, verificar la
-  identidad IP desde POS Server, asignar el QR y luego generar el código
-  temporal de emparejamiento. La cookie HttpOnly no sustituye el certificado.
-- Astro compilado servido por POS Server utiliza el **mismo origen** en
-  `:443` para APIs y QR; no intenta conectar a `:8000` ni reutiliza una
-  URL HTTP vieja de `localStorage`.
-- La GUI POS Server abre la URL HTTPS pública, no la HTTP local.
-
-## 5. Validación y seguridad
-
-Desde una PC cliente (CA instalada):
-
-```bash
-curl -fsS https://pos.home.arpa/health
-curl -I https://pos.home.arpa/intrashop/
-```
-
-No se espera `curl -k`. Si aparece error de certificado, revisar
-`root.crt`, DNS/hosts, nombre certificado y fecha/hora de las PCs.
-
-Comprobar también que no se pueda entrar por HTTP directo a la API desde
-otra PC. Mantener deshabilitado el acceso a 8000/TCP desde la LAN
-mediante el bind de loopback y firewall. El puerto 80/TCP de Caddy puede
-redirigir a HTTPS; nunca debe servir la aplicación sin cifrar.
-
-Un atacante que controla una CA instalada, el router DNS, la PC servidor,
-o un operador administrador sí podría manipular el servicio. HTTPS por sí
-solo **no** reemplaza roles, contraseñas, actualizaciones ni auditoría.
-La clave API compartida para varias cajas todavía debe migrarse a permisos
-de operaciones individuales; no declarar el sistema auditado o invulnerable.
-
-## ¿Y con un certificado público gratuito?
-
-Es posible emitir certificados gratuitos con Let's Encrypt para un
-**dominio público propio** aun si el servidor no está abierto a Internet,
-usando validación DNS-01 y automatización compatible con el proveedor DNS
-(normalmente un plugin DNS del proxy). En ese caso los navegadores no
-necesitan instalar la raíz privada. Para una LAN sin dominio, `tls internal`
-es más simple. Los certificados para `pos.home.arpa` no pueden emitirse
-por una CA pública de Internet.
-
-## Recuperación
-
-Desactivar TLS solo para diagnóstico local: detener el servicio Caddy,
-quitar temporalmente las dos variables de HTTPS y reiniciar POS Server.
-**No utilizar esta opción como instalación permanente de cobros**.
-Nunca reemplazar la base `libreria.db` ni borrar los datos de Caddy para
-resolver problemas de certificado: se perdería la confianza de todos los
-clientes y habría que redistribuir la CA.
-
-Fuentes oficiales: https://caddyserver.com/docs/caddyfile/directives/tls,
-https://caddyserver.com/docs/running y https://uvicorn.dev/settings/.
+Fuentes oficiales:
+- https://caddyserver.com/docs/automatic-https
+- https://caddyserver.com/docs/caddyfile/directives/tls
+- https://caddyserver.com/docs/caddyfile/concepts
