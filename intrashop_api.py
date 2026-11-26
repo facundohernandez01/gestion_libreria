@@ -1505,30 +1505,36 @@ def identidad_totem(request: Request):
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         ensure_schema(conn)
         checkout_store.ensure_schema(conn)
+        from services import intrashop_totem_auth as auth
+        from services.lan_https import habilitado
+        # No confiar en headers del navegador ni recuperar sesiones sobre HTTP.
+        cookie = getattr(request, "cookies", {}).get(auth.COOKIE)
+        if cookie and habilitado() and request.url.scheme == "https":
+            auth.recuperar_direccion(conn, ip, cookie)
         row = resolve_ip(conn, ip)
         if not row:
             return {
                 "paired": False, "authorized": False, "ip": ip,
                 "id": None, "nombre": None,
                 "qr_assigned": False,
-                "message": "Equipo sin vincular. Asigná esta IP a un tótem en POS Server.",
+                "message": "Equipo sin vincular. Solicitá un código de acceso en POS Server.",
             }
-        conn.execute(
-            "UPDATE intrashop_totems SET ultimo_contacto=CURRENT_TIMESTAMP,ip_address=? "
-            "WHERE id=?",
-            (ip, row["id"]),
-        )
         assigned = conn.execute(
             "SELECT 1 FROM intrashop_mp_bindings "
             "WHERE terminal_id=? AND terminal_type='totem' AND qr_url<>''",
             (row["id"],),
         ).fetchone()
-        from services import intrashop_totem_auth as auth
         authorized = auth.autorizado(
             conn, ip, row["id"], getattr(request, "cookies", {}).get(auth.COOKIE),
         )
+        if authorized:
+            conn.execute(
+                "UPDATE intrashop_totems SET ultimo_contacto=CURRENT_TIMESTAMP,ip_address=? WHERE id=?",
+                (ip, row["id"]),
+            )
         conn.commit()
     return {
         "paired": True, "authorized": authorized,
