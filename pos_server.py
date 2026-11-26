@@ -4,7 +4,7 @@ import logging
 import os
 
 from core.settings import settings
-from services.lan_https import host_backend, opciones_uvicorn
+from services.lan_https import host_backend, opciones_uvicorn, puerto_backend
 
 
 def main() -> None:
@@ -25,7 +25,7 @@ def main() -> None:
         return
     import uvicorn
     from api_server import app
-    uvicorn.run(app, host=backend_host, port=args.port, log_level="info",
+    uvicorn.run(app, host=backend_host, port=puerto_backend(args.port), log_level="info",
                 **opciones_uvicorn())
 
 

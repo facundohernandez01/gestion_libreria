@@ -59,6 +59,11 @@ def validar_url_servidor(url: str) -> str:
 
 def datos_ca(archivo: Path = CA_EXPORTED) -> tuple[bytes, str]:
     """Lee exclusivamente el certificado raíz PÚBLICO, jamás la clave privada."""
+    if archivo == CA_EXPORTED:
+        from services.lan_https import perfil_nativo
+        native = perfil_nativo()
+        if native:
+            archivo = Path(native["ca"])
     path = Path(archivo)
     if path.is_symlink() or not path.is_file():
         raise ValueError("No hay una CA pública exportada. Configurá HTTPS local primero.")

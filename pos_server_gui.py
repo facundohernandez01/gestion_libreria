@@ -274,74 +274,45 @@ class ServerConsole:
             menu.destroy()
 
     def configure_https_ip(self):
-        """Asistente Ubuntu: instala HTTPS en IP LAN sin DNS ni editar .env."""
-        import shutil
-        import subprocess
-        import sys
-        from pathlib import Path
-
-        script = Path(__file__).resolve().parent / "deploy" / "configurar_https_ip.py"
-        if not script.is_file():
-            messagebox.showerror(
-                "HTTPS local",
-                "El instalador HTTPS no está incluido en esta distribución. "
-                "Actualizá POS Server antes de continuar.",
-                parent=self.root,
-            )
+        """Configurar TLS nativo sin comandos externos ni cambios al .env."""
+        import os
+        import ssl
+        import httpx
+        from services.native_https import prepare, activate, load, PROFILE
+        from services.lan_https import habilitado, perfil_nativo
+        if not self._autorizar_kit_instalacion():
             return
-        detected = ip_lan()
-        ip = simpledialog.askstring(
-            "HTTPS local sin DNS",
-            "IP fija de esta PC en la red LAN:\n"
-            "No necesitás dominio ni configurar DNS.",
-            initialvalue=detected, parent=self.root,
-        )
-        if ip is None:
+        if habilitado():
+            messagebox.showinfo("Conexión segura", "Ya existe HTTPS configurado. No se reemplazará la CA ni el proxy existente.", parent=self.root)
             return
-        try:
-            from ipaddress import IPv4Address
-            ip = str(IPv4Address(ip.strip()))
-            from services.lan_https import url_visible
-            from services.lan_discovery import _subnet_servidor
-            _subnet_servidor(ip)
-        except ValueError as exc:
-            messagebox.showerror("IP LAN inválida", str(exc), parent=self.root)
+        ip = ip_lan()
+        if not messagebox.askyesno("Preparar conexión segura",
+            f"Se generará un certificado privado para https://{ip}. Se reiniciará el servicio. "
+            "El puerto 443 debe estar disponible; Linux puede requerir permisos de enlace. "
+            "Realizá esta operación fuera del horario de cobros. ¿Continuar?", parent=self.root):
             return
-        if not messagebox.askyesno(
-            "Configurar HTTPS gratuito",
-            f"Se preparará HTTPS para https://{ip}/intrashop/.\n\n"
-            "Un asistente instalará/configurará Caddy y creará el .env "
-            "automáticamente. El sistema solicitará permisos de administrador "
-            "una vez. No modifica la base ni los QR.\n\n"
-            "Después tendrás que reiniciar POS Server y autorizar el "
-            "certificado raíz una sola vez en cada tótem o POS cliente.\n\n"
-            "¿Abrir asistente?",
-            parent=self.root,
-        ):
-            return
-        terminals = (
-            (["konsole", "--hold", "-e"] if shutil.which("konsole") else None),
-            (["gnome-terminal", "--"] if shutil.which("gnome-terminal") else None),
-            (["x-terminal-emulator", "-e"] if shutil.which("x-terminal-emulator") else None),
-        )
-        terminal = next((x for x in terminals if x is not None), None)
-        if not terminal:
-            messagebox.showinfo(
-                "Instalar HTTPS",
-                "No encontré un emulador de terminal. Ejecutá desde "
-                "la carpeta del proyecto:\n\n"
-                f"python3 deploy/configurar_https_ip.py --ip {ip}",
-                parent=self.root,
-            )
-            return
-        # Ejecutar la herramienta como usuario normal: ella invoca sudo
-        # sólo al configurar Caddy. No lanzar Python del proyecto como root.
-        try:
-            command = terminal + [sys.executable, str(script), "--ip", ip]
-            subprocess.Popen(command, cwd=str(script.parent.parent),
-                             close_fds=True, start_new_session=True)
-        except OSError as exc:
-            messagebox.showerror("Asistente HTTPS", str(exc), parent=self.root)
+        self.notice.set("Preparando conexión segura…")
+        def worker():
+            try:
+                # Probe the real address before changing the running service.
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                    probe.bind((ip, 443))
+                profile = prepare(ip)
+                server_manager.detener()
+                activate(profile)
+                server_manager.iniciar(host=ip, port=443)
+                ctx=ssl.create_default_context(cafile=profile["ca"])
+                result=httpx.get(profile["url"]+"/health",verify=ctx,trust_env=False,timeout=5)
+                if result.status_code != 200 or result.json().get("service") != "pos-lan":
+                    raise RuntimeError("No se pudo comprobar el servicio HTTPS.")
+                self.root.after(0, lambda: self.notice.set("HTTPS activo. Ya podés exportar los kits de conexión."))
+            except Exception as exc:
+                msg=str(exc)
+                # Never automatically fall back to plaintext after activating TLS.
+                self.root.after(0, lambda: messagebox.showerror("HTTPS local",msg,parent=self.root))
+            finally:
+                self.root.after(0,self.refresh)
+        threading.Thread(target=worker,daemon=True).start()
 
     def _autorizar_kit_instalacion(self) -> bool:
         """Clave ADMIN del comercio, sesión local de 10 minutos y límite de intentos."""
@@ -545,6 +516,8 @@ class ServerConsole:
         advanced_button.pack(anchor="w", pady=(12, 0))
 
         def refresh(*_):
+            nonlocal url
+            url = url_visible(ip_lan(), self.port)
             selected = role.get()
             available = kits.listar_instaladores()
             role_builds = available[selected]
@@ -1414,7 +1387,7 @@ class ServerConsole:
             self._timer = None
         running = server_manager.activo and bool(getattr(server_manager._server, "started", False))
         self.status.set("● Servidor activo" if running else "○ Servidor detenido")
-        self.url.set("http://" + ip_lan() + ":" + str(self.port))
+        self.url.set(url_visible(ip_lan(), self.port))
         if self._loading:
             # Una mutación hecha durante el refresco debe verse de inmediato
             # al terminar la lectura actual, no 15 segundos después.

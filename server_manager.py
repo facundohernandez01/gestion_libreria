@@ -11,7 +11,7 @@ import time
 
 import uvicorn
 
-from services.lan_https import host_backend, opciones_uvicorn, url_visible
+from services.lan_https import host_backend, opciones_uvicorn, url_visible, puerto_backend
 
 # Imports explícitos: PyInstaller no detecta los módulos que uvicorn carga
 # dinámicamente (protocolos/loops/lifespan) en la app compilada.
@@ -72,6 +72,7 @@ class ServerManager:
         if self.activo and getattr(self._server, "started", False):
             return self.url()
         backend_host = host_backend(host)
+        port = puerto_backend(port)
         self.host, self.port = backend_host, port
         self._server = self._crear_server(backend_host, port)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
@@ -123,6 +124,7 @@ def servir_bloqueante(host: str = "0.0.0.0", port: int = 8000, stop_event=None) 
     from api_server import app as asgi_app
 
     backend_host = host_backend(host)
+    port = puerto_backend(port)
     config = uvicorn.Config(
         asgi_app, host=backend_host, port=port, log_level="warning",
         reload=False, log_config=_LOG_CONFIG,

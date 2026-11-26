@@ -170,7 +170,8 @@ def revocar_totem(conn: sqlite3.Connection, totem_id: str) -> None:
 
 
 def exigir_https(request) -> None:
-    if os.getenv("INTRASHOP_ENFORCE_HTTPS", "0").strip() not in ("1", "true", "yes"):
+    from services.lan_https import habilitado
+    if not habilitado():
         return
     from fastapi import HTTPException
 

@@ -66,7 +66,7 @@ def test_gui_usa_asistente_por_ip_sin_sudo_root_y_sin_tocar_db():
     assert 'advanced.add_command(label="Configurar HTTPS local", command=self.configure_https_ip)' in gui
     assert 'advanced_menu.add_command(label="Preparar conexión segura", command=self.configure_https_ip)' in gui
     assert 'def configure_https_ip(self):' in gui
-    assert '"--ip", ip' in gui
+    assert "from services.native_https import prepare, activate" in gui
     assert 'input("¿Continuar? [s/N] ")' in installer
     assert '"caddy", "validate"' in installer
     assert '"sudo", "install"' in installer
@@ -74,3 +74,21 @@ def test_gui_usa_asistente_por_ip_sin_sudo_root_y_sin_tocar_db():
     assert 'root.key' in installer  # solo advertencia, jamás copiar clave privada
     assert 'sudo", sys.executable' not in gui
     assert 'sudo", sys.executable' not in gui
+
+
+def test_native_ca_preserved_and_leaf_valid(tmp_path):
+    import ssl
+    from services.native_https import prepare, activate, load
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes
+    first=prepare("192.168.1.42",root=tmp_path)
+    ca=x509.load_pem_x509_certificate(Path(first["ca"]).read_bytes())
+    second=prepare("192.168.1.43",root=tmp_path)
+    ca2=x509.load_pem_x509_certificate(Path(second["ca"]).read_bytes())
+    assert ca.fingerprint(hashes.SHA256()) == ca2.fingerprint(hashes.SHA256())
+    activate(second,path=tmp_path/"profile.json")
+    assert load(path=tmp_path/"profile.json")["url"]=="https://192.168.1.43"
+    context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.load_cert_chain(second["cert"],second["key"])
+    with pytest.raises(ValueError):
+        prepare("8.8.8.8",root=tmp_path)

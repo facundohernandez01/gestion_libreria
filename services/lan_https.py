@@ -14,13 +14,29 @@ import os
 from urllib.parse import urlsplit
 
 
+def perfil_nativo():
+    if os.getenv("POS_API_ONLY") != "1":
+        return None
+    from services.native_https import load
+    return load()
+
+
+def puerto_backend(port):
+    return 443 if perfil_nativo() else port
+
+
 def habilitado() -> bool:
+    if perfil_nativo():
+        return True
     return os.getenv("INTRASHOP_ENFORCE_HTTPS", "").strip().lower() in (
         "1", "true", "yes", "on",
     )
 
 
 def url_publica() -> str | None:
+    native = perfil_nativo()
+    if native:
+        return native["url"]
     if not habilitado():
         return None
     value = os.getenv("POS_PUBLIC_URL", "").strip().rstrip("/")
@@ -38,6 +54,9 @@ def url_publica() -> str | None:
 
 
 def host_backend(host_solicitado: str) -> str:
+    native = perfil_nativo()
+    if native:
+        return native["ip"]
     if not habilitado():
         return host_solicitado
     # Obliga a pasar por el terminador TLS local. No alcanza con un firewall.
@@ -46,6 +65,9 @@ def host_backend(host_solicitado: str) -> str:
 
 
 def opciones_uvicorn() -> dict:
+    native = perfil_nativo()
+    if native:
+        return {"proxy_headers": False, "ssl_certfile": native["cert"], "ssl_keyfile": native["key"]}
     if habilitado():
         return {
             "proxy_headers": True,
