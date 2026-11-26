@@ -27,6 +27,32 @@ Los tests incluidos **no usan una cuenta de Mercado Pago ni la impresora real**,
 4. **Generar código de acceso** sobre el tótem. En el navegador del propio tótem ingresá el código. El comercio y el QR ya deben estar vinculados en POS Server.
 5. Al borrar las cookies o cambiar de navegador, generá otro código. **La relación entre el tótem y su QR permanece intacta.**
 
+## Credenciales de usuarios y puesta en marcha tras actualizar
+
+Se eliminaron credenciales de administrador implícitas y los usuarios se autentican
+contra su registro de la tabla `usuarios`. Las nuevas contraseñas se almacenan
+mediante PBKDF2-HMAC-SHA256 con sal aleatoria; los registros legacy de texto claro
+se migran a hash tras un inicio de sesión válido. Las contraseñas no se devuelven
+en `/usuarios` o consultas de roles y no se guardan en `login_recordado.json`.
+
+**Cambio obligatorio si antes ingresabas con admin/admin o una contraseña de
+administrador débil:** abrí la GUI física de **POS Server** y pulsá
+**«Clave ADMIN»**. Establecé una clave nueva de al menos 12 caracteres y
+confirmala. Se actualiza el registro del administrador, se borra
+`config.LOGIN_CLAVE` legado y se revocan las sesiones previas. El cambio no
+elimina usuarios, ventas, cajas ni el histórico.
+
+En instalaciones nuevas que no tengan una contraseña fuerte configurada, la
+cuenta ADMIN se crea inicialmente deshabilitada hasta usar esa opción de
+consola local. **En modo headless** hay que configurar la clave mediante una
+interfaz/CLI local administrativa antes de permitir usuarios de POS.
+No publicar una consola de administración por HTTP sin acceso previo.
+
+El endpoint genérico `/config` ya no entrega `ACCESS_TOKEN`,
+`LOGIN_CLAVE`, `MP_ACCESS_TOKEN` y otras claves sensibles, ni permite
+modificarlas usando solamente la clave API LAN. Para esos ajustes usar la
+administración local o los endpoints administrativos autenticados.
+
 ## Seguridad imprescindible para producción
 
 **ATENCIÓN: la red LAN no es automáticamente una red segura.** En HTTP, un atacante con acceso a interceptar tráfico puede modificar la página/QR, obtener contraseñas, robar cookies o claves LAN. Las cookies y los códigos no protegen frente a MITM si los datos circulan sin cifrar. La autenticación por IP tampoco demuestra identidad de hardware.
