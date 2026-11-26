@@ -125,7 +125,7 @@ def test_gui_no_ofrece_descarga_ficticia_ni_clave_global():
     root = Path(__file__).resolve().parents[1]
     gui = (root / "pos_server_gui.py").read_text(encoding="utf-8")
     assert "def distribution_wizard(self):" in gui
-    assert '"Instalar / conectar equipos"' in gui
+    assert '("Instalar / conectar equipo", self.distribution_wizard)' in gui
     assert 'kits.listar_instaladores()' in gui
     assert "Exportar kit de conexión" in gui
     assert "self._autorizar_kit_instalacion()" in gui
