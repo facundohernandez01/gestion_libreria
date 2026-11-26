@@ -123,6 +123,46 @@ def autorizado(conn: sqlite3.Connection, ip: str, totem_id: str, cookie: str | N
     )
 
 
+def recuperar_direccion(conn: sqlite3.Connection, ip: str, cookie: str | None) -> str | None:
+    """Reconectar con una sesión vigente, exclusivamente sobre TLS verificado.
+
+    El llamador debe exigir HTTPS y BEGIN IMMEDIATE. No desplaza otro tótem,
+    no resucita sesiones revocadas ni modifica la asociación QR.
+    """
+    from services.intrashop_totem_registry import normalizar_ip, resolve_ip
+
+    if not cookie or len(cookie) > 200:
+        return None
+    ip = normalizar_ip(ip)
+    ensure_schema(conn)
+    row = conn.execute(
+        """SELECT s.totem_id,s.ip FROM intrashop_totem_sessions s
+           JOIN intrashop_totems t ON t.id=s.totem_id
+           WHERE s.token_hash=? AND s.expires_at>? AND t.retirado=0
+             AND t.ip_vinculada=s.ip""",
+        (_digest(cookie), int(time.time())),
+    ).fetchone()
+    if not row:
+        return None
+    existing = resolve_ip(conn, ip)
+    if existing and existing["id"] != row["totem_id"]:
+        return None
+    if row["ip"] != ip:
+        conn.execute(
+            "UPDATE intrashop_totems SET ip_vinculada=?,ip_address=? WHERE id=?",
+            (ip, ip, row["totem_id"]),
+        )
+        conn.execute(
+            "UPDATE intrashop_totem_sessions SET ip=? WHERE token_hash=?",
+            (ip, _digest(cookie)),
+        )
+        conn.execute(
+            "DELETE FROM intrashop_totem_pair_codes WHERE totem_id=?",
+            (row["totem_id"],),
+        )
+    return row["totem_id"]
+
+
 def revocar_totem(conn: sqlite3.Connection, totem_id: str) -> None:
     ensure_schema(conn)
     conn.execute("DELETE FROM intrashop_totem_sessions WHERE totem_id=?", (totem_id,))
