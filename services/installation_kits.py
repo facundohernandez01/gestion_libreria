@@ -14,11 +14,14 @@ import ipaddress
 import json
 import re
 import ssl
+import sys
+import tempfile
+import shutil
 from pathlib import Path
 from urllib.parse import urlsplit
 from zipfile import ZIP_DEFLATED, ZipFile
 
-BASE = Path(__file__).resolve().parents[1]
+BASE = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[1]
 BUILD_DIR = BASE / "distribution" / "builds"
 CA_EXPORTED = Path.home() / ".local/share/intrashop/certificados/intrashop-root-ca.crt"
 ROLES = {
@@ -156,3 +159,77 @@ def crear_kit_conexion(
                 + "URL=" + safe_url + "/intrashop/" + chr(13) + chr(10),
             )
     return {"archivo": str(dest), "url": safe_url, "sha256_ca": sha, "perfil": rol}
+
+
+def importar_suite(archivo: Path, destino: Path = BUILD_DIR) -> int:
+    """Importar el artefacto oficial elegido localmente; verificar integridad.
+    
+    El manifiesto no constituye una firma digital. Nunca ejecutar el contenido.
+    """
+    destino = Path(destino)
+    if destino.is_symlink():
+        raise ValueError("Carpeta de distribución inválida.")
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    with ZipFile(archivo) as archive, tempfile.TemporaryDirectory(dir=destino.parent) as temp:
+        entries = archive.infolist()
+        if len(entries) > 100:
+            raise ValueError("Demasiadas entradas en el paquete.")
+        prefix = "distribution/builds/"
+        manifests = [e for e in entries if e.filename == prefix + "manifest.json"]
+        if len(manifests) != 1 or manifests[0].file_size > 65536:
+            raise ValueError("No es un artefacto IntraShop Suite válido.")
+        manifest = json.loads(archive.read(manifests[0]))
+        if manifest.get("schema") != "intrashop-suite/v1":
+            raise ValueError("Versión de distribución no admitida.")
+        records = manifest.get("artifacts")
+        if not isinstance(records, list) or not 6 <= len(records) <= 24:
+            raise ValueError("Manifiesto incompleto.")
+        staged = Path(temp) / "builds"
+        staged.mkdir()
+        names = set()
+        roles = set()
+        total = 0
+        for row in records:
+            name = row["file"]
+            role = row["role"]
+            platform = row["platform"]
+            if (not isinstance(name, str) or not re.fullmatch(r"[a-zA-Z0-9._ -]+", name)
+                    or name.casefold() in names or role not in ROLES
+                    or platform not in ("windows", "linux")
+                    or not name.casefold().startswith(ARTIFACT_PREFIXES[role])
+                    or not name.casefold().endswith(ARTIFACT_SUFFIXES)):
+                raise ValueError("Nombre o perfil inválido.")
+            names.add(name.casefold())
+            roles.add((role, platform))
+            matches = [e for e in entries if e.filename == prefix + name]
+            size = row["bytes"]
+            if len(matches) != 1 or type(size) is not int or not 0 < size <= 2 * 1024**3 or matches[0].file_size != size:
+                raise ValueError("Compilación incompleta: " + name)
+            total += size
+            if total > 8 * 1024**3:
+                raise ValueError("Paquete demasiado grande.")
+            digest = hashlib.sha256()
+            written = 0
+            with archive.open(matches[0]) as source, (staged / name).open("xb") as target:
+                while chunk := source.read(1024 * 1024):
+                    written += len(chunk)
+                    if written > size:
+                        raise ValueError("Tamaño inesperado.")
+                    digest.update(chunk)
+                    target.write(chunk)
+            if written != size or digest.hexdigest() != row["sha256"]:
+                raise ValueError("SHA-256 incorrecto: " + name)
+        if roles != {(r, p) for r in ROLES for p in ("windows", "linux")}:
+            raise ValueError("Faltan compilaciones para algún perfil.")
+        (staged / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        # Replace the set as a unit; don't mix versions.
+        previous = Path(temp) / "previous"
+        if destino.exists():
+            destino.rename(previous)
+        try:
+            staged.rename(destino)
+        except OSError:
+            if previous.exists():
+                previous.rename(destino)
+            raise
+    return len(records)

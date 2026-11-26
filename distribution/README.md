@@ -31,3 +31,5 @@ Arquitectura y faltantes: [Distribución unificada](../docs/distribucion-unifica
 ## Compilación automatizada
 
 Ejecutar **IntraShop Suite distribution** desde GitHub Actions. Genera POS y POS Server portables (ZIP) y tótem Tauri (instaladores) para Windows y Linux. El artefacto final `intrashop-suite` conserva la carpeta `distribution/builds/` que reconoce el wizard. Descargar y extraer en una instalación de confianza; no mezclar archivos de diferentes versiones. El manifiesto SHA-256 registra integridad, no sustituye una firma digital. El workflow falla si falta cualquiera de los seis builds. No publica una release ni incluye bases de datos de comercios.
+
+El wizard permite importar directamente el ZIP `intrashop-suite` mediante **Ayuda de conexión → Importar paquete de compilaciones**. Verifica cada archivo y exige los seis perfiles/plataformas antes de sustituir el conjunto local. No ejecuta automáticamente los binarios.

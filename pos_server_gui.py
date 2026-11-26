@@ -537,6 +537,8 @@ class ServerConsole:
         advanced_menu = tk.Menu(advanced_button, tearoff=0)
         advanced_menu.add_command(label="Preparar conexión segura", command=self.configure_https_ip)
         advanced_menu.add_command(label="Generar código para caja", command=self.generar_codigo_pos)
+        advanced_menu.add_command(label="Cajas vinculadas", command=self.administrar_cajas_vinculadas)
+        advanced_menu.add_command(label="Importar paquete de compilaciones…", command=lambda: import_suite())
         advanced_menu.add_command(label="Información técnica", command=lambda: messagebox.showinfo(
             "Información técnica", url, parent=window))
         advanced_button.configure(menu=advanced_menu)
@@ -598,6 +600,33 @@ class ServerConsole:
             copy_button.configure(state="normal" if tls_ready and selected == "totem" else "disabled")
             web_button.configure(state="normal" if tls_ready and selected == "totem" else "disabled")
             build_button.configure(state="normal" if role_builds else "disabled")
+
+        def import_suite():
+            if not self._autorizar_kit_instalacion():
+                return
+            archive = filedialog.askopenfilename(parent=window, title="Seleccionar artefacto intrashop-suite de GitHub Actions", filetypes=[("ZIP", "*.zip")])
+            if not archive:
+                return
+            if not messagebox.askyesno("Importar compilaciones", "Importá solamente el ZIP descargado desde tu repositorio de confianza. Se reemplazará el conjunto anterior de instaladores. Se verifica SHA-256, no la firma digital. ¿Continuar?", parent=window):
+                return
+            import threading
+            current.set("Verificando y copiando compilaciones…")
+            def worker():
+                try:
+                    count = kits.importar_suite(Path(archive))
+                    def done():
+                        if window.winfo_exists():
+                            refresh()
+                            messagebox.showinfo("Compilaciones importadas", f"{count} archivos verificados.", parent=window)
+                    window.after(0, done)
+                except Exception as exc:
+                    error = str(exc)
+                    def failed():
+                        if window.winfo_exists():
+                            refresh()
+                            messagebox.showerror("No se importó el paquete", error, parent=window)
+                    window.after(0, failed)
+            threading.Thread(target=worker, daemon=True).start()
 
         def copy_link():
             # Sólo URL, nunca token, contraseña o código temporal en query.

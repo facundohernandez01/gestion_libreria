@@ -200,3 +200,32 @@ def test_mp_bindings_usa_confianza_local(monkeypatch):
         return httpx.Response(200, json=[], request=httpx.Request(method, url))
     monkeypatch.setattr(mp_bindings.httpx, "request", request)
     assert mp_bindings.listar() == []
+
+
+def test_importar_suite_verifica_integridad_y_conserva_anterior(tmp_path):
+    import hashlib
+    import json
+    from zipfile import ZipFile
+    from services.installation_kits import importar_suite
+    artifact = tmp_path / "suite.zip"
+    output = tmp_path / "builds"
+    prefixes = {"pos": "Kiosmico", "servidor": "IntraShopServer", "totem": "IntraShop"}
+    rows = []
+    with ZipFile(artifact, "w") as z:
+        for role, prefix in prefixes.items():
+            for os in ("windows", "linux"):
+                name = f"{prefix}-{os}-test.zip"
+                payload = name.encode()
+                z.writestr("distribution/builds/" + name, payload)
+                rows.append({"file":name, "role":role, "platform":os, "bytes":len(payload), "sha256":hashlib.sha256(payload).hexdigest()})
+        z.writestr("distribution/builds/manifest.json", json.dumps({"schema":"intrashop-suite/v1","artifacts":rows}))
+    assert importar_suite(artifact, output) == 6
+    assert len(list(output.glob("*.zip"))) == 6
+    rows[0]["sha256"] = "0"*64
+    with ZipFile(artifact, "w") as z:
+        for row in rows:
+            z.writestr("distribution/builds/" + row["file"], row["file"].encode())
+        z.writestr("distribution/builds/manifest.json", json.dumps({"schema":"intrashop-suite/v1","artifacts":rows}))
+    with pytest.raises(ValueError, match="SHA-256"):
+        importar_suite(artifact, output)
+    assert len(list(output.glob("*.zip"))) == 6
