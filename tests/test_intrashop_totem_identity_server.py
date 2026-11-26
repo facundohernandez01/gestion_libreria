@@ -15,6 +15,7 @@ import intrashop_checkout_store as checkout_store
 import intrashop_api as api
 from services.intrashop_totem_registry import (
     normalizar_ip, provisionar, resolve_ip, vincular_ip, desvincular_ip,
+    resumen_retiro, retirar_totem, restaurar_totem,
 )
 
 
@@ -158,3 +159,157 @@ def test_frontend_no_registra_identidad_local_ni_uuid():
     assert "/tienda/totems/register" not in source
     assert "localStorage.getItem(\"intrashop_totem_id\")" not in source
     assert "localStorage.setItem(\"intrashop_totem_id\"" not in source
+
+
+def test_retiro_con_qr_libera_asociacion_sin_borrar_registro_ni_historial(server_db):
+    with server_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        vincular_ip(conn, "legacy-uuid", "192.168.30.41")
+        previo = resumen_retiro(conn, "legacy-uuid")
+        assert previo["pos_external_id"] == "POS-LEGACY"
+        result = retirar_totem(conn, "legacy-uuid")
+        assert result["retirado"] is True
+        conn.commit()
+
+    with server_db() as conn:
+        row = conn.execute(
+            "SELECT retirado,ip_vinculada,ip_address,nombre FROM intrashop_totems "
+            "WHERE id='legacy-uuid'"
+        ).fetchone()
+        assert (row["retirado"], row["ip_vinculada"], row["ip_address"]) == (1, None, None)
+        assert row["nombre"] == "Tótem entrada"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM intrashop_mp_bindings WHERE terminal_id='legacy-uuid'"
+        ).fetchone()[0] == 0
+    assert api.identidad_totem(request("192.168.30.41"))["paired"] is False
+    assert "legacy-uuid" not in [
+        row["id"] for row in api.admin_listar_totems(operador="admin")
+    ]
+    assert "legacy-uuid" in [
+        row["id"] for row in api.admin_listar_totems(
+            incluir_eliminados=True, operador="admin"
+        )
+    ]
+
+
+def test_restaura_tótem_sin_recuperar_ip_ni_vinculo_qr(server_db):
+    with server_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        retirar_totem(conn, "legacy-uuid")
+        restored = restaurar_totem(conn, "legacy-uuid")
+        conn.commit()
+        assert restored["retirado"] is False
+    assert api.identidad_totem(request("192.168.30.41"))["paired"] is False
+    with server_db() as conn:
+        vincular_ip(conn, "legacy-uuid", "192.168.30.41")
+        conn.commit()
+        assert conn.execute(
+            "SELECT COUNT(*) FROM intrashop_mp_bindings WHERE terminal_id='legacy-uuid'"
+        ).fetchone()[0] == 0
+    assert api.identidad_totem(request("192.168.30.41"))["paired"] is True
+
+
+def test_retiro_no_recrea_numerados_y_el_siguiente_id_es_009(server_db):
+    with server_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        retirar_totem(conn, "totem-008")
+        conn.commit()
+    with server_db() as conn:
+        ensure_schema(conn)
+        ensure_schema(conn)
+        conn.commit()
+        assert conn.execute(
+            "SELECT retirado FROM intrashop_totems WHERE id='totem-008'"
+        ).fetchone()["retirado"] == 1
+        assert provisionar(conn, 1)[0]["id"] == "totem-009"
+        conn.commit()
+
+
+def test_eliminar_no_borra_ordenes_cobradas_y_bloquea_si_hay_pendiente(server_db):
+    with server_db() as conn:
+        conn.execute("""INSERT INTO intrashop_checkouts
+            (id,totem_id,pos_external_id,store_external_id,estado,
+             total,items_json,created_at,updated_at)
+            VALUES ('prueba-checkout','legacy-uuid','POS-LEGACY','STORE-01',
+                    'waiting',10,'[]',1,1)""")
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        with pytest.raises(ValueError, match="cobro"):
+            retirar_totem(conn, "legacy-uuid")
+        conn.rollback()
+        row = conn.execute(
+            "SELECT retirado FROM intrashop_totems WHERE id='legacy-uuid'"
+        ).fetchone()
+        assert row["retirado"] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) FROM intrashop_mp_bindings WHERE terminal_id='legacy-uuid'"
+        ).fetchone()[0] == 1
+        conn.execute(
+            "UPDATE intrashop_checkouts SET estado='completed' WHERE id='prueba-checkout'"
+        )
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        retirar_totem(conn, "legacy-uuid")
+        conn.commit()
+        assert conn.execute(
+            "SELECT id,estado,totem_id FROM intrashop_checkouts WHERE id='prueba-checkout'"
+        ).fetchone() == ("prueba-checkout", "completed", "legacy-uuid")
+
+
+def test_no_retirar_tótem_con_entrega_pendiente(server_db):
+    with server_db() as conn:
+        conn.execute("INSERT INTO cajas(fecha_apertura,importe_apertura,estado) "
+                     "VALUES(CURRENT_TIMESTAMP,0,'abierta')")
+        caja = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO ventas(caja_id,total,metodo_pago) VALUES(?,?,?)",
+            (caja, 10, "mercadopago_qr"),
+        )
+        venta = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+        conn.execute(
+            "INSERT INTO intrashop_entregas(venta_id,checkout_id,totem_id,totem_nombre) "
+            "VALUES(?,?,?,?)",
+            (venta, "entrega-prueba", "legacy-uuid", "Tótem entrada"),
+        )
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        with pytest.raises(ValueError, match="comanda"):
+            retirar_totem(conn, "legacy-uuid")
+        conn.rollback()
+        conn.execute(
+            "UPDATE intrashop_entregas SET estado='entregado' WHERE checkout_id='entrega-prueba'"
+        )
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        retirar_totem(conn, "legacy-uuid")
+        conn.commit()
+        assert conn.execute(
+            "SELECT totem_id,totem_nombre,estado FROM intrashop_entregas "
+            "WHERE checkout_id='entrega-prueba'"
+        ).fetchone() == ("legacy-uuid", "Tótem entrada", "entregado")
+
+
+def test_desvincular_ip_tiene_efecto_visible_y_preserva_qr(server_db):
+    with server_db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        vincular_ip(conn, "legacy-uuid", "192.168.30.41")
+        conn.execute("UPDATE intrashop_totems SET ip_address='192.168.30.41' "
+                     "WHERE id='legacy-uuid'")
+        assert desvincular_ip(conn, "legacy-uuid") is True
+        conn.commit()
+        linked = conn.execute(
+            "SELECT ip_vinculada,ip_address FROM intrashop_totems WHERE id='legacy-uuid'"
+        ).fetchone()
+        assert (linked["ip_vinculada"], linked["ip_address"]) == (None, None)
+        assert conn.execute(
+            "SELECT COUNT(*) FROM intrashop_mp_bindings WHERE terminal_id='legacy-uuid'"
+        ).fetchone()[0] == 1
+
+
+def test_pantalla_pos_server_explica_eliminar_y_desvincular():
+    from pathlib import Path
+    src = (Path(__file__).resolve().parents[1] / "pos_server_gui.py").read_text()
+    assert "Desvincular equipo (solo IP)" in src
+    assert "Eliminar tótem…" in src
+    assert "Mostrar eliminados" in src
+    assert "def restore_totem(self):" in src
