@@ -152,6 +152,7 @@ class ServerConsole:
                               ("Copiar clave LAN", self.copy_lan_key),
                               ("Clave ADMIN", self.configure_admin_password),
                               ("HTTPS local", self.configure_https_ip),
+                              ("Instalar / conectar equipos", self.distribution_wizard),
                               ("Actualizar", self.refresh)):
             ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 8))
         ttk.Label(page, textvariable=self.summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
@@ -319,6 +320,220 @@ class ServerConsole:
                              close_fds=True, start_new_session=True)
         except OSError as exc:
             messagebox.showerror("Asistente HTTPS", str(exc), parent=self.root)
+
+    def _autorizar_kit_instalacion(self) -> bool:
+        """Exige administrador existente; no se crea una clave maestra global."""
+        from database_manager import DatabaseManager
+
+        usuario = simpledialog.askstring(
+            "Autorizar kit de instalación",
+            "Usuario ADMIN de este comercio:", parent=self.root,
+        )
+        if not usuario:
+            return False
+        clave = simpledialog.askstring(
+            "Autorizar kit de instalación",
+            "Contraseña de administración:", show="*", parent=self.root,
+        )
+        if clave is None:
+            return False
+        try:
+            actor = DatabaseManager(settings.db_path).autenticar_usuario(usuario, clave)
+        except Exception:
+            actor = None
+        # No almacenar credenciales en memoria, logs, URL ni manifest.
+        clave = None
+        if not actor or not actor.get("es_admin") or not actor.get("activo"):
+            messagebox.showerror(
+                "Administración no autorizada",
+                "Las credenciales no son de un administrador activo. "
+                "Si todavía no configuraste uno, utilizá «Clave ADMIN» "
+                "desde la consola local de POS Server.",
+                parent=self.root,
+            )
+            return False
+        return True
+
+    def distribution_wizard(self):
+        """Asistente de primera conexión POS/Server/Tótem con artefactos reales.
+
+        Sin claves ni cookies embebidas en enlaces o ZIP. Nunca declara
+        instalado un Tauri si no hay una compilación Windows disponible.
+        """
+        from pathlib import Path
+        from tkinter import filedialog
+        from services import installation_kits as kits
+
+        window = tk.Toplevel(self.root)
+        window.title("IntraShop · Instalar o conectar un equipo")
+        window.geometry("670x525")
+        window.minsize(575, 455)
+        window.transient(self.root)
+        pane = ttk.Frame(window, padding=18)
+        pane.pack(fill="both", expand=True)
+        ttk.Label(pane, text="Asistente de instalación",
+                  font=("Arial", 18, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            pane,
+            text="Un único sistema · Elegí qué función cumplirá este equipo.",
+            wraplength=610,
+        ).pack(anchor="w", pady=(0, 10))
+        role = tk.StringVar(value="totem")
+        options = ttk.Frame(pane)
+        options.pack(fill="x", pady=(0, 10))
+        for identifier, title in (
+            ("servidor", "POS Server · Servidor"),
+            ("pos", "POS · Caja"),
+            ("totem", "IntraShop · Tótem"),
+        ):
+            ttk.Radiobutton(
+                options, text=title, variable=role, value=identifier,
+            ).pack(side="left", padx=(0, 12))
+        url = url_visible(ip_lan(), self.port)
+        current = tk.StringVar(value="")
+        builds = tk.StringVar(value="")
+        steps = tk.Text(
+            pane, height=11, wrap="word", background="#f4f7fc",
+            foreground="#223048", relief="flat", padx=14, pady=12,
+            font=("Arial", 10),
+        )
+        steps.pack(fill="both", expand=True)
+        ttk.Label(pane, textvariable=current, wraplength=615).pack(
+            anchor="w", pady=(11, 3),
+        )
+        ttk.Label(pane, textvariable=builds, wraplength=615).pack(
+            anchor="w", pady=(0, 6),
+        )
+        actions = ttk.Frame(pane)
+        actions.pack(fill="x", pady=(6, 0))
+        copy_button = ttk.Button(actions, text="Copiar enlace")
+        copy_button.pack(side="left", padx=(0, 7))
+        web_button = ttk.Button(actions, text="Abrir tienda")
+        web_button.pack(side="left", padx=(0, 7))
+        export_button = ttk.Button(actions, text="Exportar kit de conexión…")
+        export_button.pack(side="left", padx=(0, 7))
+        build_button = ttk.Button(actions, text="Ver ejecutables")
+        build_button.pack(side="left", padx=(0, 7))
+        setup_button = ttk.Button(pane, text="Configurar HTTPS local", command=self.configure_https_ip)
+        setup_button.pack(anchor="w", pady=(12, 0))
+
+        def refresh(*_):
+            selected = role.get()
+            available = kits.listar_instaladores()
+            role_builds = available[selected]
+            if selected == "servidor":
+                detail = (
+                    "1. Este equipo ejecuta POS Server y conserva la base SQLite.\n"
+                    "2. Configurá HTTPS local desde el botón inferior.\n"
+                    "3. Abrí la consola y creá las cajas y tótems.\n"
+                    "4. Desde este asistente podés preparar kits para otras PCs.\n\n"
+                    "La app POS Server se empaquetará junto a POS y Tauri "
+                    "en el instalador unificado de distribución."
+                )
+            elif selected == "pos":
+                detail = (
+                    "1. Instalá el POS de escritorio en la caja.\n"
+                    "2. Importá la CA pública del comercio, aprobando su huella.\n"
+                    "3. Configurá la conexión con el servidor HTTPS y "
+                    "la clave LAN copiada directamente por el administrador.\n"
+                    "4. Iniciá sesión con un operador y sus permisos de caja.\n\n"
+                    "El kit no contiene contraseñas ni clave LAN."
+                )
+            else:
+                detail = (
+                    "1. La tienda web puede abrirse desde cualquier PC/táctil.\n"
+                    "2. Para el instalador Tauri Windows, debe existir un "
+                    "ejecutable compilado y probado en «Ver ejecutables».\n"
+                    "3. Importá el certificado del comercio con su huella verificada.\n"
+                    "4. POS Server identifica el tótem y autoriza el navegador "
+                    "con un código de uso único.\n\n"
+                    "Cambiar de navegador no cambia su ID ni su asociación QR."
+                )
+            steps.configure(state="normal")
+            steps.delete("1.0", "end")
+            steps.insert("1.0", detail)
+            steps.configure(state="disabled")
+            if not url.startswith("https://"):
+                current.set(
+                    "Estado: HTTPS todavía no activo. Usá «Configurar HTTPS local» "
+                    "antes de distribuir kits de producción."
+                )
+            else:
+                current.set("Servidor: " + url + " · Acceso con certificado LAN privado")
+            builds.set(
+                "Instaladores encontrados: " +
+                (", ".join(entry["nombre"] for entry in role_builds) if role_builds
+                 else "ninguno compilado para este perfil.")
+            )
+            export_button.configure(state="normal" if url.startswith("https://")
+                                    and selected in ("pos", "totem") else "disabled")
+            copy_button.configure(state="normal" if selected == "totem" else "disabled")
+            web_button.configure(state="normal" if selected == "totem" else "disabled")
+            build_button.configure(state="normal" if role_builds else "disabled")
+
+        def copy_link():
+            # Sólo URL, nunca token, contraseña o código temporal en query.
+            link = url + "/intrashop/"
+            window.clipboard_clear()
+            window.clipboard_append(link)
+            messagebox.showinfo("Enlace copiado", link, parent=window)
+
+        def export_kit():
+            if not self._autorizar_kit_instalacion():
+                return
+            target = filedialog.asksaveasfilename(
+                parent=window, title="Exportar kit público de conexión",
+                initialfile=f"intrashop-conexion-{role.get()}.zip",
+                defaultextension=".zip",
+                filetypes=[("Kit de conexión ZIP", "*.zip")],
+            )
+            if not target:
+                return
+            try:
+                result = kits.crear_kit_conexion(Path(target), url, role.get())
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("Kit no generado", str(exc), parent=window)
+                return
+            messagebox.showinfo(
+                "Kit de conexión creado",
+                "Se generó el kit sin contraseñas ni tokens:\n"
+                + result["archivo"] + "\n\n"
+                "Huella de CA: " + result["sha256_ca"] +
+                "\n\nVerificala en la PC cliente antes de aprobar el certificado.",
+                parent=window,
+            )
+
+        def view_builds():
+            found = kits.listar_instaladores().get(role.get(), [])
+            if not found:
+                messagebox.showinfo(
+                    "Sin ejecutables publicados",
+                    "Aún no hay compilaciones disponibles. El sistema "
+                    "no genera ni anuncia enlaces de descarga falsos.",
+                    parent=window,
+                )
+                return
+            # Se abre la carpeta local de builds que maneja el administrador,
+            # no se publica por una API anónima de la LAN.
+            import subprocess
+            import os
+            directory = str(kits.BUILD_DIR)
+            try:
+                if os.name == "nt":
+                    os.startfile(directory)
+                elif shutil.which("xdg-open"):
+                    subprocess.Popen(["xdg-open", directory])
+                else:
+                    raise OSError("No hay explorador de archivos instalado.")
+            except OSError as exc:
+                messagebox.showerror("Ejecutables", str(exc), parent=window)
+
+        copy_button.configure(command=copy_link)
+        web_button.configure(command=lambda: webbrowser.open(url + "/intrashop/"))
+        export_button.configure(command=export_kit)
+        build_button.configure(command=view_builds)
+        role.trace_add("write", refresh)
+        refresh()
 
     def configure_admin_password(self):
         """Inicialización/rotación local física del administrador del POS."""
