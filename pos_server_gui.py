@@ -316,7 +316,7 @@ class ServerConsole:
         ):
             return
         terminals = (
-            (["konsole", "-e"] if shutil.which("konsole") else None),
+            (["konsole", "--hold", "-e"] if shutil.which("konsole") else None),
             (["gnome-terminal", "--"] if shutil.which("gnome-terminal") else None),
             (["x-terminal-emulator", "-e"] if shutil.which("x-terminal-emulator") else None),
         )
