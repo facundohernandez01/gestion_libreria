@@ -63,12 +63,12 @@ def test_cliente_no_autentica_con_clave_de_config_local(monkeypatch):
     assert _login_validator()(FalsoServidorRechazaLogin(), "admin", "admin") is False
 
 
-def test_local_mantiene_fallback_compatibilidad(tmp_path, monkeypatch):
+def test_local_no_permite_bypass_legacy_admin_admin(tmp_path, monkeypatch):
     monkeypatch.setenv("POS_API_ONLY", "0")
     monkeypatch.setenv("INTRASHOP_EDITION", "0")
     monkeypatch.setenv("MODO_RED", "local")
     monkeypatch.setattr(db_factory.settings, "db_path", str(tmp_path / "local.db"))
-    assert _login_validator()(FalsoServidorRechazaLogin(), "admin", "admin") is True
+    assert _login_validator()(FalsoServidorRechazaLogin(), "admin", "admin") is False
 
 
 def test_auth_cliente_distingue_rechazo_401_de_caida_servidor(monkeypatch):
