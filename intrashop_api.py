@@ -14,7 +14,7 @@ import uuid
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, Header, HTTPException, Depends, Request, BackgroundTasks
+from fastapi import APIRouter, Header, HTTPException, Depends, Request, Response, BackgroundTasks
 from pos_auth import require_config
 import intrashop_checkout_store as checkout_store
 from fastapi.responses import FileResponse
@@ -1425,6 +1425,74 @@ def registrar_totem_obsoleto():
     raise HTTPException(410, "El alta desde el navegador fue deshabilitada. Configurá el tótem en POS Server.")
 
 
+class PairDeviceIn(BaseModel):
+    codigo: str = Field(min_length=8, max_length=25)
+
+
+_pair_failures: dict[str, tuple[int, int]] = {}
+_pair_lock = threading.RLock()
+
+
+@router.post("/totems/pair")
+def emparejar_dispositivo(body: PairDeviceIn, request: Request, response: Response):
+    """Canje de código local de un solo uso; cookie HttpOnly, no localStorage."""
+    from services.intrashop_totem_registry import ip_cliente
+    from services import intrashop_totem_auth as auth
+
+    auth.exigir_https(request)
+    origin = request.headers.get("origin", "")
+    if origin and origin != str(request.base_url).rstrip("/"):
+        raise HTTPException(403, "El emparejamiento debe hacerse desde esta tienda.")
+    ip = ip_cliente(request)
+    now = int(time.time())
+    with _pair_lock:
+        fails, ts = _pair_failures.get(ip, (0, now))
+        if now - ts > 600:
+            fails, ts = 0, now
+        if fails >= 5:
+            raise HTTPException(429, "Demasiados intentos. Esperá 10 minutos.")
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        from intrashop_entregas import ensure_schema
+        ensure_schema(conn)
+        try:
+            totem_id, token = auth.canjear_codigo(conn, ip, body.codigo)
+        except ValueError as exc:
+            with _pair_lock:
+                _pair_failures[ip] = (fails + 1, ts)
+            raise HTTPException(403, str(exc)) from exc
+        conn.commit()
+    with _pair_lock:
+        _pair_failures.pop(ip, None)
+    response.set_cookie(
+        key=auth.COOKIE, value=token, httponly=True,
+        secure=request.url.scheme == "https", samesite="strict",
+        max_age=auth.SESSION_TTL, path="/tienda",
+    )
+    return {"ok": True, "totem_id": totem_id}
+
+
+def _exigir_checkout_owner(checkout_id: str, request: Request) -> None:
+    """Un UUID encontrado en la red nunca es autorización para ver/cancelar QR."""
+    from services.intrashop_totem_registry import ip_cliente, resolve_ip
+    from services import intrashop_totem_auth as auth
+
+    auth.exigir_https(request)
+    ip = ip_cliente(request)
+    with _connect() as conn:
+        from intrashop_entregas import ensure_schema
+        ensure_schema(conn)
+        row = conn.execute(
+            "SELECT totem_id FROM intrashop_checkouts WHERE id=?", (checkout_id,)
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Pedido inexistente")
+        device = resolve_ip(conn, ip)
+        if (not device or device["id"] != row["totem_id"] or
+                not auth.autorizado(conn, ip, device["id"], request.cookies.get(auth.COOKIE))):
+            raise HTTPException(403, "Dispositivo no autorizado para este pedido.")
+
+
 @router.get("/totems/identity")
 def identidad_totem(request: Request):
     """Resolver por IP de origen observada. No crea ni cambia nombres."""
@@ -1441,7 +1509,8 @@ def identidad_totem(request: Request):
         row = resolve_ip(conn, ip)
         if not row:
             return {
-                "paired": False, "ip": ip, "id": None, "nombre": None,
+                "paired": False, "authorized": False, "ip": ip,
+                "id": None, "nombre": None,
                 "qr_assigned": False,
                 "message": "Equipo sin vincular. Asigná esta IP a un tótem en POS Server.",
             }
@@ -1455,9 +1524,14 @@ def identidad_totem(request: Request):
             "WHERE terminal_id=? AND terminal_type='totem' AND qr_url<>''",
             (row["id"],),
         ).fetchone()
+        from services import intrashop_totem_auth as auth
+        authorized = auth.autorizado(
+            conn, ip, row["id"], getattr(request, "cookies", {}).get(auth.COOKIE),
+        )
         conn.commit()
     return {
-        "paired": True, "ip": ip, "id": row["id"], "nombre": row["nombre"],
+        "paired": True, "authorized": authorized,
+        "ip": ip, "id": row["id"], "nombre": row["nombre"],
         "qr_assigned": bool(assigned),
     }
 
@@ -1612,6 +1686,11 @@ def iniciar_checkout(body: CheckoutIn, request: Request = None):
             raise HTTPException(403, "Esta IP no está vinculada a un tótem en POS Server.")
         if body.totem_id != identified["id"]:
             raise HTTPException(403, "El ID del tótem no coincide con la IP confirmada en POS Server.")
+        from services import intrashop_totem_auth as auth
+        auth.exigir_https(request)
+        with _connect() as conn:
+            if not auth.autorizado(conn, ip, body.totem_id, request.cookies.get(auth.COOKIE)):
+                raise HTTPException(403, "Vinculá este navegador con un código temporal de POS Server.")
     cart, total = _load_cart(body.items)
     if not settings.mp_activo:
         raise HTTPException(503, "Mercado Pago está deshabilitado en la configuración del POS")
@@ -1659,7 +1738,9 @@ def iniciar_checkout(body: CheckoutIn, request: Request = None):
 
 
 @router.post("/checkout/{checkout_id}/cancel")
-def cancelar_checkout(checkout_id: str):
+def cancelar_checkout(checkout_id: str, request: Request = None):
+    if request is not None:
+        _exigir_checkout_owner(checkout_id, request)
     with _connect() as conn:
         checkout_store.ensure_schema(conn)
         provider = conn.execute(
@@ -1743,7 +1824,9 @@ def cancelar_checkout(checkout_id: str):
 
 
 @router.get("/checkout/{checkout_id}")
-def estado_checkout(checkout_id: str):
+def estado_checkout(checkout_id: str, request: Request = None):
+    if request is not None:
+        _exigir_checkout_owner(checkout_id, request)
     with _jobs_lock:
         job = _jobs.get(checkout_id)
         if not job:
