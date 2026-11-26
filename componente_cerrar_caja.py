@@ -193,7 +193,8 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
         pendientes.visible = n > 0
         pendientes.value = (
             f"Hay {n} cobro(s) IntraShop sin resolver. "
-            "La caja no puede cerrarse hasta completarlos o conciliarlos."
+            "Para resolverlos, abrí POS Server → Conciliación. "
+            "La caja permanecerá abierta hasta que se regularicen."
             if n else ""
         )
         actualizar_diferencia()
