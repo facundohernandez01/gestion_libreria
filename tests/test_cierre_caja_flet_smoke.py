@@ -20,7 +20,14 @@ class DummyPage:
         return fn(*args)
 
     def show_dialog(self, control):
+        assert not control.open, "Flet show_dialog exige un diálogo no abierto"
         self.dialogs.append(control)
+        control.open = True
+
+    def pop_dialog(self):
+        result = self.dialogs.pop()
+        result.open = False
+        return result
 
 
 class DummyDb:
@@ -65,6 +72,11 @@ def test_modal_flet_104_se_crea_calcula_y_cierra():
     db, page, calls = DummyDb(), DummyPage(), []
     modal = CerrarCajaModal(db, 2, lambda: calls.append("cerrada"), page)
     assert isinstance(modal, ft.AlertDialog)
+    assert not modal.open
+    assert page.updated == 0
+    assert "cargar_resumen" in modal.data
+    page.show_dialog(modal)
+    page.run_thread(modal.data["cargar_resumen"])
     assert modal.open
     campos = [x for x in _walk(modal) if isinstance(x, ft.TextField)]
     contados = [x for x in campos if x.label == "Efectivo contado en el cajón"]
