@@ -168,6 +168,7 @@ class ServerConsole:
             "Información de conexión", self.url.get(), parent=self.root))
         advanced.add_command(label="Configurar HTTPS local", command=self.configure_https_ip)
         advanced.add_command(label="Copiar clave LAN", command=self.copy_lan_key)
+        settings_menu.add_command(label="Cajas vinculadas", command=self.administrar_cajas_vinculadas)
         settings_menu.add_cascade(label="Diagnóstico avanzado", menu=advanced)
         settings_button.configure(menu=settings_menu)
         settings_button.pack(side="right")
@@ -392,6 +393,58 @@ class ServerConsole:
         self._admin_unlock_until = time.monotonic() + 10 * 60
         return True
 
+    def generar_codigo_pos(self):
+        from services.lan_https import habilitado
+        from services.pos_device_credentials import emitir_codigo
+        if not habilitado():
+            messagebox.showinfo("Vincular caja", "Prepará primero la conexión segura.", parent=self.root)
+            return
+        if not self._autorizar_kit_instalacion():
+            return
+        nombre = simpledialog.askstring("Vincular caja", "Nombre de la caja:", parent=self.root)
+        if not nombre:
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                code = emitir_codigo(conn, nombre)
+            messagebox.showinfo("Código de vinculación", "Ingresá este código en el POS cliente. Válido 10 minutos y de un solo uso.\n\n" + code, parent=self.root)
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("Vincular caja", str(exc), parent=self.root)
+
+    def administrar_cajas_vinculadas(self):
+        from services.pos_device_credentials import listar, revocar
+        if not self._autorizar_kit_instalacion():
+            return
+        window = tk.Toplevel(self.root)
+        window.title("Cajas vinculadas")
+        window.geometry("650x350")
+        pane = ttk.Frame(window, padding=12)
+        pane.pack(fill="both", expand=True)
+        table = self._table(pane, [("nombre", "Caja", 180), ("id", "Identificador", 280), ("estado", "Estado", 110)])
+
+        def refresh():
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                rows = listar(conn)
+            table.delete(*table.get_children())
+            for tid, nombre, _, revoked in rows:
+                table.insert("", "end", values=(nombre, tid, "Revocada" if revoked else "Autorizada"))
+
+        def retirar():
+            selected = table.selection()
+            if not selected:
+                return
+            nombre, tid, _ = table.item(selected[0], "values")
+            if not messagebox.askyesno("Revocar credencial", "¿Revocar la credencial individual de " + nombre + "? No se eliminan ventas ni QR.", parent=window):
+                return
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                revocar(conn, tid)
+            refresh()
+
+        ttk.Button(pane, text="Revocar credencial", command=retirar).pack(anchor="w", pady=8)
+        refresh()
+
     def distribution_wizard(self):
         """Asistente de primera conexión POS/Server/Tótem con artefactos reales.
 
@@ -455,6 +508,7 @@ class ServerConsole:
         advanced_button = ttk.Menubutton(pane, text="Ayuda de conexión")
         advanced_menu = tk.Menu(advanced_button, tearoff=0)
         advanced_menu.add_command(label="Preparar conexión segura", command=self.configure_https_ip)
+        advanced_menu.add_command(label="Generar código para caja", command=self.generar_codigo_pos)
         advanced_menu.add_command(label="Información técnica", command=lambda: messagebox.showinfo(
             "Información técnica", url, parent=window))
         advanced_button.configure(menu=advanced_menu)
