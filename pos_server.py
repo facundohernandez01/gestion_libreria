@@ -4,6 +4,7 @@ import logging
 import os
 
 from core.settings import settings
+from services.lan_https import host_backend, opciones_uvicorn
 
 
 def main() -> None:
@@ -15,13 +16,17 @@ def main() -> None:
     args = parser.parse_args()
     os.environ["POS_API_ONLY"] = "1"
     logging.basicConfig(level=getattr(logging, settings.log_level, logging.INFO))
+    # En HTTPS solo Caddy recibe conexiones LAN. Se ignora --host 0.0.0.0
+    # para evitar que se exponga accidentalmente el backend por HTTP.
+    backend_host = host_backend(args.host)
     if not args.headless:
         from pos_server_gui import ServerConsole
-        ServerConsole(host=args.host, port=args.port).run()
+        ServerConsole(host=backend_host, port=args.port).run()
         return
     import uvicorn
     from api_server import app
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    uvicorn.run(app, host=backend_host, port=args.port, log_level="info",
+                **opciones_uvicorn())
 
 
 if __name__ == "__main__":
