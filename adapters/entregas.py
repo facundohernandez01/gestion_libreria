@@ -4,6 +4,7 @@ Todo acceso a entregas se realiza por la API del servidor: no se abren
 archivos SQLite en los clientes. El contrato es independiente del motor SQL.
 """
 import httpx
+from services.client_tls import opciones_http
 from core.settings import settings
 
 
@@ -35,7 +36,7 @@ class EntregasAdapter:
         response = httpx.request(
             method, self.base_url + "/tienda/admin/entregas" + path,
             headers={"Authorization": "Bearer " + (_session_token or ""), "X-Terminal-Id": terminal_id()},
-            timeout=self.timeout, **kwargs,
+            timeout=self.timeout, **(opciones_http(self.base_url) if self.modo == "cliente" else {"trust_env": False}), **kwargs,
         )
         response.raise_for_status()
         return response.json()
