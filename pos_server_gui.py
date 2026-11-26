@@ -149,6 +149,7 @@ class ServerConsole:
         for label, action in (("Iniciar servidor", self.start), ("Detener servidor", self.stop),
                               ("Abrir tienda", self.open_intrashop), ("Abrir administración", self.open_admin),
                               ("Copiar clave LAN", self.copy_lan_key),
+                              ("Clave ADMIN", self.configure_admin_password),
                               ("Actualizar", self.refresh)):
             ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 8))
         ttk.Label(page, textvariable=self.summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
@@ -246,6 +247,77 @@ class ServerConsole:
         finally:
             menu.grab_release()
             menu.destroy()
+
+    def configure_admin_password(self):
+        """Inicialización/rotación local física del administrador del POS."""
+        from services.passwords import hash_password, validar_nueva_clave
+        from database_manager import DatabaseManager
+
+        first = simpledialog.askstring(
+            "Contraseña ADMIN segura",
+            "Nueva contraseña del administrador (mínimo 12 caracteres):",
+            show="*", parent=self.root,
+        )
+        if first is None:
+            return
+        second = simpledialog.askstring(
+            "Confirmar contraseña ADMIN",
+            "Repetí la contraseña para confirmar:",
+            show="*", parent=self.root,
+        )
+        if second is None:
+            return
+        try:
+            validar_nueva_clave(first)
+            if first != second:
+                raise ValueError("Las contraseñas no coinciden.")
+        except ValueError as exc:
+            messagebox.showerror("Contraseña ADMIN", str(exc), parent=self.root)
+            return
+        if not messagebox.askyesno(
+            "Confirmar cambio ADMIN",
+            "Esta operación reemplaza la clave del primer usuario ADMIN "
+            "del servidor y lo activa. Revocará las sesiones abiertas y "
+            "deshabilitará el acceso por clave legacy.\n\n"
+            "¿Aplicar la contraseña nueva?",
+            parent=self.root,
+        ):
+            return
+        try:
+            DatabaseManager(settings.db_path)
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """SELECT u.id,u.usuario FROM usuarios u
+                       JOIN roles r ON r.id=u.rol_id
+                       WHERE r.es_admin=1 ORDER BY u.id LIMIT 1"""
+                ).fetchone()
+                if row is None:
+                    raise ValueError("No existe el usuario ADMIN.")
+                conn.execute(
+                    "UPDATE usuarios SET clave=?,activo=1,"
+                    "fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?",
+                    (hash_password(first), row["id"]),
+                )
+                # El acceso legacy ya no se usa; no retener la antigua clave
+                # en texto plano dentro de config.
+                conn.execute("DELETE FROM config WHERE clave='LOGIN_CLAVE'")
+                conn.commit()
+            from pos_auth import _sessions, _lock
+            with _lock:
+                _sessions.clear()
+            self.notice.set(
+                "Contraseña ADMIN actualizada y sesiones anteriores revocadas."
+            )
+            messagebox.showinfo(
+                "ADMIN configurado",
+                f"Se activó el usuario «{row['usuario']}» con la contraseña nueva.",
+                parent=self.root,
+            )
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo configurar ADMIN", str(exc),
+                                 parent=self.root)
 
     def copy_lan_key(self):
         """La clave se entrega sólo a un operador con acceso físico a esta PC."""
