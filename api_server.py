@@ -821,7 +821,17 @@ def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
 def api_agregar_gasto(caja_id: int, body: dict, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
     with _write_lock:
-        return {"id": _gestor_reposicion().agregar_gasto(caja_id, body["monto"], body["concepto"])}
+        try:
+            importe, concepto = body["monto"], body["concepto"]
+        except KeyError:
+            raise HTTPException(422, "Indicá monto y concepto del gasto.") from None
+        gasto_id = _gestor_reposicion().agregar_gasto(caja_id, importe, concepto)
+        if not gasto_id:
+            raise HTTPException(
+                409, "No se pudo registrar el gasto. Comprobá que la caja siga abierta "
+                     "y que el importe sea válido.",
+            )
+        return {"id": gasto_id}
 
 
 @app.get("/admin/datos/conteos")
