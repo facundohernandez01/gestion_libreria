@@ -139,6 +139,17 @@ permitir que cualquier equipo de la red configure el Caddy.
 - En POS cliente → **Configurar conexión LAN**: usar
   `https://pos.home.arpa`, sin `:8000`. Configurar la clave LAN en el
   archivo local privado de la terminal y reiniciar el POS.
+- **POS Python con httpx:** HTTPX puede utilizar su propia colección
+  `certifi` en lugar del almacén de certificados del sistema. En un POS
+  cliente Ubuntu, después de `update-ca-certificates`, definir
+  `SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt` en el entorno del
+  proceso POS (o en su archivo de entorno), y comprobar la conexión al
+  servidor. Ese bundle incluye las CAs públicas y la raíz instalada de
+  IntraShop. **No utilizar `verify=False` ni deshabilitar certificados.**
+  En Windows, usar un bundle PEM con las CAs públicas más la CA local
+  o un cliente HTTP configurado para usar el almacén de certificados del
+  sistema; instalar la CA en Windows por sí sola no garantiza que HTTPX
+  la utilice.
 - En cada tótem: entrar a `https://pos.home.arpa/intrashop/`, verificar la
   identidad IP desde POS Server, asignar el QR y luego generar el código
   temporal de emparejamiento. La cookie HttpOnly no sustituye el certificado.
