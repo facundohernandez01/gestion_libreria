@@ -69,7 +69,7 @@ def _default_secure_api_key(db_path: str) -> str:
     client_key_file = Path.home() / ".config" / "intrashop" / "client_api_key"
     try:
         client_key = client_key_file.read_text(encoding="utf-8").strip()
-        if len(client_key) >= 32:
+        if len(client_key) >= 32 and not client_key.startswith("posd_"):
             return client_key
     except FileNotFoundError:
         pass
@@ -96,12 +96,41 @@ def _default_secure_api_key(db_path: str) -> str:
     return new_key
 
 
+def credencial_pos_local():
+    """Credencial individual, separada de la clave compartida del servidor."""
+    from pathlib import Path
+    path = Path.home() / ".config" / "intrashop" / "pos_device_key"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    if not value.startswith("posd_") or len(value) != 53:
+        raise ValueError("Credencial de terminal inválida. Volvé a vincular la caja.")
+    return value
+
+
+def guardar_credencial_pos(value: str):
+    from pathlib import Path
+    import tempfile
+    if not value.startswith("posd_") or len(value) != 53:
+        raise ValueError("Credencial de terminal inválida.")
+    directory = Path.home() / ".config" / "intrashop"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temp = tempfile.mkstemp(dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(value)
+        os.replace(temp, directory / "pos_device_key")
+    finally:
+        Path(temp).unlink(missing_ok=True)
+
+
 def guardar_clave_lan_local(value: str) -> None:
     """Configurar conexión POS remota desde la terminal, sin imprimir secreto."""
     from pathlib import Path
 
     value = (value or "").strip()
-    if len(value) < 32 or value == "libreria-lan":
+    if len(value) < 32 or value == "libreria-lan" or value.startswith("posd_"):
         raise ValueError("Pegá la clave segura de POS Server (mínimo 32 caracteres).")
     directory = Path.home() / ".config" / "intrashop"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
