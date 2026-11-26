@@ -147,4 +147,12 @@ def crear_kit_conexion(
         archive.writestr("conexion.json", json.dumps(manifest, indent=2, ensure_ascii=False))
         archive.writestr("intrashop-root-ca.crt", pem)
         archive.writestr("INSTRUCCIONES.txt", text)
+        if rol == "totem":
+            # Acceso directo web Windows sin instalar Tauri ni claves.
+            # El navegador igualmente necesita confiar en la CA del comercio.
+            archive.writestr(
+                "Abrir-IntraShop.url",
+                "[InternetShortcut]\\r\\nURL="
+                + safe_url + "/intrashop/\\r\\n",
+            )
     return {"archivo": str(dest), "url": safe_url, "sha256_ca": sha, "perfil": rol}
