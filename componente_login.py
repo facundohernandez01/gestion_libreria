@@ -88,13 +88,15 @@ def validar_login(db_manager, usuario: str, clave: str) -> bool:
         # Fallar cerrado: config local jamás sustituye al login del servidor.
         return False
     try:
-        user_ok = (db_manager.get_config_value("LOGIN_USUARIO")
-                   or _USUARIO_DEFAULT).strip()
-        clave_ok = (db_manager.get_config_value("LOGIN_CLAVE")
-                    or _CLAVE_DEFAULT).strip()
+        user_ok = (db_manager.get_config_value("LOGIN_USUARIO") or "").strip()
+        clave_ok = (db_manager.get_config_value("LOGIN_CLAVE") or "").strip()
     except Exception:
-        user_ok, clave_ok = _USUARIO_DEFAULT, _CLAVE_DEFAULT
-    return (usuario or "").strip() == user_ok and (clave or "").strip() == clave_ok
+        return False
+    # Sin credenciales configuradas no existe un superusuario implícito
+    # admin/admin. El alta inicial debe pasar por el flujo de primer uso.
+    return bool(user_ok and clave_ok) and (
+        (usuario or "").strip() == user_ok and (clave or "").strip() == clave_ok
+    )
 
 
 def LoginView(db_manager, on_login, page: ft.Page):
@@ -111,8 +113,8 @@ def LoginView(db_manager, on_login, page: ft.Page):
     error_text = ft.Text("", size=12, color=N.RED_400, visible=False)
     configurado = credenciales_configuradas(db_manager)
     ayuda = ft.Text(
-        "Usuario inicial: «admin», clave «admin». Cambiala desde "
-        "ROLES Y USUARIOS."
+        "No hay usuarios configurados. Completá el asistente de primer uso "
+        "desde administración del POS."
         if not configurado else
         "Ingresá con el usuario y la clave asignados por el administrador.",
         size=11, italic=True, color=N.GREY_500,
