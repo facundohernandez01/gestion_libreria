@@ -3,7 +3,6 @@ import sqlite3
 
 import pytest
 
-import api_server as server
 from database_manager import DatabaseManager
 from services.passwords import hash_password, check_password, validar_nueva_clave
 
@@ -75,6 +74,8 @@ def test_login_recordado_elimina_clave_del_archivo(tmp_path, monkeypatch):
 
 
 def test_config_lan_no_entrega_ni_permite_modificar_secretos(tmp_path, monkeypatch):
+    import api_server as server
+
     path = str(tmp_path / "safe.db")
     DatabaseManager(path)
     monkeypatch.setattr(server, "DB_PATH", path)
