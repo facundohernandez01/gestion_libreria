@@ -183,6 +183,51 @@ def LoginView(db_manager, on_login, page: ft.Page):
             hint_text="Pegá la clave copiada desde POS Server",
         )
         estado = ft.Text("La clave se guarda en archivo privado de esta terminal (0600), nunca en la URL.", size=12, color=N.AMBER_400)
+        candidatos = ft.Dropdown(label="Servidores encontrados (sin verificar)", width=290,
+            visible=False, options=[])
+        buscar = ft.TextButton("Buscar servidor", icon=ft.Icons.SEARCH)
+        progreso = ft.ProgressRing(width=20, height=20, visible=False)
+
+        def seleccionar_servidor(e):
+            if candidatos.value:
+                url.value = candidatos.value
+                clave.value = ""
+                estado.value = ("Servidor detectado, no autenticado. Confirmá su dirección "
+                                "en POS Server antes de guardar o ingresar credenciales. "
+                                "La búsqueda HTTP no establece una conexión segura.")
+                page.update()
+
+        candidatos.on_change = seleccionar_servidor
+
+        async def buscar_servidores(e):
+            import asyncio
+            from server_manager import escanear_servidor
+            from core.settings import settings
+            buscar.disabled = True
+            progreso.visible = True
+            candidatos.visible = False
+            candidatos.value = None
+            candidatos.options = []
+            estado.value = "Buscando servidores en tu red…"
+            page.update()
+            try:
+                encontrados = await asyncio.to_thread(
+                    escanear_servidor, puerto=settings.api_port)
+                candidatos.options = [ft.dropdown.Option(x, x) for x in encontrados]
+                candidatos.visible = bool(encontrados)
+                estado.value = ("Seleccioná tu servidor y verificá su dirección antes de guardar."
+                                if encontrados else
+                                "No se encontraron servidores HTTP. Si usás conexión segura, "
+                                "utilizá la dirección indicada por POS Server.")
+            except Exception:
+                estado.value = "No se pudo buscar el servidor. Revisá la conexión de red."
+            finally:
+                buscar.disabled = False
+                progreso.visible = False
+                page.update()
+
+        buscar.on_click = buscar_servidores
+
         def guardar(e):
             try:
                 if (clave.value or "").strip():
@@ -199,7 +244,7 @@ def LoginView(db_manager, on_login, page: ft.Page):
             estado.value = "Configuración guardada. Reiniciá el POS."
             page.update()
         dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
-            content=ft.Column([modo, url, clave, estado], tight=True, spacing=12),
+            content=ft.Column([modo, ft.Row([buscar, progreso]), candidatos, url, clave, estado], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
                      ft.FilledButton("Guardar", on_click=guardar)])
         abrir_dialogo(page, dlg)
@@ -218,7 +263,7 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "INGRESAR", icon=ft.Icons.LOGIN, width=320, height=46,
                 style=BTN_PRIMARIO, on_click=ingresar),
             ayuda,
-            ft.TextButton("Configurar conexión LAN de esta terminal", icon=ft.Icons.SETTINGS_ETHERNET, on_click=configurar_red),
+            ft.TextButton("Conectar con mi comercio", icon=ft.Icons.SETTINGS_ETHERNET, on_click=configurar_red),
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
         padding=32, border_radius=14, width=400,
         bgcolor=ft.Colors.with_opacity(0.55, N.DEEP),
