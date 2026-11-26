@@ -52,8 +52,8 @@ def generar_codigo(conn: sqlite3.Connection, totem_id: str) -> str:
         "SELECT id,ip_vinculada FROM intrashop_totems "
         "WHERE id=? AND retirado=0", (totem_id,),
     ).fetchone()
-    if not row or not row["ip_vinculada"]:
-        raise ValueError("Primero vinculá una IP al tótem activo.")
+    if not row:
+        raise ValueError("Seleccioná un tótem activo.")
     code = "".join(secrets.choice(ALPHABET) for _ in range(10))
     conn.execute(
         """INSERT INTO intrashop_totem_pair_codes(totem_id,code_hash,expires_at)
@@ -66,22 +66,33 @@ def generar_codigo(conn: sqlite3.Connection, totem_id: str) -> str:
 
 
 def canjear_codigo(conn: sqlite3.Connection, ip: str, codigo: str) -> tuple[str, str]:
-    """Llamar con BEGIN IMMEDIATE. No emitir cookie para otra IP."""
-    from services.intrashop_totem_registry import resolve_ip
+    """Llamar con BEGIN IMMEDIATE. Vincular por código, sin desplazar puestos."""
+    from services.intrashop_totem_registry import resolve_ip, vincular_ip
 
     ensure_schema(conn)
-    totem = resolve_ip(conn, ip)
-    if not totem:
-        raise ValueError("La IP de este equipo no está vinculada a ningún tótem.")
     clean = (codigo or "").upper().replace("-", "").replace(" ", "")
-    row = conn.execute(
-        "SELECT code_hash,expires_at FROM intrashop_totem_pair_codes WHERE totem_id=?",
-        (totem["id"],),
-    ).fetchone()
-    if not row or row["expires_at"] < int(time.time()) or len(clean) != 10:
+    if len(clean) != 10:
         raise ValueError("Código incorrecto o vencido.")
-    if not hmac.compare_digest(_digest(clean), row["code_hash"]):
+    # El código identifica un puesto preexistente, no crea dispositivos.
+    # Una dirección ya asignada jamás desplaza a otro puesto.
+    rows = conn.execute(
+        """SELECT p.totem_id,p.code_hash,t.ip_vinculada
+           FROM intrashop_totem_pair_codes p
+           JOIN intrashop_totems t ON t.id=p.totem_id
+           WHERE p.expires_at>? AND t.retirado=0""", (int(time.time()),),
+    ).fetchall()
+    matches = [r for r in rows if hmac.compare_digest(_digest(clean), r["code_hash"])]
+    if len(matches) != 1:
         raise ValueError("Código incorrecto o vencido.")
+    row = matches[0]
+    totem = {"id": row["totem_id"]}
+    existing = resolve_ip(conn, ip)
+    if existing and existing["id"] != totem["id"]:
+        raise ValueError("Este equipo ya está vinculado a otro tótem.")
+    if row["ip_vinculada"] and row["ip_vinculada"] != ip:
+        raise ValueError("El tótem ya tiene otro equipo vinculado. Solicitá al administrador que lo desvincule.")
+    if not row["ip_vinculada"]:
+        vincular_ip(conn, totem["id"], ip)
     session = secrets.token_urlsafe(36)
     conn.execute(
         "DELETE FROM intrashop_totem_pair_codes WHERE totem_id=?", (totem["id"],),
