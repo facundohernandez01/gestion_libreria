@@ -113,6 +113,21 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespan)
 
+
+@app.middleware("http")
+async def exigir_transporte_seguro(request: Request, call_next):
+    """Protege toda la API, login, Astro, QR y gestión POS al activar HTTPS."""
+    from fastapi.responses import JSONResponse
+    from services.lan_https import habilitado
+
+    if habilitado() and request.url.scheme != "https":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Conexión insegura. Abrí la tienda por HTTPS."},
+        )
+    return await call_next(request)
+
+
 # Servir Astro desde el mismo puerto, incluso si pnpm build se ejecuta
 # después de arrancar Uvicorn. El montaje anterior solo se registraba
 # al importar api_server si ya existía dist/index.html: en otro orden de
@@ -633,8 +648,10 @@ def ventas_por_dia(desde: str, hasta: str, x_api_key: str | None = Header(defaul
 
 def run(host: str = "0.0.0.0", port: int = 8000):
     import uvicorn
+    from services.lan_https import host_backend, opciones_uvicorn
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host_backend(host), port=port, log_level="info",
+                **opciones_uvicorn())
 
 
 def _montar_flet_web() -> None:
