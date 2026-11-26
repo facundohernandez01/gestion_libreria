@@ -37,6 +37,15 @@ _reconciling: set[str] = set()
 
 def _auth(x_api_key: str | None) -> None:
     import secrets
+    from services.pos_device_credentials import autorizado, modo_estricto
+    from services.lan_https import habilitado
+    with _connect() as conn:
+        if x_api_key and x_api_key.startswith("posd_"):
+            if habilitado() and autorizado(conn, x_api_key):
+                return
+            raise HTTPException(401, "Terminal no autorizada")
+        if modo_estricto(conn):
+            raise HTTPException(401, "Vinculá esta caja mediante un código de POS Server.")
     if not API_KEY or not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="API key inválida")
 

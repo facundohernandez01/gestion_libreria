@@ -413,7 +413,7 @@ class ServerConsole:
             messagebox.showerror("Vincular caja", str(exc), parent=self.root)
 
     def administrar_cajas_vinculadas(self):
-        from services.pos_device_credentials import listar, revocar
+        from services.pos_device_credentials import listar, revocar, modo_estricto, configurar_modo_estricto
         if not self._autorizar_kit_instalacion():
             return
         window = tk.Toplevel(self.root)
@@ -423,9 +423,15 @@ class ServerConsole:
         pane.pack(fill="both", expand=True)
         table = self._table(pane, [("nombre", "Caja", 180), ("id", "Identificador", 280), ("estado", "Estado", 110)])
 
+        policy_label = tk.StringVar()
+        ttk.Label(pane, textvariable=policy_label, wraplength=600).pack(anchor="w", pady=6)
+
         def refresh():
             with sqlite3.connect(settings.db_path, timeout=10) as conn:
                 rows = listar(conn)
+                strict = modo_estricto(conn)
+            policy_label.set("Seguridad estricta activa" if strict else "Compatibilidad: aún se admiten claves compartidas")
+            policy_button.configure(text="Volver a compatibilidad" if strict else "Activar seguridad estricta")
             table.delete(*table.get_children())
             for tid, nombre, _, revoked in rows:
                 table.insert("", "end", values=(nombre, tid, "Revocada" if revoked else "Autorizada"))
@@ -442,7 +448,29 @@ class ServerConsole:
                 revocar(conn, tid)
             refresh()
 
-        ttk.Button(pane, text="Revocar credencial", command=retirar).pack(anchor="w", pady=8)
+        def cambiar_politica():
+            if not self._autorizar_kit_instalacion():
+                return
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                enabled = not modo_estricto(conn)
+            detail = ("Confirmá que TODAS tus cajas fueron vinculadas. Las cajas con claves compartidas perderán acceso. "
+                      "No se modifican ventas ni QR." if enabled else
+                      "Volver a compatibilidad permite nuevamente las claves compartidas. Usalo solo durante una migración.")
+            if not messagebox.askyesno("Cambiar seguridad de cajas", detail, parent=window):
+                return
+            try:
+                with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    configurar_modo_estricto(conn, enabled)
+            except (ValueError, sqlite3.Error) as exc:
+                messagebox.showerror("Seguridad de cajas", str(exc), parent=window)
+            refresh()
+
+        actions = ttk.Frame(pane)
+        actions.pack(fill="x", pady=8)
+        ttk.Button(actions, text="Revocar credencial", command=retirar).pack(side="left")
+        policy_button = ttk.Button(actions, command=cambiar_politica)
+        policy_button.pack(side="right")
         refresh()
 
     def distribution_wizard(self):

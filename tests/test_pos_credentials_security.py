@@ -204,3 +204,26 @@ def test_modo_estricto_bloquea_clave_compartida_y_persiste(tmp_path, monkeypatch
         assert devices.modo_estricto(conn)
         devices.configurar_modo_estricto(conn, False)
     server._auth("legacy-test-key")
+
+
+def test_productos_tienda_respetan_politica_individual(tmp_path, monkeypatch):
+    import intrashop_api as tienda
+    from services import pos_device_credentials as devices
+    path = str(tmp_path / "store-policy.db")
+    DatabaseManager(path)
+    monkeypatch.setattr(tienda, "DB_PATH", path)
+    monkeypatch.setattr(tienda, "API_KEY", "legacy-test-key")
+    monkeypatch.setenv("INTRASHOP_ENFORCE_HTTPS", "1")
+    tienda._auth("legacy-test-key")
+    with sqlite3.connect(path) as conn:
+        key = devices.canjear(conn, devices.emitir_codigo(conn, "Caja"), "caja-" + "d"*32)
+        devices.configurar_modo_estricto(conn, True)
+    with pytest.raises(Exception) as err:
+        tienda._auth("legacy-test-key")
+    assert err.value.status_code == 401
+    tienda._auth(key)
+    with sqlite3.connect(path) as conn:
+        devices.revocar(conn, "caja-" + "d"*32)
+    with pytest.raises(Exception) as err:
+        tienda._auth(key)
+    assert err.value.status_code == 401
