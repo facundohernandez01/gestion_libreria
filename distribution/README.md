@@ -27,3 +27,7 @@ de software ni contiene secretos. Para confiar la CA, el cliente debe
 comprobar la huella mostrada por la consola física del comercio.
 
 Arquitectura y faltantes: [Distribución unificada](../docs/distribucion-unificada.md).
+
+## Compilación automatizada
+
+Ejecutar **IntraShop Suite distribution** desde GitHub Actions. Genera POS y POS Server portables (ZIP) y tótem Tauri (instaladores) para Windows y Linux. El artefacto final `intrashop-suite` conserva la carpeta `distribution/builds/` que reconoce el wizard. Descargar y extraer en una instalación de confianza; no mezclar archivos de diferentes versiones. El manifiesto SHA-256 registra integridad, no sustituye una firma digital. El workflow falla si falta cualquiera de los seis builds. No publica una release ni incluye bases de datos de comercios.
