@@ -151,6 +151,7 @@ class ServerConsole:
                               ("Abrir tienda", self.open_intrashop), ("Abrir administración", self.open_admin),
                               ("Copiar clave LAN", self.copy_lan_key),
                               ("Clave ADMIN", self.configure_admin_password),
+                              ("HTTPS local", self.configure_https_ip),
                               ("Actualizar", self.refresh)):
             ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 8))
         ttk.Label(page, textvariable=self.summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
@@ -248,6 +249,76 @@ class ServerConsole:
         finally:
             menu.grab_release()
             menu.destroy()
+
+    def configure_https_ip(self):
+        """Asistente Ubuntu: instala HTTPS en IP LAN sin DNS ni editar .env."""
+        import shutil
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent / "deploy" / "configurar_https_ip.py"
+        if not script.is_file():
+            messagebox.showerror(
+                "HTTPS local",
+                "El instalador HTTPS no está incluido en esta distribución. "
+                "Actualizá POS Server antes de continuar.",
+                parent=self.root,
+            )
+            return
+        detected = ip_lan()
+        ip = simpledialog.askstring(
+            "HTTPS local sin DNS",
+            "IP fija de esta PC en la red LAN:\n"
+            "No necesitás dominio ni configurar DNS.",
+            initialvalue=detected, parent=self.root,
+        )
+        if ip is None:
+            return
+        try:
+            from ipaddress import IPv4Address
+            ip = str(IPv4Address(ip.strip()))
+            from services.lan_https import url_visible
+            from services.lan_discovery import _subnet_servidor
+            _subnet_servidor(ip)
+        except ValueError as exc:
+            messagebox.showerror("IP LAN inválida", str(exc), parent=self.root)
+            return
+        if not messagebox.askyesno(
+            "Configurar HTTPS gratuito",
+            f"Se preparará HTTPS para https://{ip}/intrashop/.\n\n"
+            "Un asistente instalará/configurará Caddy y creará el .env "
+            "automáticamente. El sistema solicitará permisos de administrador "
+            "una vez. No modifica la base ni los QR.\n\n"
+            "Después tendrás que reiniciar POS Server y autorizar el "
+            "certificado raíz una sola vez en cada tótem o POS cliente.\n\n"
+            "¿Abrir asistente?",
+            parent=self.root,
+        ):
+            return
+        terminals = (
+            (["konsole", "-e"] if shutil.which("konsole") else None),
+            (["gnome-terminal", "--"] if shutil.which("gnome-terminal") else None),
+            (["x-terminal-emulator", "-e"] if shutil.which("x-terminal-emulator") else None),
+        )
+        terminal = next((x for x in terminals if x is not None), None)
+        if not terminal:
+            messagebox.showinfo(
+                "Instalar HTTPS",
+                "No encontré un emulador de terminal. Ejecutá desde "
+                "la carpeta del proyecto:\n\n"
+                f"python3 deploy/configurar_https_ip.py --ip {ip}",
+                parent=self.root,
+            )
+            return
+        # Ejecutar la herramienta como usuario normal: ella invoca sudo
+        # sólo al configurar Caddy. No lanzar Python del proyecto como root.
+        try:
+            command = terminal + [sys.executable, str(script), "--ip", ip]
+            subprocess.Popen(command, cwd=str(script.parent.parent),
+                             close_fds=True, start_new_session=True)
+        except OSError as exc:
+            messagebox.showerror("Asistente HTTPS", str(exc), parent=self.root)
 
     def configure_admin_password(self):
         """Inicialización/rotación local física del administrador del POS."""
