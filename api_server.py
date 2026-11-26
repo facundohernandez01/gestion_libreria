@@ -380,55 +380,49 @@ def abrir_caja(importe_apertura: float = 0.0, observaciones: str = "",
         return {"id": int(cur.lastrowid)}
 
 
-@app.post("/cajas/{caja_id}/cerrar")
-def cerrar_caja(caja_id: int, observaciones: str = "",
-                x_api_key: str | None = Header(default=None)):
-    """Persiste cierre, gastos y ventas reales; rechaza cobros de tótem sin resolver."""
+@app.get("/cajas/{caja_id}/resumen")
+def resumen_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+    """Resumen del turno completo, no solamente ventas del día calendario."""
     _auth(x_api_key)
+    from services.caja_cierre import resumen_caja as calcular
+
     with _tx() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        caja = conn.execute(
-            "SELECT importe_apertura FROM cajas WHERE id=? AND estado='abierta'",
-            (caja_id,),
-        ).fetchone()
-        if caja is None:
-            raise HTTPException(409, "Caja inexistente o ya cerrada")
+        try:
+            return calcular(conn, caja_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
-        # Los cobros de IntraShop tienen reservas persistidas: cerrar antes de
-        # registrar la venta produciría un importe de cierre incorrecto.
-        import intrashop_checkout_store as checkout_store
-        checkout_store.ensure_schema(conn)
-        pending = conn.execute(
-            """SELECT id FROM intrashop_checkouts
-               WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
-               AND (caja_id=? OR caja_id IS NULL) LIMIT 1""",
-            (caja_id,),
-        ).fetchone()
-        if pending:
-            raise HTTPException(
-                409,
-                "Hay cobros IntraShop pendientes; finalizá o conciliá antes de cerrar la caja",
+
+class CierreCajaIn(BaseModel):
+    importe_contado: float | None = None
+    observaciones: str = ""
+
+
+@app.post("/cajas/{caja_id}/cerrar")
+def cerrar_caja(caja_id: int, observaciones: str = "",
+                x_api_key: str | None = Header(default=None),
+                body: CierreCajaIn | None = None):
+    """Arqueo y cierre atómicos; expone el motivo del rechazo por HTTP 409.
+
+    El antiguo contrato con observaciones en query continúa soportado para
+    clientes instalados, pero los nuevos mandan el conteo en el body JSON.
+    """
+    _auth(x_api_key)
+    from services.caja_cierre import cerrar_caja as ejecutar
+
+    with _tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            resultado = ejecutar(
+                conn, caja_id,
+                importe_contado=body.importe_contado if body else None,
+                observaciones=body.observaciones if body else observaciones,
             )
-        total_ventas = conn.execute(
-            "SELECT COALESCE(SUM(total), 0) FROM ventas "
-            "WHERE caja_id=? AND estado='completada'", (caja_id,),
-        ).fetchone()[0]
-        total_gastos = conn.execute(
-            "SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE caja_id=?",
-            (caja_id,),
-        ).fetchone()[0]
-        importe_cierre = (
-            float(caja["importe_apertura"]) +
-            float(total_ventas) - float(total_gastos)
-        )
-        conn.execute(
-            """UPDATE cajas SET fecha_cierre=CURRENT_TIMESTAMP,
-               importe_cierre=?, total_ventas=?, total_gastos=?,
-               observaciones_cierre=?, estado='cerrada'
-               WHERE id=? AND estado='abierta'""",
-            (importe_cierre, total_ventas, total_gastos, observaciones, caja_id),
-        )
-        return {"ok": True}
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    # Compatibilidad: los clientes antiguos esperan exactamente {"ok": True}
+    return resultado if body is not None else {"ok": True}
 
 
 class VentaIn(BaseModel):
