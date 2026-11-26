@@ -135,3 +135,46 @@ def test_gui_no_ofrece_descarga_ficticia_ni_clave_global():
     assert "api_key" not in (
         root / "services/installation_kits.py"
     ).read_text().split('manifest = {')[1].split('}')[0].lower()
+
+
+def test_pos_importa_ca_sin_instalarla_en_sistema(ca_publica, tmp_path):
+    import ssl
+    from services import client_tls
+    ca, _, fingerprint = ca_publica
+    kit = tmp_path / "pos.zip"
+    trust = tmp_path / "trust.json"
+    url = "https://192.168.1.10"
+    crear_kit_conexion(kit, url, "pos", certificado=ca)
+    address, pem, digest = client_tls.leer_kit(kit)
+    assert (address, digest) == (url, fingerprint)
+    with pytest.raises(ValueError):
+        client_tls.guardar_confianza(address, pem, "0" * 64, destino=trust)
+    assert not trust.exists()
+    client_tls.guardar_confianza(address, pem, digest, destino=trust)
+    options = client_tls.opciones_http(url, origen=trust)
+    assert options["trust_env"] is False
+    assert options["verify"].verify_mode == ssl.CERT_REQUIRED
+    assert options["verify"].check_hostname
+    assert options["verify"].minimum_version == ssl.TLSVersion.TLSv1_2
+    assert options["verify"].cert_store_stats()["x509_ca"] == 1
+    for other in ("http://192.168.1.10", "https://192.168.1.11"):
+        with pytest.raises(ValueError):
+            client_tls.opciones_http(other, origen=trust)
+
+
+def test_pos_rechaza_kit_de_totem_y_huella_adulterada(ca_publica, tmp_path):
+    from services import client_tls
+    ca, public, fingerprint = ca_publica
+    kit = tmp_path / "totem.zip"
+    crear_kit_conexion(kit, "https://192.168.1.10", "totem", certificado=ca)
+    with pytest.raises(ValueError):
+        client_tls.leer_kit(kit)
+    forged = tmp_path / "forged.zip"
+    with ZipFile(forged, "w") as archive:
+        archive.writestr("conexion.json", json.dumps({
+            "schema": "intrashop-client-kit/v1", "tipo": "pos",
+            "servidor": "https://192.168.1.10", "ca_sha256": "0" * 64,
+        }))
+        archive.writestr("intrashop-root-ca.crt", public)
+    with pytest.raises(ValueError):
+        client_tls.leer_kit(forged)
