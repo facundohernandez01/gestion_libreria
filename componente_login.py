@@ -17,17 +17,25 @@ _RECUERDO_LOGIN = _base_dir() / "login_recordado.json"
 
 
 def _cargar_recordado() -> tuple[str, str]:
+    """Nunca restaurar una contraseña desde un archivo local."""
     try:
         data = json.loads(_RECUERDO_LOGIN.read_text(encoding="utf-8"))
-        return str(data.get("usuario") or ""), str(data.get("clave") or "")
+        usuario = str(data.get("usuario") or "")
+        if "clave" in data:
+            # Migración de instalaciones antiguas: quitar la clave en claro.
+            _guardar_recordado(usuario, "")
+        return usuario, ""
     except Exception:
         return "", ""
 
 
-def _guardar_recordado(usuario: str, clave: str) -> None:
+def _guardar_recordado(usuario: str, clave: str = "") -> None:
+    """Solo se persiste el nombre de usuario; jamás la contraseña."""
     try:
+        _RECUERDO_LOGIN.parent.mkdir(parents=True, exist_ok=True)
         _RECUERDO_LOGIN.write_text(
-            json.dumps({"usuario": usuario, "clave": clave}), encoding="utf-8")
+            json.dumps({"usuario": usuario}), encoding="utf-8")
+        _RECUERDO_LOGIN.chmod(0o600)
     except Exception:
         pass
 
@@ -99,7 +107,7 @@ def LoginView(db_manager, on_login, page: ft.Page):
         value=_rec_clave,
         prefix_icon=ft.Icons.LOCK_OUTLINE)
     recordar_cb = ft.Checkbox(
-        label="Recordar usuario y clave", value=bool(_rec_usuario or _rec_clave))
+        label="Recordar usuario", value=bool(_rec_usuario))
     error_text = ft.Text("", size=12, color=N.RED_400, visible=False)
     configurado = credenciales_configuradas(db_manager)
     ayuda = ft.Text(
@@ -154,7 +162,7 @@ def LoginView(db_manager, on_login, page: ft.Page):
                     from adapters.entregas import set_session
                     set_session(None)
             if recordar_cb.value:
-                _guardar_recordado(usuario_field.value or "", clave_field.value or "")
+                _guardar_recordado(usuario_field.value or "")
             else:
                 _borrar_recordado()
             try:
