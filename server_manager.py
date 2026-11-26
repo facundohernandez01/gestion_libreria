@@ -152,35 +152,32 @@ def detener_bloqueante() -> None:
 
 
 def escanear_servidor(subred: str | None = None, puerto: int = 8000, timeout: float = 0.3) -> list[str]:
-    """Escanea la subred LAN buscando un servidor con /health OK."""
-    import socket as _socket
+    """Descubrir candidatos POS en una LAN privada; no autenticar ni vincular."""
+    import concurrent.futures
+    import ipaddress
+    import httpx
 
-    ip = subred or ip_lan()
-    base = ".".join(ip.split(".")[:3])
-    encontrados: list[str] = []
+    ip = ipaddress.IPv4Address(subred or ip_lan())
+    if not any(ip in ipaddress.IPv4Network(net) for net in (
+        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    )):
+        return []
+    if not 1 <= puerto <= 65535:
+        raise ValueError("Puerto inválido")
+    red = ipaddress.IPv4Network(f"{ip}/24", strict=False)
 
-    def _check(host: str):
+    def _check(host):
+        url = f"http://{host}:{puerto}"
         try:
-            s = _socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(timeout)
-            if s.connect_ex((host, puerto)) == 0:
-                try:
-                    import httpx
-
-                    r = httpx.get(f"http://{host}:{puerto}/health", timeout=timeout)
-                    if r.status_code == 200:
-                        encontrados.append(f"http://{host}:{puerto}")
-                except Exception:
-                    encontrados.append(f"http://{host}:{puerto}")
-            s.close()
-        except Exception:
+            response = httpx.get(url + "/health", timeout=timeout,
+                                 follow_redirects=False, trust_env=False)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict) and data.get("service") == "pos-lan":
+                    return url
+        except (httpx.HTTPError, ValueError):
             pass
+        return None
 
-    hilos = []
-    for i in range(1, 255):
-        t = threading.Thread(target=_check, args=(f"{base}.{i}",), daemon=True)
-        t.start()
-        hilos.append(t)
-    for t in hilos:
-        t.join(timeout=timeout + 0.5)
-    return encontrados
+    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
+        return [url for url in pool.map(_check, red.hosts()) if url]
