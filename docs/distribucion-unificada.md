@@ -33,7 +33,9 @@ consulta el servidor; ningún código de pago se incrusta en el ejecutable.
 4. En la consola POS Server, **Instalar / conectar equipos** permite:
    - **Abrir tienda**: muestra/copia solo URL HTTPS, sin tokens.
    - **Exportar kit de conexión**: CA raíz pública y huella, manifest sin
-     secretos, para equipos sin conexión directa a Internet.
+     secretos, para equipos sin conexión directa a Internet. El perfil Tótem
+     incluye también `Abrir-IntraShop.url`: acceso directo Windows a la
+     tienda HTTPS, sin tokens ni instalador adicional.
    - **Ver ejecutables**: solo compilaciones realmente presentes en
      `distribution/builds`. No hay descarga falsa.
    - **Elegir POS o Tótem**: mismo asistente y misma seguridad.
