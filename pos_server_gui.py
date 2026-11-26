@@ -148,16 +148,31 @@ class ServerConsole:
         head.pack(fill="x", pady=(0, 12))
         ttk.Label(head, textvariable=self.status, style="Sub.TLabel").pack(side="left")
         ttk.Label(head, textvariable=self.url, style="Sub.TLabel").pack(side="right")
+        # Separar operación del servidor y administración: todo queda visible
+        # incluso en pantallas 1024px, sin una fila de botones interminable.
         controls = ttk.Frame(page, style="Page.TFrame")
-        controls.pack(fill="x", pady=(0, 12))
-        for label, action in (("Iniciar servidor", self.start), ("Detener servidor", self.stop),
-                              ("Abrir tienda", self.open_intrashop), ("Abrir administración", self.open_admin),
-                              ("Copiar clave LAN", self.copy_lan_key),
-                              ("Clave ADMIN", self.configure_admin_password),
-                              ("HTTPS local", self.configure_https_ip),
-                              ("Instalar / conectar equipos", self.distribution_wizard),
-                              ("Actualizar", self.refresh)):
-            ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 8))
+        controls.pack(fill="x", pady=(0, 5))
+        for label, action in (
+            ("Iniciar servidor", self.start),
+            ("Detener servidor", self.stop),
+            ("Abrir tienda", self.open_intrashop),
+            ("Abrir administración", self.open_admin),
+            ("Actualizar", self.refresh),
+        ):
+            ttk.Button(controls, text=label, command=action).pack(
+                side="left", padx=(0, 7),
+            )
+        admin_controls = ttk.Frame(page, style="Page.TFrame")
+        admin_controls.pack(fill="x", pady=(0, 10))
+        for label, action in (
+            ("Instalar / conectar equipos", self.distribution_wizard),
+            ("HTTPS local", self.configure_https_ip),
+            ("Clave ADMIN", self.configure_admin_password),
+            ("Copiar clave LAN", self.copy_lan_key),
+        ):
+            ttk.Button(admin_controls, text=label, command=action).pack(
+                side="left", padx=(0, 7),
+            )
         ttk.Label(page, textvariable=self.summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
 
         notebook = ttk.Notebook(page)
@@ -485,10 +500,20 @@ class ServerConsole:
                 (", ".join(entry["nombre"] for entry in role_builds) if role_builds
                  else "ninguno compilado para este perfil.")
             )
-            export_button.configure(state="normal" if url.startswith("https://")
+            tls_ready = url.startswith("https://")
+            try:
+                _, fingerprint = kits.datos_ca()
+            except (ValueError, OSError):
+                fingerprint = None
+            if tls_ready and not fingerprint:
+                current.set(
+                    "HTTPS está configurado, pero falta exportar la CA pública. "
+                    "Terminá el asistente HTTPS antes de repartir dispositivos."
+                )
+            export_button.configure(state="normal" if tls_ready and fingerprint
                                     and selected in ("pos", "totem") else "disabled")
-            copy_button.configure(state="normal" if selected == "totem" else "disabled")
-            web_button.configure(state="normal" if selected == "totem" else "disabled")
+            copy_button.configure(state="normal" if tls_ready and selected == "totem" else "disabled")
+            web_button.configure(state="normal" if tls_ready and selected == "totem" else "disabled")
             build_button.configure(state="normal" if role_builds else "disabled")
 
         def copy_link():
