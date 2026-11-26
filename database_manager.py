@@ -435,13 +435,23 @@ class DatabaseManager:
             fila_clave = conn.execute(
                 "SELECT valor FROM config WHERE clave='LOGIN_CLAVE'"
             ).fetchone()
+            from services.passwords import hash_password
+            import secrets
+
             usuario = ((fila_user["valor"] if fila_user else "") or "admin").strip()
-            clave = ((fila_clave["valor"] if fila_clave else "") or "admin").strip()
+            clave = ((fila_clave["valor"] if fila_clave else "") or "").strip()
+            # Sin clave previamente configurada el usuario queda INACTIVO.
+            # La consola física POS Server permite establecer una clave segura.
+            # Nunca crear un administrador remoto con admin/admin.
+            activa = 1 if clave and clave != "admin" and len(clave) >= 12 else 0
+            clave_guardada = hash_password(
+                clave if activa else secrets.token_urlsafe(32)
+            )
             conn.execute(
                 """INSERT INTO usuarios (usuario, clave, nombre, rol_id, activo)
-                   VALUES (?, ?, ?, ?, 1)""",
-                (usuario, clave, "Administrador",
-                 admin_rol["id"] if admin_rol else None),
+                   VALUES (?, ?, ?, ?, ?)""",
+                (usuario, clave_guardada, "Administrador",
+                 admin_rol["id"] if admin_rol else None, activa),
             )
         conn.commit()
 
@@ -554,6 +564,8 @@ class DatabaseManager:
         from core.permisos import normalizar, permisos_todos
 
         data = dict(fila)
+        # Nunca transmitir claves ni hashes a Flet, HTTP o informes.
+        data.pop("clave", None)
         data["activo"] = bool(data.get("activo"))
         data["es_admin"] = bool(data.get("rol_es_admin"))
         data["permisos"] = (permisos_todos() if data["es_admin"]
@@ -627,12 +639,14 @@ class DatabaseManager:
                     if pierde_admin and self._admins_activos(conn, usuario_id) == 0:
                         return 0, "Debe quedar al menos un usuario ADMIN activo"
                     if clave:
+                        from services.passwords import hash_password, validar_nueva_clave
+                        validar_nueva_clave(clave)
                         conn.execute(
                             """UPDATE usuarios SET usuario=?, clave=?, nombre=?,
                                rol_id=?, activo=?,
                                fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?""",
-                            (usuario, clave, nombre or usuario, rol_id, activo,
-                             usuario_id),
+                            (usuario, hash_password(clave), nombre or usuario,
+                             rol_id, activo, usuario_id),
                         )
                     else:
                         conn.execute(
@@ -646,10 +660,12 @@ class DatabaseManager:
                     return usuario_id, ""
                 if not clave:
                     return 0, "Ingresá una clave para el nuevo usuario"
+                from services.passwords import hash_password, validar_nueva_clave
+                validar_nueva_clave(clave)
                 cur = conn.execute(
                     """INSERT INTO usuarios (usuario, clave, nombre, rol_id, activo)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (usuario, clave, nombre or usuario, rol_id, activo),
+                    (usuario, hash_password(clave), nombre or usuario, rol_id, activo),
                 )
                 conn.commit()
                 return int(cur.lastrowid), ""
@@ -684,9 +700,15 @@ class DatabaseManager:
                 return False, str(e)
 
     def autenticar_usuario(self, usuario: str, clave: str) -> Optional[dict]:
+        """Validar rol de usuario real; migrar contraseñas legacy a PBKDF2.
+
+        No existe administrador implícito ni fallback a config/admin/admin.
+        """
+        from services.passwords import hash_password, check_password
+
         usuario = (usuario or "").strip()
-        clave = (clave or "").strip()
-        if not usuario:
+        clave = clave or ""
+        if not usuario or not clave:
             return None
         with self._connect() as conn:
             row = conn.execute(
@@ -696,28 +718,21 @@ class DatabaseManager:
                    WHERE u.usuario=? COLLATE NOCASE""",
                 (usuario,),
             ).fetchone()
-            if row and row["activo"] and str(row["clave"] or "") == clave:
-                return self._usuario_dict(row)
-            # Compatibilidad con la clave única de versiones anteriores.
-            # La clave de Ajustes puede diferir de la clave guardada en usuarios;
-            # ambas deben permitir el acceso del administrador configurado.
-            cfg_user = (self.get_config_value("LOGIN_USUARIO") or "admin").strip()
-            cfg_clave = (self.get_config_value("LOGIN_CLAVE") or "admin").strip()
-            if usuario == cfg_user and clave == cfg_clave:
-                admin = conn.execute(
-                    """SELECT u.*, r.nombre AS rol_nombre,
-                              r.es_admin AS rol_es_admin, r.permisos AS rol_permisos
-                       FROM usuarios u JOIN roles r ON r.id=u.rol_id
-                       WHERE r.es_admin=1 ORDER BY u.id LIMIT 1"""
-                ).fetchone()
-                if admin:
-                    return self._usuario_dict(admin)
-                from core.permisos import permisos_todos
-
-                return {"id": 0, "usuario": cfg_user, "nombre": "Administrador",
-                        "rol": "ADMIN", "rol_id": 0, "es_admin": True,
-                        "activo": True, "permisos": permisos_todos()}
-        return None
+            if not row or not row["activo"]:
+                return None
+            # Contraseñas heredadas triviales no deben habilitar ADMIN por LAN.
+            if row["rol_es_admin"] and clave.casefold() in ("admin", "1234", "password"):
+                return None
+            ok, migrar = check_password(str(row["clave"] or ""), clave)
+            if not ok:
+                return None
+            if migrar:
+                conn.execute(
+                    "UPDATE usuarios SET clave=?,fecha_modificacion=CURRENT_TIMESTAMP "
+                    "WHERE id=?", (hash_password(clave), row["id"]),
+                )
+                conn.commit()
+            return self._usuario_dict(row)
 
     # ---------- productos ----------
     def buscar_productos(self, termino: str = "", campo: str = "descripcion", limit: int = 200) -> List[dict]:
