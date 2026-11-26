@@ -51,8 +51,11 @@ def test_kit_de_tótem_contiene_ca_publica_pero_ningun_secreto(ca_publica, tmp_p
     with ZipFile(dst) as archive:
         assert set(archive.namelist()) == {
             "conexion.json", "intrashop-root-ca.crt", "INSTRUCCIONES.txt",
+            "Abrir-IntraShop.url",
         }
         assert archive.read("intrashop-root-ca.crt") == public
+        shortcut = archive.read("Abrir-IntraShop.url")
+        assert shortcut == b"[InternetShortcut]\\r\\nURL=https://192.168.1.10/intrashop/\\r\\n"
         manifest = json.loads(archive.read("conexion.json"))
         assert manifest["servidor"] == "https://192.168.1.10"
         assert manifest["catalogo"] == "https://192.168.1.10/intrashop/"
