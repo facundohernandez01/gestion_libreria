@@ -28,6 +28,16 @@ try:
 except Exception:
     pass
 
+# Una clave heredada y pública convierte toda la API LAN en un endpoint
+# modificable por cualquiera que conozca el proyecto. Bloquear al iniciar,
+# antes de servir en 0.0.0.0. Las instalaciones sin API_KEY usan una nueva
+# clave segura persistida fuera del repositorio.
+if not API_KEY or API_KEY == "libreria-lan":
+    raise RuntimeError(
+        "API_KEY LAN insegura. Eliminá API_KEY=libreria-lan de .env "
+        "para generar una clave aleatoria y configurala en cada POS cliente."
+    )
+
 # Activar WAL + busy_timeout para concurrencia
 _conn_init = sqlite3.connect(DB_PATH)
 _conn_init.execute("PRAGMA journal_mode=WAL")
@@ -69,6 +79,14 @@ async def _lifespan(_app: FastAPI):
                 name="intrashop-startup-reconciliation",
                 daemon=True,
             ).start()
+            # Reanudar tickets de ventas confirmadas que quedaron PENDING.
+            # No reimprimir SENT/PRINTING para evitar duplicaciones.
+            from intrashop_api import recover_pending_tickets
+            threading.Thread(
+                target=recover_pending_tickets,
+                name="intrashop-pending-tickets",
+                daemon=True,
+            ).start()
             # La conciliación continua no depende de disponer de
             # webhook público (POS Server puede operar solo en LAN).
             from intrashop_api import reconcile_orders_v1_periodically
@@ -95,40 +113,80 @@ async def _lifespan(_app: FastAPI):
 
 app = FastAPI(title="Librería Kiosko — API", version="1.0", lifespan=_lifespan)
 
-# La interfaz Astro compilada se publica desde el mismo servidor FastAPI.
-# Si dist no existe, la API continúa funcionando normalmente.
+
+@app.middleware("http")
+async def exigir_transporte_seguro(request: Request, call_next):
+    """Protege toda la API, login, Astro, QR y gestión POS al activar HTTPS."""
+    from fastapi.responses import JSONResponse
+    from services.lan_https import habilitado
+
+    if habilitado() and request.url.scheme != "https":
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "Conexión insegura. Abrí la tienda por HTTPS."},
+        )
+    return await call_next(request)
+
+
+# Servir Astro desde el mismo puerto, incluso si pnpm build se ejecuta
+# después de arrancar Uvicorn. El montaje anterior solo se registraba
+# al importar api_server si ya existía dist/index.html: en otro orden de
+# arranque /intrashop/ devolvía 404 hasta reiniciar POS Server.
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 INTRASHOP_DIST = Path(__file__).resolve().parent / "intrashop" / "dist"
-if (INTRASHOP_DIST / "index.html").is_file():
-    class AstroStaticFiles(StaticFiles):
-        async def get_response(self, path, scope):
-            # Astro static builds output admin/index.html or admin.html.
-            try:
-                return await super().get_response(path, scope)
-            except StarletteHTTPException as exc:
-                if exc.status_code != 404:
-                    raise
-            clean = path.strip("/")
-            if not clean or "." in clean.rsplit("/", 1)[-1]:
-                raise StarletteHTTPException(status_code=404)
-            for candidate in (clean + "/index.html", clean + ".html"):
-                if (INTRASHOP_DIST / candidate).is_file():
-                    return await super().get_response(candidate, scope)
-            raise StarletteHTTPException(status_code=404)
 
-    app.mount("/intrashop", AstroStaticFiles(directory=str(INTRASHOP_DIST), html=True), name="intrashop")
+
+class AstroStaticFiles(StaticFiles):
+    async def check_config(self):
+        # StaticFiles exige directorio existente en su primer request.
+        # La carpeta se puede generar mientras el servidor ya está activo.
+        if INTRASHOP_DIST.is_dir():
+            await super().check_config()
+
+    async def get_response(self, path, scope):
+        if not (INTRASHOP_DIST / "index.html").is_file():
+            return PlainTextResponse(
+                "La tienda IntraShop no está compilada. "
+                "Ejecutá 'pnpm run build' en intrashop/ y recargá esta página.",
+                status_code=503,
+            )
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404:
+                raise
+        clean = path.strip("/")
+        if not clean or "." in clean.rsplit("/", 1)[-1]:
+            raise StarletteHTTPException(status_code=404)
+        for candidate in (clean + "/index.html", clean + ".html"):
+            if (INTRASHOP_DIST / candidate).is_file():
+                return await super().get_response(candidate, scope)
+        raise StarletteHTTPException(status_code=404)
+
+
+app.mount("/intrashop", AstroStaticFiles(
+    directory=str(INTRASHOP_DIST), html=True, check_dir=False
+), name="intrashop")
 
 
 from fastapi.middleware.cors import CORSMiddleware
 from intrashop_api import router as intrashop_router
 
+# En producción Astro se sirve desde el MISMO origen. No permitir que
+# cualquier sitio de Internet invoque la API de pagos o administración LAN.
+_allowed_cors = [
+    origin.strip() for origin in os.getenv("POS_CORS_ORIGINS", "").split(",")
+    if origin.strip() and origin.strip() != "*"
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
-    allow_headers=["*", "x-api-key", "content-type"],
+    allow_origins=_allowed_cors,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Terminal-Id"],
+    allow_credentials=False,
 )
 app.include_router(intrashop_router)
 from intrashop_entregas import router as intrashop_entregas_router
@@ -148,8 +206,45 @@ def _connect() -> sqlite3.Connection:
 
 
 def _auth(x_api_key: str | None) -> None:
-    if x_api_key != API_KEY:
+    import secrets
+    if x_api_key and x_api_key.startswith("posd_"):
+        from services.lan_https import habilitado
+        from services.pos_device_credentials import autorizado
+        if habilitado():
+            with _connect() as conn:
+                if autorizado(conn, x_api_key):
+                    return
+        raise HTTPException(status_code=401, detail="Terminal no autorizada")
+    from services.pos_device_credentials import modo_estricto
+    with _connect() as conn:
+        if modo_estricto(conn):
+            raise HTTPException(401, "Vinculá esta caja mediante un código de POS Server.")
+    if not API_KEY or not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="API key inválida")
+
+
+class PosDevicePairIn(BaseModel):
+    codigo: str
+    terminal_id: str
+
+
+@app.post("/pos/devices/pair")
+def pair_pos_device(body: PosDevicePairIn, request: Request):
+    from services.lan_https import habilitado
+    from services.pos_device_credentials import canjear
+    from fastapi.responses import JSONResponse
+
+    if not habilitado() or request.url.scheme != "https":
+        raise HTTPException(403, "La vinculación requiere una conexión segura.")
+    if len(body.codigo) > 32 or len(body.terminal_id) > 100:
+        raise HTTPException(400, "Datos de vinculación inválidos.")
+    try:
+        with _tx() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            token = canjear(conn, body.codigo, body.terminal_id)
+    except ValueError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    return JSONResponse({"credential": token}, headers={"Cache-Control": "no-store"})
 
 
 @contextmanager
@@ -168,7 +263,15 @@ def _tx():
 
 @app.get("/health")
 def health():
-    return {"ok": True, "service": "pos-lan", "capabilities": ["intrashop-entregas-v1", "pos-operator-sessions-v1"]}
+    return {"ok": True, "service": "pos-lan", "capabilities": ["intrashop-entregas-v1", "pos-operator-sessions-v1"], "intrashop_compilada": (INTRASHOP_DIST / "index.html").is_file()}
+
+
+# La API_KEY compartida no equivale a sesión de administrador. Jamás
+# transmitir tokens MP ni claves de usuario a las terminales POS.
+_SENSITIVE_CONFIG = {
+    "ACCESS_TOKEN", "MP_ACCESS_TOKEN", "LOGIN_CLAVE", "API_KEY",
+    "AFIP_KEY", "AFIP_KEY_FILE", "MP_CLIENT_SECRET", "MP_OAUTH_ENCRYPTION_KEY",
+}
 
 
 @app.get("/config")
@@ -176,7 +279,8 @@ def get_config(x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
     with _connect() as conn:
         rows = conn.execute("SELECT clave, valor FROM config").fetchall()
-    return {r["clave"]: r["valor"] for r in rows}
+    return {r["clave"]: r["valor"] for r in rows
+            if r["clave"].upper() not in _SENSITIVE_CONFIG}
 
 
 class ConfigIn(BaseModel):
@@ -187,6 +291,11 @@ class ConfigIn(BaseModel):
 @app.post("/config")
 def set_config(body: ConfigIn, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
+    if body.clave.strip().upper() in _SENSITIVE_CONFIG:
+        raise HTTPException(
+            403, "Este parámetro sensible solo puede configurarse "
+                 "desde la administración local de POS Server.",
+        )
     with _tx() as conn:
         conn.execute(
             "INSERT INTO config (clave, valor) VALUES (?,?) "
@@ -354,54 +463,55 @@ def abrir_caja(importe_apertura: float = 0.0, observaciones: str = "",
         return {"id": int(cur.lastrowid)}
 
 
-@app.post("/cajas/{caja_id}/cerrar")
-def cerrar_caja(caja_id: int, observaciones: str = "",
-                x_api_key: str | None = Header(default=None)):
-    """Persiste cierre, gastos y ventas reales; rechaza cobros de tótem sin resolver."""
+@app.get("/cajas/{caja_id}/resumen")
+def resumen_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
+    """Resumen del turno completo, no solamente ventas del día calendario."""
     _auth(x_api_key)
+    from services.caja_cierre import resumen_caja as calcular
+
     with _tx() as conn:
         conn.execute("BEGIN IMMEDIATE")
-        caja = conn.execute(
-            "SELECT importe_apertura FROM cajas WHERE id=? AND estado='abierta'",
-            (caja_id,),
-        ).fetchone()
-        if caja is None:
-            raise HTTPException(409, "Caja inexistente o ya cerrada")
+        try:
+            return calcular(conn, caja_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
 
-        # Los cobros de IntraShop tienen reservas persistidas: cerrar antes de
-        # registrar la venta produciría un importe de cierre incorrecto.
-        import intrashop_checkout_store as checkout_store
-        checkout_store.ensure_schema(conn)
-        pending = conn.execute(
-            """SELECT id FROM intrashop_checkouts
-               WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid')
-               LIMIT 1"""
-        ).fetchone()
-        if pending:
-            raise HTTPException(
-                409,
-                "Hay cobros IntraShop pendientes; finalizá o conciliá antes de cerrar la caja",
+
+class CierreCajaIn(BaseModel):
+    importe_contado: float | None = None
+    observaciones: str = ""
+    efectivo_esperado: float | None = None
+    total_ventas: float | None = None
+    total_gastos: float | None = None
+
+
+@app.post("/cajas/{caja_id}/cerrar")
+def cerrar_caja(caja_id: int, observaciones: str = "",
+                x_api_key: str | None = Header(default=None),
+                body: CierreCajaIn | None = None):
+    """Arqueo y cierre atómicos; expone el motivo del rechazo por HTTP 409.
+
+    El antiguo contrato con observaciones en query continúa soportado para
+    clientes instalados, pero los nuevos mandan el conteo en el body JSON.
+    """
+    _auth(x_api_key)
+    from services.caja_cierre import cerrar_caja as ejecutar
+
+    with _tx() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            resultado = ejecutar(
+                conn, caja_id,
+                importe_contado=body.importe_contado if body else None,
+                observaciones=body.observaciones if body else observaciones,
+                snapshot=body.model_dump(
+                    include={"efectivo_esperado", "total_ventas", "total_gastos"}
+                ) if body else None,
             )
-        total_ventas = conn.execute(
-            "SELECT COALESCE(SUM(total), 0) FROM ventas "
-            "WHERE caja_id=? AND estado='completada'", (caja_id,),
-        ).fetchone()[0]
-        total_gastos = conn.execute(
-            "SELECT COALESCE(SUM(monto), 0) FROM gastos WHERE caja_id=?",
-            (caja_id,),
-        ).fetchone()[0]
-        importe_cierre = (
-            float(caja["importe_apertura"]) +
-            float(total_ventas) - float(total_gastos)
-        )
-        conn.execute(
-            """UPDATE cajas SET fecha_cierre=CURRENT_TIMESTAMP,
-               importe_cierre=?, total_ventas=?, total_gastos=?,
-               observaciones_cierre=?, estado='cerrada'
-               WHERE id=? AND estado='abierta'""",
-            (importe_cierre, total_ventas, total_gastos, observaciones, caja_id),
-        )
-        return {"ok": True}
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+    # Compatibilidad: los clientes antiguos esperan exactamente {"ok": True}
+    return resultado if body is not None else {"ok": True}
 
 
 class VentaIn(BaseModel):
@@ -574,8 +684,10 @@ def ventas_por_dia(desde: str, hasta: str, x_api_key: str | None = Header(defaul
 
 def run(host: str = "0.0.0.0", port: int = 8000):
     import uvicorn
+    from services.lan_https import host_backend, opciones_uvicorn
 
-    uvicorn.run(app, host=host, port=port, log_level="info")
+    uvicorn.run(app, host=host_backend(host), port=port, log_level="info",
+                **opciones_uvicorn())
 
 
 def _montar_flet_web() -> None:
@@ -787,14 +899,27 @@ def api_ventas_detalle(desde: str, hasta: str, x_api_key: str | None = Header(de
 @app.get("/cajas/{caja_id}/gastos")
 def api_gastos_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
-    return _gestor_reposicion().obtener_gastos_caja(caja_id)
+    from database_manager import DatabaseManager
+    # La caja se lee de la MISMA SQLite que utiliza /cajas/{id}/cerrar.
+    return DatabaseManager(DB_PATH).obtener_gastos_caja(caja_id)
 
 
 @app.post("/cajas/{caja_id}/gastos")
 def api_agregar_gasto(caja_id: int, body: dict, x_api_key: str | None = Header(default=None)):
     _auth(x_api_key)
     with _write_lock:
-        return {"id": _gestor_reposicion().agregar_gasto(caja_id, body["monto"], body["concepto"])}
+        try:
+            importe, concepto = body["monto"], body["concepto"]
+        except KeyError:
+            raise HTTPException(422, "Indicá monto y concepto del gasto.") from None
+        from database_manager import DatabaseManager
+        gasto_id = DatabaseManager(DB_PATH).agregar_gasto(caja_id, importe, concepto)
+        if not gasto_id:
+            raise HTTPException(
+                409, "No se pudo registrar el gasto. Comprobá que la caja siga abierta "
+                     "y que el importe sea válido.",
+            )
+        return {"id": gasto_id}
 
 
 @app.get("/admin/datos/conteos")

@@ -57,7 +57,7 @@
 .hero-copy>p{margin-bottom:8px;font-size:12px}
 .hero-note{font-size:11px}
 .hero-art{height:105px;width:150px;transform:scale(.45);transform-origin:center}
-.catalog-section{margin-top:25px}
+.catalog-section{margin-top:16px}
 .product-card .add-button{min-width:46px;min-height:46px;font-size:26px}
 .category-chip{min-height:46px;padding:10px 18px}
 .cart-button{min-height:48px}
@@ -81,3 +81,19 @@
 .admin-tip code{display:block;overflow-wrap:anywhere;padding:8px 0;font-size:12px;color:#3154a0}
 .admin-status,.admin-server-state{margin-top:16px;font-size:12px}.admin-status.success{color:#168c62}.admin-status.error{color:#b84a58}
 @media(max-width:720px){.hero{padding:19px 22px;grid-template-columns:1fr}.hero-art{display:none}.hero h1{font-size:27px}.hero-note{display:none}.admin-layout{grid-template-columns:1fr}.admin-main{padding:28px 15px 65px}.admin-panel{padding:21px}}
+
+
+/* Carrito: acción clara para quitar toda la línea. */
+.cart-line-actions{display:flex;flex-direction:column;align-items:flex-end;gap:12px;min-width:84px}
+.cart-line-actions strong{font-size:12px;color:var(--ink);white-space:nowrap}
+.cart-remove{appearance:none;background:#fff4f4;border:1px solid #f4c9ce;border-radius:8px;padding:7px 9px;color:#b52c49;font-size:11px;font-weight:700;cursor:pointer}
+.cart-remove:hover,.cart-remove:focus-visible{background:#ffe7e9;border-color:#df8293}
+.cart-remove span{font-size:14px;margin-left:3px}
+/* Emparejamiento de equipo: código efímero, identidad permanente en POS Server. */
+.pairing-panel{margin:12px 0 20px;padding:16px 18px;border-radius:12px;background:#f4f7ff;border:1px solid #dce5fb;max-width:650px}
+.pairing-panel label{font-size:12px;font-weight:800;color:#283657;display:block;margin-bottom:9px}
+.pairing-controls{display:flex;gap:8px;flex-wrap:wrap}
+.pairing-controls input{flex:1;min-width:145px;border-radius:9px;border:1px solid #d2d8e9;padding:11px 13px;font-size:13px;font-weight:700;letter-spacing:.06em}
+.pairing-controls button{border:0;border-radius:9px;background:#6251d9;color:white;padding:11px 15px;font-weight:700;cursor:pointer}
+.pairing-controls button:disabled{opacity:.6;cursor:wait}
+.pairing-panel p{font-size:11px;color:#596987;margin:10px 0 0}

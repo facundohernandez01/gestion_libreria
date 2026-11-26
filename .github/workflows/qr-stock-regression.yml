@@ -2,18 +2,43 @@ name: QR and stock regression
 
 on:
   push:
-    branches: [feature/mercadopago-oauth]
+    branches: [feature/mercadopago-oauth, fix/intrashop-checkout-caja-link-20261116]
   pull_request:
     paths:
       - "componente_nueva_venta.py"
+      - "config.py"
+      - "adapters/mp_bindings.py"
       - "intrashop_api.py"
       - "intrashop_checkout_store.py"
       - "services/mercadopago_service.py"
       - "services/mp_orders_v1_client.py"
       - "services/mp_orders_webhook.py"
+      - "services/intrashop_ticket_service.py"
+      - "services/intrashop_totem_registry.py"
+      - "services/intrashop_totem_auth.py"
+      - "services/passwords.py"
+      - "services/lan_https.py"
+      - "services/installation_kits.py"
+      - "distribution/**"
+      - "pos_server.py"
+      - "server_manager.py"
+      - "deploy/**"
+      - "docs/https-lan.md"
+      - "pos_auth.py"
+      - "ui/helpers.py"
+      - "services/lan_discovery.py"
+      - "core/settings.py"
+      - "main.py"
+      - "services/caja_cierre.py"
+      - "componente_cerrar_caja.py"
+      - "intrashop_entregas.py"
+      - "pos_server_gui.py"
       - "database_manager.py"
       - "api_client.py"
       - "api_server.py"
+      - "core/db_factory.py"
+      - "componente_login.py"
+      - "intrashop/**"
       - "tests/**"
       - ".github/workflows/qr-stock-regression.yml"
 
@@ -30,20 +55,31 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install lightweight test dependencies
-        run: python -m pip install pytest fastapi requests python-dotenv httpx cryptography
+        run: python -m pip install pytest "fastapi>=0.110,<0.145" requests python-dotenv httpx cryptography
       - name: Compile backend modules and regression tests
-        run: python -m compileall -q api_client.py api_server.py componente_nueva_venta.py intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py services/mp_orders_v1_client.py services/mp_orders_webhook.py database_manager.py tests/
+        run: python -m compileall -q core/db_factory.py componente_login.py config.py adapters/mp_bindings.py api_client.py api_server.py componente_nueva_venta.py intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py services/mp_orders_v1_client.py services/mp_orders_webhook.py services/intrashop_ticket_service.py services/intrashop_totem_registry.py services/intrashop_totem_auth.py services/lan_discovery.py services/lan_https.py services/installation_kits.py pos_server.py server_manager.py services/passwords.py pos_auth.py services/caja_cierre.py componente_cerrar_caja.py intrashop_entregas.py pos_server_gui.py deploy/configurar_https_ip.py database_manager.py tests/
       - name: Run isolated QR, stock and backup tests
         env:
           POS_API_ONLY: "1"
         run: |
           python -m pytest -q \
+            tests/test_intrashop_runtime_connection.py \
+            tests/test_intrashop_caja_link.py \
+            tests/test_intrashop_reservas.py \
             tests/test_pos_server_caja_ventas.py \
+            tests/test_cierre_caja_arqueo.py \
             tests/test_api_client_parity.py \
             tests/test_http_contract_static.py \
             tests/test_backup_streaming.py \
             tests/test_pos_qr_cancel_static.py \
             tests/test_intrashop_orders_e2e_mock.py \
+            tests/test_intrashop_totem_identity_server.py \
+            tests/test_lan_security_and_pairing.py \
+            tests/test_lan_https.py \
+            tests/test_https_ip_instalador.py \
+            tests/test_installation_kits.py \
+            tests/test_pos_server_http_functional.py \
+            tests/test_pos_credentials_security.py \
             tests/test_mp_orders_webhook.py \
             tests/test_mp_orders_v1_mock.py \
             tests/test_mp_qr_network_mock.py \
@@ -56,3 +92,136 @@ jobs:
             tests/test_recepcion_concurrente.py \
             tests/test_stock_absolute.py \
             tests/test_backup_roundtrip.py
+
+  intrashop-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install and build Astro storefront
+        working-directory: intrashop
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+          test -f dist/index.html
+          test -f dist/admin/index.html
+
+  flet-cash-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned Flet UI dependencies
+        run: python -m pip install pytest "flet==1.0.4"
+      - name: Build and operate cash-close modal in memory
+        run: python -m pytest -q tests/test_cierre_caja_flet_smoke.py tests/test_pos_credentials_security.py -k 'modal or login_recordado'
+
+  intrashop-browser-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar y compilar tienda
+        working-directory: intrashop
+        run: |
+          npm install --no-audit --no-fund
+          npm run build
+      - name: Preparar Chromium para prueba funcional
+        run: |
+          python -m pip install pytest playwright
+          python -m playwright install --with-deps chromium
+      - name: Abrir tienda Astro de prueba
+        working-directory: intrashop
+        run: |
+          (npm run preview -- --host 127.0.0.1 --port 4173 > /tmp/intrashop-preview.log 2>&1 &)
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:4173/intrashop/ > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/intrashop-preview.log
+          exit 1
+      - name: Simular compra, eliminar producto y cancelar QR en Chromium
+        run: python -m pytest -q tests/test_intrashop_browser_e2e.py
+
+  https-proxy-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar FastAPI y Caddy para prueba local
+        run: |
+          python -m pip install "fastapi>=0.110,<0.145" uvicorn requests python-dotenv httpx cryptography
+          if ! command -v caddy >/dev/null; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+          fi
+      - name: Probar certificado TLS para IP local sin ningún DNS
+        env:
+          POS_API_ONLY: "1"
+          DB_PATH: "/tmp/intrashop-https-ci.db"
+          API_KEY: "CI-ONLY-DUMMY-API-KEY-DO-NOT-USE-IN-PRODUCTION"
+          INTRASHOP_ENFORCE_HTTPS: "1"
+          POS_PUBLIC_URL: "https://127.0.0.1:8443"
+        run: |
+          python - <<'PY'
+          import os
+          from database_manager import DatabaseManager
+          DatabaseManager(os.environ["DB_PATH"])
+          PY
+          python pos_server.py --headless --host 0.0.0.0 --port 8108 >/tmp/pos-https-ci.log 2>&1 &
+          cat >/tmp/intrashop-ci.caddyfile <<'EOF'
+          {
+            admin off
+            auto_https disable_redirects
+          }
+          https://127.0.0.1:8443 {
+            tls internal
+            reverse_proxy 127.0.0.1:8108
+          }
+          EOF
+          caddy validate --config /tmp/intrashop-ci.caddyfile --adapter caddyfile
+          caddy run --config /tmp/intrashop-ci.caddyfile --adapter caddyfile >/tmp/caddy-https-ci.log 2>&1 &
+          CA="$HOME/.local/share/caddy/pki/authorities/local/root.crt"
+          for i in $(seq 1 50); do
+            if [ -s "$CA" ] && curl --fail --silent --cacert "$CA" https://127.0.0.1:8443/health >/tmp/https-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          if [ ! -s /tmp/https-health.json ]; then
+            cat /tmp/pos-https-ci.log /tmp/caddy-https-ci.log
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          with open("/tmp/https-health.json") as f:
+              data = json.load(f)
+          assert data["service"] == "pos-lan", data
+          PY
+          # HTTP directo se rechaza incluso desde localhost.
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8108/health)
+          test "$code" = "403"
+          # La cabecera falsa del cliente no sustituye al proxy autorizado.
+          curl --fail --silent --cacert "$CA" -H "X-Forwarded-Proto: http"             https://127.0.0.1:8443/health >/tmp/https-health-spoof.json
+          python - <<'PY'
+          import json
+          with open("/tmp/https-health-spoof.json") as f:
+              data = json.load(f)
+          assert data["service"] == "pos-lan"
+          PY
+          echo "HTTPS con CA verificada y FastAPI restringido a loopback: OK"

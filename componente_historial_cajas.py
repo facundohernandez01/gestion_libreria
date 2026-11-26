@@ -140,6 +140,13 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
                     ft.Text(f"Ventas ${total_ventas:,.2f}", size=12,
                             color=N.GREEN_300, weight=ft.FontWeight.BOLD,
                             text_align=ft.TextAlign.RIGHT),
+                    *([ft.Text(
+                        "Diferencia ${:,.2f}".format(float(c["diferencia_arqueo"])),
+                        size=11,
+                        color=N.GREEN_300 if float(c["diferencia_arqueo"]) == 0
+                              else N.ORANGE_300,
+                        text_align=ft.TextAlign.RIGHT,
+                    )] if c.get("diferencia_arqueo") is not None else []),
                 ], horizontal_alignment=ft.CrossAxisAlignment.END, spacing=2),
                 _badge(c.get("estado") or ""),
                 ft.Icon(ft.Icons.CHEVRON_RIGHT, color=N.GREY_500),
@@ -292,6 +299,31 @@ def HistorialCajasView(db_manager, on_volver, page: ft.Page):
                         + (f" → Cierre ${float(caja.get('importe_cierre') or 0):,.2f}"
                            if caja.get("importe_cierre") else ""),
                         size=12, color=N.GREEN_300),
+                    *([ft.Container(
+                        content=ft.Column([
+                            ft.Text("ARQUEO DE EFECTIVO", size=11,
+                                    weight=ft.FontWeight.BOLD, color=N.BLUE_300),
+                            ft.Text(
+                                "Esperado: ${:,.2f}  ·  Contado: ${:,.2f}".format(
+                                    float(caja["efectivo_esperado"]),
+                                    float(caja["efectivo_contado"]),
+                                ),
+                                size=12, color=N.TEXT,
+                            ),
+                            ft.Text(
+                                "Diferencia: ${:+,.2f}".format(
+                                    float(caja["diferencia_arqueo"])),
+                                size=13, weight=ft.FontWeight.BOLD,
+                                color=N.GREEN_300 if float(caja["diferencia_arqueo"]) == 0
+                                      else N.ORANGE_300,
+                            ),
+                            *([ft.Text(
+                                "Observaciones: " + str(caja.get("observaciones_cierre")),
+                                size=11, color=N.GREY_400,
+                            )] if caja.get("observaciones_cierre") else []),
+                        ], spacing=5),
+                        bgcolor=N.BLUE_GREY_800, border_radius=8, padding=12,
+                    )] if caja.get("efectivo_contado") is not None else []),
                     ft.Text(
                         f"Apertura por: {caja.get('usuario_apertura') or '—'}"
                         + (f" · Cierre por: {caja.get('usuario_cierre') or '—'}"

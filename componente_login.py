@@ -17,17 +17,25 @@ _RECUERDO_LOGIN = _base_dir() / "login_recordado.json"
 
 
 def _cargar_recordado() -> tuple[str, str]:
+    """Nunca restaurar una contraseña desde un archivo local."""
     try:
         data = json.loads(_RECUERDO_LOGIN.read_text(encoding="utf-8"))
-        return str(data.get("usuario") or ""), str(data.get("clave") or "")
+        usuario = str(data.get("usuario") or "")
+        if "clave" in data:
+            # Migración de instalaciones antiguas: quitar la clave en claro.
+            _guardar_recordado(usuario, "")
+        return usuario, ""
     except Exception:
         return "", ""
 
 
-def _guardar_recordado(usuario: str, clave: str) -> None:
+def _guardar_recordado(usuario: str, clave: str = "") -> None:
+    """Solo se persiste el nombre de usuario; jamás la contraseña."""
     try:
+        _RECUERDO_LOGIN.parent.mkdir(parents=True, exist_ok=True)
         _RECUERDO_LOGIN.write_text(
-            json.dumps({"usuario": usuario, "clave": clave}), encoding="utf-8")
+            json.dumps({"usuario": usuario}), encoding="utf-8")
+        _RECUERDO_LOGIN.chmod(0o600)
     except Exception:
         pass
 
@@ -68,19 +76,8 @@ def credenciales_configuradas(db_manager) -> bool:
 
 
 def validar_login(db_manager, usuario: str, clave: str) -> bool:
-    """Compatibilidad: True si las credenciales son válidas."""
-    try:
-        return db_manager.autenticar_usuario(usuario, clave) is not None
-    except Exception:
-        pass
-    try:
-        user_ok = (db_manager.get_config_value("LOGIN_USUARIO")
-                   or _USUARIO_DEFAULT).strip()
-        clave_ok = (db_manager.get_config_value("LOGIN_CLAVE")
-                    or _CLAVE_DEFAULT).strip()
-    except Exception:
-        user_ok, clave_ok = _USUARIO_DEFAULT, _CLAVE_DEFAULT
-    return (usuario or "").strip() == user_ok and (clave or "").strip() == clave_ok
+    """No aceptar credenciales guardadas fuera de la tabla usuarios."""
+    return db_manager.autenticar_usuario(usuario, clave) is not None
 
 
 def LoginView(db_manager, on_login, page: ft.Page):
@@ -93,25 +90,32 @@ def LoginView(db_manager, on_login, page: ft.Page):
         value=_rec_clave,
         prefix_icon=ft.Icons.LOCK_OUTLINE)
     recordar_cb = ft.Checkbox(
-        label="Recordar usuario y clave", value=bool(_rec_usuario or _rec_clave))
+        label="Recordar usuario", value=bool(_rec_usuario))
     error_text = ft.Text("", size=12, color=N.RED_400, visible=False)
     configurado = credenciales_configuradas(db_manager)
     ayuda = ft.Text(
-        "Usuario inicial: «admin», clave «admin». Cambiala desde "
-        "ROLES Y USUARIOS."
+        "No hay usuarios configurados. Completá el asistente de primer uso "
+        "desde administración del POS."
         if not configurado else
         "Ingresá con el usuario y la clave asignados por el administrador.",
         size=11, italic=True, color=N.GREY_500,
         text_align=ft.TextAlign.CENTER)
 
     def ingresar(e=None):
+        from core.db_factory import modo_actual
+        error_conexion = None
         try:
             usuario = db_manager.autenticar_usuario(
                 usuario_field.value, clave_field.value)
-        except Exception:
+        except Exception as exc:
             usuario = None
-        if usuario is None and validar_login(
-                db_manager, usuario_field.value, clave_field.value):
+            # No imprimir tokens, claves ni respuestas HTTP completas.
+            error_conexion = str(exc) if isinstance(
+                exc, (ConnectionError, RuntimeError)
+            ) else "No se pudo iniciar sesión con POS Server. Verificá la conexión."
+        if (usuario is None and error_conexion is None
+                and modo_actual() != "cliente" and validar_login(
+                    db_manager, usuario_field.value, clave_field.value)):
             from core.permisos import permisos_todos
 
             usuario = {
@@ -121,24 +125,27 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "permisos": permisos_todos(),
             }
         if usuario:
-            # Obtener una sesión de operador del servidor; el rol se verifica allí.
-            try:
-                import httpx
-                from adapters.entregas import EntregasAdapter, set_session
-                from core.db_factory import _server_url, modo_actual
-                from core.settings import settings
-                base = _server_url() if modo_actual() == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
-                response = httpx.post(base.rstrip("/") + "/pos/auth/login",
-                    json={"usuario": usuario_field.value, "clave": clave_field.value}, timeout=4)
-                if response.status_code == 200:
-                    set_session(response.json()["access_token"])
-                else:
+            # ApiClient ya obtuvo y almacenó la sesión POS en modo cliente.
+            # Repetir el login generaba otro token y podía borrar la sesión
+            # válida si esa segunda solicitud fallaba por timeout.
+            if modo_actual() != "cliente":
+                try:
+                    import httpx
+                    from adapters.entregas import set_session
+                    from core.settings import settings
+                    base = "http://127.0.0.1:" + str(settings.api_port)
+                    response = httpx.post(base + "/pos/auth/login",
+                        json={"usuario": usuario_field.value,
+                              "clave": clave_field.value}, timeout=4)
+                    if response.status_code == 200:
+                        set_session(response.json()["access_token"])
+                    else:
+                        set_session(None)
+                except Exception:
+                    from adapters.entregas import set_session
                     set_session(None)
-            except Exception:
-                from adapters.entregas import set_session
-                set_session(None)
             if recordar_cb.value:
-                _guardar_recordado(usuario_field.value or "", clave_field.value or "")
+                _guardar_recordado(usuario_field.value or "")
             else:
                 _borrar_recordado()
             try:
@@ -146,9 +153,11 @@ def LoginView(db_manager, on_login, page: ft.Page):
             except TypeError:
                 on_login(usuario)
             return
-        error_text.value = "Usuario o clave incorrectos"
+        error_text.value = error_conexion or "Usuario o clave incorrectos"
         error_text.visible = True
-        clave_field.value = ""
+        # Preservar el campo si el fallo es de conexión (no fue validado).
+        if not error_conexion:
+            clave_field.value = ""
         page.update()
         try:
             page.run_task(clave_field.focus)
@@ -168,17 +177,150 @@ def LoginView(db_manager, on_login, page: ft.Page):
                      ft.dropdown.Option("servidor", "Servidor"),
                      ft.dropdown.Option("cliente", "Cliente LAN")])
         url = ft.TextField(label="URL del servidor POS", value=_server_url(), width=290)
-        estado = ft.Text("Se guarda en esta terminal. Reiniciá el POS para aplicar el cambio.", size=12, color=N.AMBER_400)
-        def guardar(e):
-            db_local.set_config("MODO_RED", modo.value)
-            db_local.set_config("SERVER_URL", (url.value or "").strip())
+        clave = ft.TextField(
+            label="Clave LAN de POS Server (opcional si ya está configurada)",
+            password=True, can_reveal_password=True, width=290,
+            hint_text="Pegá la clave copiada desde POS Server",
+        )
+        estado = ft.Text("La clave se guarda en archivo privado de esta terminal (0600), nunca en la URL.", size=12, color=N.AMBER_400)
+        candidatos = ft.Dropdown(label="Servidores encontrados (sin verificar)", width=290,
+            visible=False, options=[])
+        buscar = ft.TextButton("Buscar servidor", icon=ft.Icons.SEARCH)
+        progreso = ft.ProgressRing(width=20, height=20, visible=False)
+
+        def seleccionar_servidor(e):
+            if candidatos.value:
+                url.value = candidatos.value
+                clave.value = ""
+                estado.value = ("Servidor detectado, no autenticado. Confirmá su dirección "
+                                "en POS Server antes de guardar o ingresar credenciales. "
+                                "La búsqueda HTTP no establece una conexión segura.")
+                page.update()
+
+        candidatos.on_change = seleccionar_servidor
+
+        async def buscar_servidores(e):
+            import asyncio
+            from server_manager import escanear_servidor
+            from core.settings import settings
+            buscar.disabled = True
+            progreso.visible = True
+            candidatos.visible = False
+            candidatos.value = None
+            candidatos.options = []
+            estado.value = "Buscando servidores en tu red…"
+            page.update()
+            try:
+                encontrados = await asyncio.to_thread(
+                    escanear_servidor, puerto=settings.api_port)
+                candidatos.options = [ft.dropdown.Option(x, x) for x in encontrados]
+                candidatos.visible = bool(encontrados)
+                estado.value = ("Seleccioná tu servidor y verificá su dirección antes de guardar."
+                                if encontrados else
+                                "No se encontraron servidores HTTP. Si usás conexión segura, "
+                                "utilizá la dirección indicada por POS Server.")
+            except Exception:
+                estado.value = "No se pudo buscar el servidor. Revisá la conexión de red."
+            finally:
+                buscar.disabled = False
+                progreso.visible = False
+                page.update()
+
+        buscar.on_click = buscar_servidores
+
+        from services import client_tls
+        kit_pendiente = None
+        huella = ft.TextField(label="Huella SHA-256 de POS Server",
+            hint_text="Copiala desde la consola del servidor", multiline=True,
+            min_lines=2, max_lines=3, width=320, visible=False)
+        importar = ft.TextButton("Importar kit de conexión", icon=ft.Icons.FOLDER_OPEN)
+
+        async def importar_kit(e):
+            nonlocal kit_pendiente
+            try:
+                from pathlib import Path
+                archivos = await ft.FilePicker().pick_files(
+                    allow_multiple=False, allowed_extensions=["zip"],
+                    file_type=ft.FilePickerFileType.CUSTOM)
+                if not archivos:
+                    return
+                if not archivos[0].path:
+                    raise ValueError("El kit debe seleccionarse desde el POS de escritorio.")
+                kit_pendiente = client_tls.leer_kit(Path(archivos[0].path))
+                url.value = kit_pendiente[0]
+                url.read_only = True
+                buscar.disabled = True
+                candidatos.visible = False
+                modo.value = "cliente"
+                clave.value = ""
+                huella.value = ""
+                huella.visible = True
+                estado.value = ("Kit leído. Confirmá su huella con la que muestra POS Server. "
+                                "No es necesario instalar certificados en el sistema.")
+            except Exception:
+                estado.value = "No se pudo leer el kit. Elegí un ZIP de conexión POS válido."
+            page.update()
+
+        importar.on_click = importar_kit
+
+        codigo_pos = ft.TextField(label="Código de vinculación de caja",
+            hint_text="XXXX-XXXX-XXXX-XXXX", password=True, can_reveal_password=True, width=320)
+        guardar_btn = ft.FilledButton("Guardar conexión")
+        cancelar_btn = ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page))
+
+        async def guardar(e):
+            import asyncio
+            guardar_btn.disabled = True
+            cancelar_btn.disabled = True
+            importar.disabled = True
+            buscar.disabled = True
+            progreso.visible = True
+            page.update()
+            try:
+                if kit_pendiente is not None:
+                    if modo.value != "cliente":
+                        raise ValueError("El kit corresponde a una terminal cliente.")
+                    if url.value != kit_pendiente[0]:
+                        raise ValueError("La dirección debe coincidir con el kit.")
+                    client_tls.guardar_confianza(
+                        kit_pendiente[0], kit_pendiente[1], huella.value or "")
+                elif modo.value == "cliente":
+                    client_tls.opciones_http((url.value or "").strip())
+                if (codigo_pos.value or "").strip():
+                    if modo.value != "cliente":
+                        raise ValueError("El código corresponde a una caja cliente.")
+                    from core.terminal_identity import terminal_id
+                    from core.settings import guardar_credencial_pos
+                    token = await asyncio.to_thread(
+                        client_tls.vincular_pos, (url.value or "").strip(),
+                        codigo_pos.value, terminal_id())
+                    guardar_credencial_pos(token)
+                elif (clave.value or "").strip():
+                    from core.settings import guardar_clave_lan_local, credencial_pos_local
+                    if credencial_pos_local():
+                        raise ValueError("Esta caja ya tiene identidad individual. Usá un código nuevo para vincularla.")
+                    guardar_clave_lan_local(clave.value)
+                db_local.set_config("MODO_RED", modo.value)
+                db_local.set_config("SERVER_URL", (url.value or "").strip())
+            except (ValueError, OSError) as exc:
+                estado.value = str(exc)
+                return
+            finally:
+                guardar_btn.disabled = False
+                cancelar_btn.disabled = False
+                importar.disabled = False
+                buscar.disabled = kit_pendiente is not None
+                progreso.visible = False
+                page.update()
+            codigo_pos.value = ""
+            clave.value = ""
             cerrar_dialogo(page)
             estado.value = "Configuración guardada. Reiniciá el POS."
             page.update()
+        guardar_btn.on_click = guardar
         dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
-            content=ft.Column([modo, url, estado], tight=True, spacing=12),
-            actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
-                     ft.FilledButton("Guardar", on_click=guardar)])
+            content=ft.Column([modo, importar, huella, ft.Row([buscar, progreso]), candidatos, url, codigo_pos, clave, estado], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
+            actions=[cancelar_btn, guardar_btn])
         abrir_dialogo(page, dlg)
 
     tarjeta = ft.Container(
@@ -195,7 +337,7 @@ def LoginView(db_manager, on_login, page: ft.Page):
                 "INGRESAR", icon=ft.Icons.LOGIN, width=320, height=46,
                 style=BTN_PRIMARIO, on_click=ingresar),
             ayuda,
-            ft.TextButton("Configurar conexión LAN de esta terminal", icon=ft.Icons.SETTINGS_ETHERNET, on_click=configurar_red),
+            ft.TextButton("Conectar con mi comercio", icon=ft.Icons.SETTINGS_ETHERNET, on_click=configurar_red),
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
         padding=32, border_radius=14, width=400,
         bgcolor=ft.Colors.with_opacity(0.55, N.DEEP),

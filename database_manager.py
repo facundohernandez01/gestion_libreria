@@ -290,6 +290,9 @@ class DatabaseManager:
                 "ALTER TABLE orden_compra_items ADD COLUMN cantidad_recibida INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE cajas ADD COLUMN usuario_apertura TEXT DEFAULT ''",
                 "ALTER TABLE cajas ADD COLUMN usuario_cierre TEXT DEFAULT ''",
+                "ALTER TABLE cajas ADD COLUMN efectivo_esperado REAL",
+                "ALTER TABLE cajas ADD COLUMN efectivo_contado REAL",
+                "ALTER TABLE cajas ADD COLUMN diferencia_arqueo REAL",
                 "ALTER TABLE ventas ADD COLUMN usuario TEXT DEFAULT ''",
                 "ALTER TABLE gastos ADD COLUMN usuario TEXT DEFAULT ''",
                 "ALTER TABLE movimientos_stock ADD COLUMN usuario TEXT DEFAULT ''",
@@ -432,13 +435,23 @@ class DatabaseManager:
             fila_clave = conn.execute(
                 "SELECT valor FROM config WHERE clave='LOGIN_CLAVE'"
             ).fetchone()
+            from services.passwords import hash_password
+            import secrets
+
             usuario = ((fila_user["valor"] if fila_user else "") or "admin").strip()
-            clave = ((fila_clave["valor"] if fila_clave else "") or "admin").strip()
+            clave = ((fila_clave["valor"] if fila_clave else "") or "").strip()
+            # Sin clave previamente configurada el usuario queda INACTIVO.
+            # La consola física POS Server permite establecer una clave segura.
+            # Nunca crear un administrador remoto con admin/admin.
+            activa = 1 if clave and clave != "admin" and len(clave) >= 12 else 0
+            clave_guardada = hash_password(
+                clave if activa else secrets.token_urlsafe(32)
+            )
             conn.execute(
                 """INSERT INTO usuarios (usuario, clave, nombre, rol_id, activo)
-                   VALUES (?, ?, ?, ?, 1)""",
-                (usuario, clave, "Administrador",
-                 admin_rol["id"] if admin_rol else None),
+                   VALUES (?, ?, ?, ?, ?)""",
+                (usuario, clave_guardada, "Administrador",
+                 admin_rol["id"] if admin_rol else None, activa),
             )
         conn.commit()
 
@@ -551,6 +564,8 @@ class DatabaseManager:
         from core.permisos import normalizar, permisos_todos
 
         data = dict(fila)
+        # Nunca transmitir claves ni hashes a Flet, HTTP o informes.
+        data.pop("clave", None)
         data["activo"] = bool(data.get("activo"))
         data["es_admin"] = bool(data.get("rol_es_admin"))
         data["permisos"] = (permisos_todos() if data["es_admin"]
@@ -624,12 +639,14 @@ class DatabaseManager:
                     if pierde_admin and self._admins_activos(conn, usuario_id) == 0:
                         return 0, "Debe quedar al menos un usuario ADMIN activo"
                     if clave:
+                        from services.passwords import hash_password, validar_nueva_clave
+                        validar_nueva_clave(clave)
                         conn.execute(
                             """UPDATE usuarios SET usuario=?, clave=?, nombre=?,
                                rol_id=?, activo=?,
                                fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?""",
-                            (usuario, clave, nombre or usuario, rol_id, activo,
-                             usuario_id),
+                            (usuario, hash_password(clave), nombre or usuario,
+                             rol_id, activo, usuario_id),
                         )
                     else:
                         conn.execute(
@@ -643,10 +660,12 @@ class DatabaseManager:
                     return usuario_id, ""
                 if not clave:
                     return 0, "Ingresá una clave para el nuevo usuario"
+                from services.passwords import hash_password, validar_nueva_clave
+                validar_nueva_clave(clave)
                 cur = conn.execute(
                     """INSERT INTO usuarios (usuario, clave, nombre, rol_id, activo)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (usuario, clave, nombre or usuario, rol_id, activo),
+                    (usuario, hash_password(clave), nombre or usuario, rol_id, activo),
                 )
                 conn.commit()
                 return int(cur.lastrowid), ""
@@ -681,9 +700,15 @@ class DatabaseManager:
                 return False, str(e)
 
     def autenticar_usuario(self, usuario: str, clave: str) -> Optional[dict]:
+        """Validar rol de usuario real; migrar contraseñas legacy a PBKDF2.
+
+        No existe administrador implícito ni fallback a config/admin/admin.
+        """
+        from services.passwords import hash_password, check_password
+
         usuario = (usuario or "").strip()
-        clave = (clave or "").strip()
-        if not usuario:
+        clave = clave or ""
+        if not usuario or not clave:
             return None
         with self._connect() as conn:
             row = conn.execute(
@@ -693,28 +718,21 @@ class DatabaseManager:
                    WHERE u.usuario=? COLLATE NOCASE""",
                 (usuario,),
             ).fetchone()
-            if row and row["activo"] and str(row["clave"] or "") == clave:
-                return self._usuario_dict(row)
-            # Compatibilidad con la clave única de versiones anteriores.
-            # La clave de Ajustes puede diferir de la clave guardada en usuarios;
-            # ambas deben permitir el acceso del administrador configurado.
-            cfg_user = (self.get_config_value("LOGIN_USUARIO") or "admin").strip()
-            cfg_clave = (self.get_config_value("LOGIN_CLAVE") or "admin").strip()
-            if usuario == cfg_user and clave == cfg_clave:
-                admin = conn.execute(
-                    """SELECT u.*, r.nombre AS rol_nombre,
-                              r.es_admin AS rol_es_admin, r.permisos AS rol_permisos
-                       FROM usuarios u JOIN roles r ON r.id=u.rol_id
-                       WHERE r.es_admin=1 ORDER BY u.id LIMIT 1"""
-                ).fetchone()
-                if admin:
-                    return self._usuario_dict(admin)
-                from core.permisos import permisos_todos
-
-                return {"id": 0, "usuario": cfg_user, "nombre": "Administrador",
-                        "rol": "ADMIN", "rol_id": 0, "es_admin": True,
-                        "activo": True, "permisos": permisos_todos()}
-        return None
+            if not row or not row["activo"]:
+                return None
+            # Contraseñas heredadas triviales no deben habilitar ADMIN por LAN.
+            if row["rol_es_admin"] and clave.casefold() in ("admin", "1234", "password"):
+                return None
+            ok, migrar = check_password(str(row["clave"] or ""), clave)
+            if not ok:
+                return None
+            if migrar:
+                conn.execute(
+                    "UPDATE usuarios SET clave=?,fecha_modificacion=CURRENT_TIMESTAMP "
+                    "WHERE id=?", (hash_password(clave), row["id"]),
+                )
+                conn.commit()
+            return self._usuario_dict(row)
 
     # ---------- productos ----------
     def buscar_productos(self, termino: str = "", campo: str = "descripcion", limit: int = 200) -> List[dict]:
@@ -1774,30 +1792,50 @@ class DatabaseManager:
             conn.commit()
             return int(cur.lastrowid)
 
-    def cerrar_caja(self, caja_id: int, observaciones: str = "") -> bool:
+    def obtener_resumen_caja(self, caja_id: int) -> dict:
+        """Resumen unificado local/cliente con todas las ventas del turno."""
+        from services.caja_cierre import resumen_caja
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            resultado = resumen_caja(conn, caja_id)
+            conn.commit()
+            return resultado
+
+    def cerrar_caja_arqueo(self, caja_id: int, importe_contado: float,
+                           observaciones: str = "",
+                           snapshot: dict | None = None) -> dict:
+        """Operación transaccional; errores visibles para el operador."""
+        from services.caja_cierre import cerrar_caja
+
         with self._connect() as conn:
             try:
-                cur = conn.execute("SELECT SUM(total) FROM ventas WHERE caja_id=? AND estado='completada'", (caja_id,))
-                total_ventas = cur.fetchone()[0] or 0
-                cur = conn.execute("SELECT SUM(monto) FROM gastos WHERE caja_id=?", (caja_id,))
-                total_gastos = cur.fetchone()[0] or 0
-                cur = conn.execute("SELECT importe_apertura FROM cajas WHERE id=?", (caja_id,))
-                row = cur.fetchone()
-                if not row:
-                    return False
-                cierre = float(row[0]) + float(total_ventas) - float(total_gastos)
-                conn.execute(
-                    """UPDATE cajas SET fecha_cierre=?, importe_cierre=?,
-                       total_ventas=?, total_gastos=?, observaciones_cierre=?,
-                       usuario_cierre=?, estado='cerrada' WHERE id=?""",
-                    (datetime.now(), cierre, total_ventas, total_gastos,
-                     observaciones or "", self._usuario(), caja_id),
+                conn.execute("BEGIN IMMEDIATE")
+                result = cerrar_caja(
+                    conn, caja_id, importe_contado=importe_contado,
+                    observaciones=observaciones, usuario=self._usuario(),
+                    snapshot=snapshot,
                 )
                 conn.commit()
-                return True
-            except Exception as e:  # noqa: BLE001
+                return result
+            except Exception:
                 conn.rollback()
-                logger.error("cerrar_caja: %s", e)
+                raise
+
+    def cerrar_caja(self, caja_id: int, observaciones: str = "") -> bool:
+        """Compatibilidad con llamadas sin arqueo de versiones anteriores."""
+        from services.caja_cierre import cerrar_caja
+
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                cerrar_caja(conn, caja_id, observaciones=observaciones,
+                            usuario=self._usuario())
+                conn.commit()
+                return True
+            except (ValueError, sqlite3.Error) as exc:
+                conn.rollback()
+                logger.warning("cerrar_caja: %s", exc)
                 return False
 
     # ---------- ventas (ATÓMICA) ----------
@@ -2013,15 +2051,30 @@ class DatabaseManager:
 
     # ---------- gastos ----------
     def agregar_gasto(self, caja_id: int, monto: float, concepto: str) -> int:
-        if not concepto or not concepto.strip() or float(monto) <= 0:
+        from decimal import Decimal, InvalidOperation
+        try:
+            importe = Decimal(str(monto))
+        except (ValueError, TypeError, InvalidOperation):
+            return 0
+        if not concepto or not concepto.strip() or not importe.is_finite() or importe <= 0:
             return 0
         with self._connect() as conn:
             try:
+                conn.execute("BEGIN IMMEDIATE")
+                # El gasto y el cierre comparten el lock de SQLite: después
+                # de cerrar no se permite alterar el arqueo histórico.
+                abierta = conn.execute(
+                    "SELECT 1 FROM cajas WHERE id=? AND estado='abierta'",
+                    (int(caja_id),),
+                ).fetchone()
+                if not abierta:
+                    conn.rollback()
+                    return 0
                 cur = conn.execute(
                     """INSERT INTO gastos
                        (caja_id, monto, concepto, fecha, usuario)
                        VALUES (?, ?, ?, ?, ?)""",
-                    (caja_id, float(monto), concepto.strip(), datetime.now(),
+                    (caja_id, float(importe), concepto.strip(), datetime.now(),
                      self._usuario()),
                 )
                 conn.commit()

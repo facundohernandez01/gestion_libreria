@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox, simpledialog
 
 from core.settings import settings
 from server_manager import server_manager, ip_lan
+from services.lan_https import host_backend, url_visible
 
 
 class ServerConsole:
@@ -20,7 +21,7 @@ class ServerConsole:
     ONLINE_SECONDS = 90
 
     def __init__(self, host="0.0.0.0", port=None):
-        self.host = host
+        self.host = host_backend(host)
         self.port = port or settings.api_port
         self.root = tk.Tk()
         self.root.title("IntraShop | Panel del servidor")
@@ -29,6 +30,7 @@ class ServerConsole:
         self.root.configure(bg="#f3f5f9")
         self._closing = False
         self._loading = False
+        self._refresh_requested = False
         self._timer = None
         self._tray = None
         self._tray_available = False
@@ -37,9 +39,13 @@ class ServerConsole:
         self._single_port = 49000 + (int(self.port) % 1000)
         self._init_single_instance()
         self.status = tk.StringVar(value="Iniciando servidor…")
-        self.url = tk.StringVar(value="http://" + ip_lan() + ":" + str(self.port))
+        self.url = tk.StringVar(value=url_visible(ip_lan(), self.port))
         self.summary = tk.StringVar(value="Cargando dispositivos…")
         self.notice = tk.StringVar(value="")
+        self._admin_unlock_until = 0.0
+        self._admin_fails = 0
+        self._admin_fail_since = 0.0
+        self.mostrar_eliminados = tk.BooleanVar(value=False)
         self._style()
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -141,13 +147,31 @@ class ServerConsole:
         head = ttk.Frame(page, style="Page.TFrame")
         head.pack(fill="x", pady=(0, 12))
         ttk.Label(head, textvariable=self.status, style="Sub.TLabel").pack(side="left")
-        ttk.Label(head, textvariable=self.url, style="Sub.TLabel").pack(side="right")
+        # La dirección técnica sigue disponible en Ajustes, no en la portada.
         controls = ttk.Frame(page, style="Page.TFrame")
-        controls.pack(fill="x", pady=(0, 12))
-        for label, action in (("Iniciar servidor", self.start), ("Detener servidor", self.stop),
-                              ("Abrir tienda", self.open_intrashop), ("Abrir administración", self.open_admin),
-                              ("Actualizar", self.refresh)):
-            ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 8))
+        controls.pack(fill="x", pady=(0, 10))
+        for label, action in (
+            ("Abrir tienda", self.open_intrashop),
+            ("Administración", self.open_admin),
+            ("Instalar / conectar equipo", self.distribution_wizard),
+        ):
+            ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 7))
+        settings_button = ttk.Menubutton(controls, text="Ajustes")
+        settings_menu = tk.Menu(settings_button, tearoff=0)
+        settings_menu.add_command(label="Iniciar servidor", command=self.start)
+        settings_menu.add_command(label="Detener servidor", command=self.stop)
+        settings_menu.add_command(label="Actualizar estado", command=self.refresh)
+        settings_menu.add_separator()
+        settings_menu.add_command(label="Cambiar contraseña de administrador", command=self.configure_admin_password)
+        advanced = tk.Menu(settings_menu, tearoff=0)
+        advanced.add_command(label="Información de conexión", command=lambda: messagebox.showinfo(
+            "Información de conexión", self.url.get(), parent=self.root))
+        advanced.add_command(label="Configurar HTTPS local", command=self.configure_https_ip)
+        advanced.add_command(label="Copiar clave LAN", command=self.copy_lan_key)
+        settings_menu.add_command(label="Cajas vinculadas", command=self.administrar_cajas_vinculadas)
+        settings_menu.add_cascade(label="Diagnóstico avanzado", menu=advanced)
+        settings_button.configure(menu=settings_menu)
+        settings_button.pack(side="right")
         ttk.Label(page, textvariable=self.summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
 
         notebook = ttk.Notebook(page)
@@ -161,13 +185,38 @@ class ServerConsole:
         notebook.add(sessions, text="Operadores POS")
         notebook.add(pending_tab, text="Conciliación")
 
-        ttk.Label(devices, text="Verde: actividad en los últimos 90 segundos. Gris: sin señal reciente.").pack(anchor="w", pady=(0, 8))
+        ttk.Label(
+            devices,
+            text="Administrá tus tótems y sus cobros. Seleccioná un equipo para ver sus acciones.",
+            wraplength=900,
+        ).pack(anchor="w", pady=(0, 8))
         self.totems = self._table(devices, [
-            ("estado", "Estado", 110), ("nombre", "Nombre", 220), ("id", "Identificador", 260),
-            ("ip", "IP registrada", 140), ("contacto", "Último contacto", 170), ("qr", "QR", 145)])
-        ttk.Button(devices, text="Configurar QR del tótem seleccionado", command=self.configure_totem_qr).pack(anchor="w", pady=(8, 0))
+            ("estado", "Estado", 105), ("nombre", "Nombre", 155), ("id", "Identificador", 145),
+            ("ip", "IP vinculada", 120), ("observada", "IP observada", 115),
+            ("contacto", "Último contacto", 155), ("qr", "QR", 105)])
+        actions_totems = ttk.Frame(devices)
+        actions_totems.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions_totems, text="Crear tótem", command=self.provision_totem).pack(side="left", padx=(0, 8))
+        ttk.Button(actions_totems, text="Buscar equipos", command=self.scan_lan).pack(side="left", padx=(0, 8))
+        device_actions = ttk.Menubutton(actions_totems, text="Acciones del tótem")
+        device_menu = tk.Menu(device_actions, tearoff=0)
+        for label, action in (
+            ("Generar código de acceso", self.generate_pair_code),
+            ("Configurar QR", self.configure_totem_qr),
+            ("Cambiar nombre", self.rename_totem),
+            ("Vincular equipo por IP", self.bind_totem_ip),
+            ("Quitar dirección vinculada (conservar QR)", self.unbind_totem_ip),
+            ("Eliminar tótem…", self.delete_totem),
+            ("Restaurar tótem eliminado", self.restore_totem),
+        ):
+            device_menu.add_command(label=label, command=action)
+        device_actions.configure(menu=device_menu)
+        device_actions.pack(side="left", padx=(0, 8))
+        ttk.Checkbutton(actions_totems, text="Mostrar eliminados", variable=self.mostrar_eliminados,
+                        command=self.refresh).pack(side="right")
         self.totems.tag_configure("online", foreground="#12834a")
         self.totems.tag_configure("offline", foreground="#7a8799")
+        self.totems.tag_configure("retired", foreground="#b07050")
 
         ttk.Label(assignments, text="Desvincular no elimina el POS ni el QR en Mercado Pago.", wraplength=800).pack(anchor="w", pady=(0, 8))
         self.qr_tree = self._table(assignments, [
@@ -176,7 +225,7 @@ class ServerConsole:
         actions = ttk.Frame(assignments)
         actions.pack(fill="x", pady=10)
         ttk.Button(actions, text="Desvincular QR seleccionado", command=self.unbind_qr).pack(side="left")
-        ttk.Button(actions, text="Actualizar asignaciones", command=self.refresh).pack(side="left", padx=8)
+        # La actualización general está disponible en Ajustes.
 
         ttk.Label(sessions, text="Sesiones de operadores con acceso vigente").pack(anchor="w", pady=(0, 8))
         self.clients = self._table(sessions, [("operador", "Operador", 240), ("expira", "Válida hasta", 200)])
@@ -184,7 +233,7 @@ class ServerConsole:
         self.pending_tree = self._table(pending_tab, [("id", "Checkout", 260), ("estado", "Estado", 110), ("pos", "POS Mercado Pago", 220), ("total", "Total", 110)])
         ttk.Button(pending_tab, text="Verificar pago y conciliar", command=self.reconcile_selected).pack(anchor="w", pady=4)
         ttk.Button(pending_tab, text="Liberar tras verificar en Mercado Pago", command=self.release_selected).pack(anchor="w", pady=4)
-        ttk.Button(pending_tab, text="Copiar ID", command=self.copy_checkout_id).pack(anchor="w", pady=4)
+        # Copiar ID permanece disponible en el menú contextual.
         # Acciones por fila: nunca eliminar cobros, reservas o sesiones
         # directamente desde el menú contextual.
         for table, kind in ((self.totems, "totem"), (self.qr_tree, "qr"),
@@ -203,9 +252,13 @@ class ServerConsole:
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Actualizar listado", command=self.refresh)
         if kind == "totem":
+            menu.add_command(label="Vincular / cambiar IP…", command=self.bind_totem_ip)
+            menu.add_command(label="Quitar dirección vinculada (conservar QR)", command=self.unbind_totem_ip)
             menu.add_command(label="Configurar QR…", command=self.configure_totem_qr)
+            menu.add_command(label="Generar código de acceso al tótem", command=self.generate_pair_code)
             menu.add_command(label="Editar nombre del tótem", command=self.rename_totem)
-            menu.add_command(label="Eliminar tótem sin asignaciones", command=self.delete_totem)
+            menu.add_command(label="Eliminar tótem…", command=self.delete_totem)
+            menu.add_command(label="Restaurar tótem eliminado", command=self.restore_totem)
         elif kind == "qr":
             menu.add_command(label="Desvincular asignación QR", command=self.unbind_qr)
         elif kind == "checkout":
@@ -220,8 +273,748 @@ class ServerConsole:
             menu.grab_release()
             menu.destroy()
 
+    def configure_https_ip(self):
+        """Configurar TLS nativo sin comandos externos ni cambios al .env."""
+        import os
+        import ssl
+        import httpx
+        from services.native_https import prepare, activate, load, PROFILE
+        from services.lan_https import habilitado, perfil_nativo
+        if not self._autorizar_kit_instalacion():
+            return
+        if habilitado():
+            messagebox.showinfo("Conexión segura", "Ya existe HTTPS configurado. No se reemplazará la CA ni el proxy existente.", parent=self.root)
+            return
+        ip = ip_lan()
+        if not messagebox.askyesno("Preparar conexión segura",
+            f"Se generará un certificado privado para https://{ip}. Se reiniciará el servicio. "
+            "El puerto 443 debe estar disponible; Linux puede requerir permisos de enlace. "
+            "Realizá esta operación fuera del horario de cobros. ¿Continuar?", parent=self.root):
+            return
+        self.notice.set("Preparando conexión segura…")
+        def worker():
+            try:
+                # Probe the real address before changing the running service.
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+                    probe.bind((ip, 443))
+                profile = prepare(ip)
+                server_manager.detener()
+                activate(profile)
+                server_manager.iniciar(host=ip, port=443)
+                ctx=ssl.create_default_context(cafile=profile["ca"])
+                result=httpx.get(profile["url"]+"/health",verify=ctx,trust_env=False,timeout=5)
+                if result.status_code != 200 or result.json().get("service") != "pos-lan":
+                    raise RuntimeError("No se pudo comprobar el servicio HTTPS.")
+                self.root.after(0, lambda: self.notice.set("HTTPS activo. Ya podés exportar los kits de conexión."))
+            except Exception as exc:
+                msg=str(exc)
+                # Never automatically fall back to plaintext after activating TLS.
+                self.root.after(0, lambda: messagebox.showerror("HTTPS local",msg,parent=self.root))
+            finally:
+                self.root.after(0,self.refresh)
+        threading.Thread(target=worker,daemon=True).start()
+
+    def _autorizar_kit_instalacion(self) -> bool:
+        """Clave ADMIN del comercio, sesión local de 10 minutos y límite de intentos."""
+        from database_manager import DatabaseManager
+
+        now = time.monotonic()
+        if now < self._admin_unlock_until:
+            return True
+        if now - self._admin_fail_since > 600:
+            self._admin_fails = 0
+        if self._admin_fails >= 5:
+            messagebox.showerror(
+                "Administración temporalmente bloqueada",
+                "Demasiados intentos. Volvé a intentarlo después de 10 minutos.",
+                parent=self.root,
+            )
+            return False
+        usuario = simpledialog.askstring(
+            "Autorizar kit de instalación",
+            "Usuario ADMIN de este comercio:", parent=self.root,
+        )
+        if not usuario:
+            return False
+        clave = simpledialog.askstring(
+            "Autorizar kit de instalación",
+            "Contraseña de administración:", show="*", parent=self.root,
+        )
+        if clave is None:
+            return False
+        try:
+            actor = DatabaseManager(settings.db_path).autenticar_usuario(usuario, clave)
+        except Exception:
+            actor = None
+        # No almacenar credenciales en memoria, logs, URL ni manifest.
+        clave = None
+        if not actor or not actor.get("es_admin") or not actor.get("activo"):
+            if self._admin_fails == 0:
+                self._admin_fail_since = now
+            self._admin_fails += 1
+            messagebox.showerror(
+                "Administración no autorizada",
+                "Las credenciales no son de un administrador activo. "
+                "Si todavía no configuraste uno, utilizá «Clave ADMIN» "
+                "desde la consola local de POS Server.",
+                parent=self.root,
+            )
+            return False
+        self._admin_fails = 0
+        self._admin_unlock_until = time.monotonic() + 10 * 60
+        return True
+
+    def generar_codigo_pos(self):
+        from services.lan_https import habilitado
+        from services.pos_device_credentials import emitir_codigo
+        if not habilitado():
+            messagebox.showinfo("Vincular caja", "Prepará primero la conexión segura.", parent=self.root)
+            return
+        if not self._autorizar_kit_instalacion():
+            return
+        nombre = simpledialog.askstring("Vincular caja", "Nombre de la caja:", parent=self.root)
+        if not nombre:
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                code = emitir_codigo(conn, nombre)
+            messagebox.showinfo("Código de vinculación", "Ingresá este código en el POS cliente. Válido 10 minutos y de un solo uso.\n\n" + code, parent=self.root)
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("Vincular caja", str(exc), parent=self.root)
+
+    def administrar_cajas_vinculadas(self):
+        from services.pos_device_credentials import listar, revocar, modo_estricto, configurar_modo_estricto
+        if not self._autorizar_kit_instalacion():
+            return
+        window = tk.Toplevel(self.root)
+        window.title("Cajas vinculadas")
+        window.geometry("650x350")
+        pane = ttk.Frame(window, padding=12)
+        pane.pack(fill="both", expand=True)
+        table = self._table(pane, [("nombre", "Caja", 180), ("id", "Identificador", 280), ("estado", "Estado", 110)])
+
+        policy_label = tk.StringVar()
+        ttk.Label(pane, textvariable=policy_label, wraplength=600).pack(anchor="w", pady=6)
+
+        def refresh():
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                rows = listar(conn)
+                strict = modo_estricto(conn)
+            policy_label.set("Seguridad estricta activa" if strict else "Compatibilidad: aún se admiten claves compartidas")
+            policy_button.configure(text="Volver a compatibilidad" if strict else "Activar seguridad estricta")
+            table.delete(*table.get_children())
+            for tid, nombre, _, revoked in rows:
+                table.insert("", "end", values=(nombre, tid, "Revocada" if revoked else "Autorizada"))
+
+        def retirar():
+            selected = table.selection()
+            if not selected:
+                return
+            nombre, tid, _ = table.item(selected[0], "values")
+            if not messagebox.askyesno("Revocar credencial", "¿Revocar la credencial individual de " + nombre + "? No se eliminan ventas ni QR.", parent=window):
+                return
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.execute("BEGIN IMMEDIATE")
+                revocar(conn, tid)
+            refresh()
+
+        def cambiar_politica():
+            if not self._autorizar_kit_instalacion():
+                return
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                enabled = not modo_estricto(conn)
+            detail = ("Confirmá que TODAS tus cajas fueron vinculadas. Las cajas con claves compartidas perderán acceso. "
+                      "No se modifican ventas ni QR." if enabled else
+                      "Volver a compatibilidad permite nuevamente las claves compartidas. Usalo solo durante una migración.")
+            if not messagebox.askyesno("Cambiar seguridad de cajas", detail, parent=window):
+                return
+            try:
+                with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                    conn.execute("BEGIN IMMEDIATE")
+                    configurar_modo_estricto(conn, enabled)
+            except (ValueError, sqlite3.Error) as exc:
+                messagebox.showerror("Seguridad de cajas", str(exc), parent=window)
+            refresh()
+
+        actions = ttk.Frame(pane)
+        actions.pack(fill="x", pady=8)
+        ttk.Button(actions, text="Revocar credencial", command=retirar).pack(side="left")
+        policy_button = ttk.Button(actions, command=cambiar_politica)
+        policy_button.pack(side="right")
+        refresh()
+
+    def distribution_wizard(self):
+        """Asistente de primera conexión POS/Server/Tótem con artefactos reales.
+
+        Sin claves ni cookies embebidas en enlaces o ZIP. Nunca declara
+        instalado un Tauri si no hay una compilación Windows disponible.
+        """
+        from pathlib import Path
+        from tkinter import filedialog
+        from services import installation_kits as kits
+
+        window = tk.Toplevel(self.root)
+        window.title("IntraShop · Instalar o conectar un equipo")
+        window.geometry("710x550")
+        window.minsize(575, 455)
+        window.transient(self.root)
+        pane = ttk.Frame(window, padding=18)
+        pane.pack(fill="both", expand=True)
+        ttk.Label(pane, text="Asistente de instalación",
+                  font=("Arial", 18, "bold")).pack(anchor="w", pady=(0, 4))
+        ttk.Label(
+            pane,
+            text="Un único sistema · Elegí qué función cumplirá este equipo.",
+            wraplength=610,
+        ).pack(anchor="w", pady=(0, 10))
+        role = tk.StringVar(value="totem")
+        options = ttk.Frame(pane)
+        options.pack(fill="x", pady=(0, 10))
+        for identifier, title in (
+            ("servidor", "POS Server · Servidor"),
+            ("pos", "POS · Caja"),
+            ("totem", "IntraShop · Tótem"),
+        ):
+            ttk.Radiobutton(
+                options, text=title, variable=role, value=identifier,
+            ).pack(side="left", padx=(0, 12))
+        url = url_visible(ip_lan(), self.port)
+        current = tk.StringVar(value="")
+        builds = tk.StringVar(value="")
+        steps = tk.Text(
+            pane, height=11, wrap="word", background="#f4f7fc",
+            foreground="#223048", relief="flat", padx=14, pady=12,
+            font=("Arial", 10),
+        )
+        steps.pack(fill="both", expand=True)
+        ttk.Label(pane, textvariable=current, wraplength=615).pack(
+            anchor="w", pady=(11, 3),
+        )
+        ttk.Label(pane, textvariable=builds, wraplength=615).pack(
+            anchor="w", pady=(0, 6),
+        )
+        actions = ttk.Frame(pane)
+        actions.pack(fill="x", pady=(6, 0))
+        copy_button = ttk.Button(actions, text="Copiar enlace")
+        copy_button.pack(side="left", padx=(0, 7))
+        web_button = ttk.Button(actions, text="Abrir tienda")
+        web_button.pack(side="left", padx=(0, 7))
+        export_button = ttk.Button(actions, text="Exportar kit de conexión…")
+        export_button.pack(side="left", padx=(0, 7))
+        build_button = ttk.Button(actions, text="Ver ejecutables")
+        build_button.pack(side="left", padx=(0, 7))
+        advanced_button = ttk.Menubutton(pane, text="Ayuda de conexión")
+        advanced_menu = tk.Menu(advanced_button, tearoff=0)
+        advanced_menu.add_command(label="Preparar conexión segura", command=self.configure_https_ip)
+        advanced_menu.add_command(label="Generar código para caja", command=self.generar_codigo_pos)
+        advanced_menu.add_command(label="Cajas vinculadas", command=self.administrar_cajas_vinculadas)
+        advanced_menu.add_command(label="Importar paquete de compilaciones…", command=lambda: import_suite())
+        advanced_menu.add_command(label="Información técnica", command=lambda: messagebox.showinfo(
+            "Información técnica", url, parent=window))
+        advanced_button.configure(menu=advanced_menu)
+        advanced_button.pack(anchor="w", pady=(12, 0))
+
+        def refresh(*_):
+            nonlocal url
+            url = url_visible(ip_lan(), self.port)
+            selected = role.get()
+            available = kits.listar_instaladores()
+            role_builds = available[selected]
+            if selected == "servidor":
+                detail = (
+                    "1. Usá este equipo como servidor principal del comercio.\n"
+                    "2. Creá tus cajas y tótems desde Administración.\n"
+                    "3. Prepará la conexión de los demás equipos desde este asistente.\n\n"
+                    "El servidor conserva los productos, ventas y pedidos."
+                )
+            elif selected == "pos":
+                detail = (
+                    "1. Instalá la aplicación de caja en el equipo.\n"
+                    "2. Exportá el kit de conexión y llevalo a la caja.\n"
+                    "3. Seguí las instrucciones del kit para autorizar el comercio.\n"
+                    "4. Iniciá sesión con tu usuario de caja.\n\n"
+                    "El kit no incluye contraseñas."
+                )
+            else:
+                detail = (
+                    "1. Prepará el tótem en la lista de equipos del servidor.\n"
+                    "2. Exportá el kit de conexión y llevalo al equipo.\n"
+                    "3. Seguí las instrucciones del kit y abrí la tienda.\n"
+                    "4. Ingresá el código de acceso generado desde Acciones del tótem.\n\n"
+                    "El nombre y el QR se conservan en el servidor."
+                )
+            steps.configure(state="normal")
+            steps.delete("1.0", "end")
+            steps.insert("1.0", detail)
+            steps.configure(state="disabled")
+            if not url.startswith("https://"):
+                current.set(
+                    "Conexión segura pendiente. Abrí «Ayuda de conexión» para prepararla."
+                )
+            else:
+                current.set("Conexión segura preparada. Comprobá el estado del servidor antes de continuar.")
+            builds.set(
+                "Instaladores encontrados: " +
+                (", ".join(entry["nombre"] for entry in role_builds) if role_builds
+                 else "ninguno compilado para este perfil.")
+            )
+            tls_ready = url.startswith("https://")
+            try:
+                _, fingerprint = kits.datos_ca()
+            except (ValueError, OSError):
+                fingerprint = None
+            if tls_ready and not fingerprint:
+                current.set(
+                    "Falta completar la preparación de la conexión. Abrí «Ayuda de conexión»."
+                )
+            export_button.configure(state="normal" if tls_ready and fingerprint
+                                    and selected in ("pos", "totem") else "disabled")
+            copy_button.configure(state="normal" if tls_ready and selected == "totem" else "disabled")
+            web_button.configure(state="normal" if tls_ready and selected == "totem" else "disabled")
+            build_button.configure(state="normal" if role_builds else "disabled")
+
+        def import_suite():
+            if not self._autorizar_kit_instalacion():
+                return
+            archive = filedialog.askopenfilename(parent=window, title="Seleccionar artefacto intrashop-suite de GitHub Actions", filetypes=[("ZIP", "*.zip")])
+            if not archive:
+                return
+            if not messagebox.askyesno("Importar compilaciones", "Importá solamente el ZIP descargado desde tu repositorio de confianza. Se reemplazará el conjunto anterior de instaladores. Se verifica SHA-256, no la firma digital. ¿Continuar?", parent=window):
+                return
+            import threading
+            current.set("Verificando y copiando compilaciones…")
+            def worker():
+                try:
+                    count = kits.importar_suite(Path(archive))
+                    def done():
+                        if window.winfo_exists():
+                            refresh()
+                            messagebox.showinfo("Compilaciones importadas", f"{count} archivos verificados.", parent=window)
+                    window.after(0, done)
+                except Exception as exc:
+                    error = str(exc)
+                    def failed():
+                        if window.winfo_exists():
+                            refresh()
+                            messagebox.showerror("No se importó el paquete", error, parent=window)
+                    window.after(0, failed)
+            threading.Thread(target=worker, daemon=True).start()
+
+        def copy_link():
+            # Sólo URL, nunca token, contraseña o código temporal en query.
+            link = url + "/intrashop/"
+            window.clipboard_clear()
+            window.clipboard_append(link)
+            messagebox.showinfo("Enlace copiado", link, parent=window)
+
+        def export_kit():
+            if not self._autorizar_kit_instalacion():
+                return
+            target = filedialog.asksaveasfilename(
+                parent=window, title="Exportar kit público de conexión",
+                initialfile=f"intrashop-conexion-{role.get()}.zip",
+                defaultextension=".zip",
+                filetypes=[("Kit de conexión ZIP", "*.zip")],
+            )
+            if not target:
+                return
+            try:
+                result = kits.crear_kit_conexion(Path(target), url, role.get())
+            except (ValueError, OSError) as exc:
+                messagebox.showerror("Kit no generado", str(exc), parent=window)
+                return
+            messagebox.showinfo(
+                "Kit de conexión creado",
+                "Se generó el kit sin contraseñas ni tokens:\n"
+                + result["archivo"] + "\n\n"
+                "Huella de CA: " + result["sha256_ca"] +
+                "\n\nVerificala en la PC cliente antes de aprobar el certificado.",
+                parent=window,
+            )
+
+        def view_builds():
+            found = kits.listar_instaladores().get(role.get(), [])
+            if not found:
+                messagebox.showinfo(
+                    "Sin ejecutables publicados",
+                    "Aún no hay compilaciones disponibles. El sistema "
+                    "no genera ni anuncia enlaces de descarga falsos.",
+                    parent=window,
+                )
+                return
+            # Se abre la carpeta local de builds que maneja el administrador,
+            # no se publica por una API anónima de la LAN.
+            import subprocess
+            import os
+            import shutil
+            directory = str(kits.BUILD_DIR)
+            try:
+                if os.name == "nt":
+                    os.startfile(directory)
+                elif shutil.which("xdg-open"):
+                    subprocess.Popen(["xdg-open", directory])
+                else:
+                    raise OSError("No hay explorador de archivos instalado.")
+            except OSError as exc:
+                messagebox.showerror("Ejecutables", str(exc), parent=window)
+
+        copy_button.configure(command=copy_link)
+        web_button.configure(command=lambda: webbrowser.open(url + "/intrashop/"))
+        export_button.configure(command=export_kit)
+        build_button.configure(command=view_builds)
+        role.trace_add("write", refresh)
+        refresh()
+
+    def configure_admin_password(self):
+        """Primer uso físico o rotación autorizada; nunca reset remoto sin clave."""
+        from services.passwords import hash_password, validar_nueva_clave
+        from database_manager import DatabaseManager
+
+        try:
+            with sqlite3.connect(settings.db_path) as conn:
+                ya_configurado = conn.execute(
+                    """SELECT COUNT(*) FROM usuarios u JOIN roles r ON r.id=u.rol_id
+                       WHERE u.activo=1 AND r.es_admin=1"""
+                ).fetchone()[0] > 0
+        except sqlite3.Error as exc:
+            messagebox.showerror("ADMIN", str(exc), parent=self.root)
+            return
+        if ya_configurado and not self._autorizar_kit_instalacion():
+            return
+        first = simpledialog.askstring(
+            "Contraseña ADMIN segura",
+            "Nueva contraseña del administrador (mínimo 12 caracteres):",
+            show="*", parent=self.root,
+        )
+        if first is None:
+            return
+        second = simpledialog.askstring(
+            "Confirmar contraseña ADMIN",
+            "Repetí la contraseña para confirmar:",
+            show="*", parent=self.root,
+        )
+        if second is None:
+            return
+        try:
+            validar_nueva_clave(first)
+            if first != second:
+                raise ValueError("Las contraseñas no coinciden.")
+        except ValueError as exc:
+            messagebox.showerror("Contraseña ADMIN", str(exc), parent=self.root)
+            return
+        if not messagebox.askyesno(
+            "Confirmar cambio ADMIN",
+            "Esta operación reemplaza la clave del primer usuario ADMIN "
+            "del servidor y lo activa. Revocará las sesiones abiertas y "
+            "deshabilitará el acceso por clave legacy.\n\n"
+            "¿Aplicar la contraseña nueva?",
+            parent=self.root,
+        ):
+            return
+        try:
+            DatabaseManager(settings.db_path)
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                row = conn.execute(
+                    """SELECT u.id,u.usuario FROM usuarios u
+                       JOIN roles r ON r.id=u.rol_id
+                       WHERE r.es_admin=1 ORDER BY u.id LIMIT 1"""
+                ).fetchone()
+                if row is None:
+                    raise ValueError("No existe el usuario ADMIN.")
+                conn.execute(
+                    "UPDATE usuarios SET clave=?,activo=1,"
+                    "fecha_modificacion=CURRENT_TIMESTAMP WHERE id=?",
+                    (hash_password(first), row["id"]),
+                )
+                # El acceso legacy ya no se usa; no retener la antigua clave
+                # en texto plano dentro de config.
+                conn.execute("DELETE FROM config WHERE clave='LOGIN_CLAVE'")
+                conn.commit()
+            from pos_auth import _sessions, _lock
+            with _lock:
+                _sessions.clear()
+            self._admin_unlock_until = 0.0
+            self.notice.set(
+                "Contraseña ADMIN actualizada y sesiones anteriores revocadas."
+            )
+            messagebox.showinfo(
+                "ADMIN configurado",
+                f"Se activó el usuario «{row['usuario']}» con la contraseña nueva.",
+                parent=self.root,
+            )
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo configurar ADMIN", str(exc),
+                                 parent=self.root)
+
+    def copy_lan_key(self):
+        """La clave se entrega sólo a un operador con acceso físico a esta PC."""
+        if not self._autorizar_kit_instalacion():
+            return
+        if not messagebox.askyesno(
+            "Clave de conexión de POS Server",
+            "Esta clave permite acceder a las operaciones LAN del servidor.\n"
+            "Compartila únicamente con terminales POS autorizadas y pegala "
+            "en Configurar conexión LAN.\n\n"
+            "¿Copiar al portapapeles de esta PC?",
+            parent=self.root,
+        ):
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(settings.api_key)
+        self.notice.set(
+            "Clave copiada. Pegala en Configurar conexión LAN del POS "
+            "y borrá el portapapeles después."
+        )
+
+    def scan_lan(self):
+        """Búsqueda solicitada desde la GUI, nunca automática.
+
+        Solo muestra IPs detectadas. Al seleccionar una ofrece la IP como
+        propuesta en el mismo diálogo de confirmación de vínculo.
+        """
+        from services.lan_discovery import detectar_lan
+
+        try:
+            own_ip = ip_lan()
+            if not messagebox.askyesno(
+                "Buscar equipos en la LAN",
+                f"Se enviará un único ping a las IP de la red /24 de {own_ip}.\n"
+                "No se escanean puertos, no se asignan QR y no se modifica ningún equipo.\n\n"
+                "¿Continuar?",
+                parent=self.root,
+            ):
+                return
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("LAN", str(exc))
+            return
+        window = tk.Toplevel(self.root)
+        window.title("Equipos detectados en la red local")
+        window.geometry("570x455")
+        window.transient(self.root)
+        frame = ttk.Frame(window, padding=15)
+        frame.pack(fill="both", expand=True)
+        status = tk.StringVar(value="Consultando IPs del segmento LAN…")
+        ttk.Label(frame, textvariable=status, wraplength=530).pack(
+            anchor="w", pady=(0, 10),
+        )
+        ttk.Label(
+            frame,
+            text="Una IP detectada no prueba que sea una PC ni que sea confiable. "
+                 "La vinculación de un tótem siempre requiere confirmación.",
+            wraplength=530,
+        ).pack(anchor="w", pady=(0, 10))
+        table = ttk.Treeview(
+            frame, columns=("ip", "estado"), show="headings", selectmode="browse",
+            height=12,
+        )
+        table.heading("ip", text="Dirección IP")
+        table.heading("estado", text="Detección")
+        table.column("ip", width=175, minwidth=130)
+        table.column("estado", width=320, minwidth=200)
+        table.pack(fill="both", expand=True)
+        bar = ttk.Frame(frame)
+        bar.pack(fill="x", pady=(12, 0))
+        link = ttk.Button(bar, text="Usar IP para tótem seleccionado", state="disabled")
+        link.pack(side="left")
+        ttk.Button(bar, text="Cerrar", command=window.destroy).pack(side="right")
+        results = queue.Queue()
+
+        def worker():
+            try:
+                data = detectar_lan(own_ip)
+                results.put(("ok", data))
+            except Exception as exc:
+                results.put(("error", str(exc)))
+
+        def completed():
+            if not window.winfo_exists():
+                return
+            try:
+                state, result = results.get_nowait()
+            except queue.Empty:
+                window.after(150, completed)
+                return
+            if state == "error":
+                status.set("No se pudo explorar la LAN: " + result)
+                return
+            status.set(
+                f"Subred {result['subred']} · "
+                f"{len(result['equipos'])} IP(s) detectadas. "
+                "Elegí una y confirmá su vinculación."
+            )
+            for item in result["equipos"]:
+                table.insert("", "end", values=(item["ip"], item["detalle"]))
+            link.configure(state="normal" if result["equipos"] else "disabled")
+
+        def use_ip():
+            selected = table.selection()
+            if not selected:
+                messagebox.showinfo("Equipo", "Seleccioná una IP detectada.", parent=window)
+                return
+            if not self.totems.selection():
+                messagebox.showinfo(
+                    "Tótem", "Seleccioná primero un tótem en POS Server.", parent=window,
+                )
+                return
+            chosen = table.item(selected[0], "values")[0]
+            window.destroy()
+            self.bind_totem_ip(suggested_ip=chosen)
+
+        link.configure(command=use_ip)
+        threading.Thread(target=worker, name="intrashop-lan-scan", daemon=True).start()
+        window.after(150, completed)
+
+    def generate_pair_code(self):
+        """Código de un solo uso para habilitar checkout en este navegador."""
+        if not self._autorizar_kit_instalacion():
+            return
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_auth import generar_codigo
+
+        selection = self.totems.selection()
+        if not selection:
+            messagebox.showinfo("Código de acceso", "Seleccioná primero un tótem.")
+            return
+        values = self.totems.item(selection[0], "values")
+        totem_id, nombre = str(values[2]), str(values[1])
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                code = generar_codigo(conn, totem_id)
+                conn.commit()
+            messagebox.showinfo(
+                "Código temporal · " + nombre,
+                f"Código válido por 10 minutos:\n\n{code}\n\n"
+                "Ingresalo en la tienda del equipo que querés vincular.\n"
+                "No envíes el código por enlaces o chats públicos.\n"
+                "El código solo se puede utilizar una vez.",
+                parent=self.root,
+            )
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("Código de acceso", str(exc), parent=self.root)
+
+    def provision_totem(self):
+        if not self._autorizar_kit_instalacion():
+            return
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import provisionar
+
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                created = provisionar(conn, 1)
+                conn.commit()
+            messagebox.showinfo("Tótem creado",
+                created[0]["nombre"] + " (" + created[0]["id"] +
+                ") disponible. Generá su código de acceso y configurá el QR.")
+            self.refresh()
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("No se pudo crear el tótem", str(exc))
+
+    def bind_totem_ip(self, suggested_ip=None):
+        if not self._autorizar_kit_instalacion():
+            return
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import vincular_ip
+
+        selected = self.totems.selection()
+        if not selected:
+            messagebox.showinfo("Vinculación IP", "Seleccioná un tótem.")
+            return
+        values = self.totems.item(selected[0], "values")
+        totem_id, nombre = values[2], values[1]
+        if str(values[0]).startswith("× Eliminado"):
+            messagebox.showinfo(
+                "Tótem eliminado", "Restaurá el tótem antes de vincular una IP.",
+                parent=self.root,
+            )
+            return
+        # La IP observada ayuda a elegir, pero no concede asociación automática.
+        default = str(values[3]) if values[3] not in ("—", "", None) else ""
+        if not default:
+            default = str(values[4]) if values[4] not in ("—", "", None) else ""
+        ip = simpledialog.askstring(
+            "Vincular IP a " + str(nombre),
+            "IP fija/reservada del equipo que abre la tienda:",
+            initialvalue=str(suggested_ip or default), parent=self.root,
+        )
+        if ip is None:
+            return
+        ip = ip.strip()
+        if not messagebox.askyesno(
+            "Confirmar identidad del tótem",
+            f"¿Vincular la IP {ip} a {nombre} ({totem_id})?\n\n"
+            "Se conservará su asociación Mercado Pago, caja y pedidos.\n"
+            "Una IP reutilizada por otro equipo podría suplantar este tótem. "
+            "Reservala desde el router.",
+            parent=self.root,
+        ):
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                vincular_ip(conn, str(totem_id), ip)
+                conn.commit()
+            self.notice.set(f"{nombre} vinculado a {ip}. Identidad persistente en POS Server.")
+            self.refresh()
+        except (ValueError, sqlite3.Error) as exc:
+            messagebox.showerror("No se pudo vincular la IP", str(exc))
+
+    def unbind_totem_ip(self):
+        if not self._autorizar_kit_instalacion():
+            return
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import desvincular_ip
+
+        selected = self.totems.selection()
+        if not selected:
+            return
+        values = self.totems.item(selected[0], "values")
+        totem_id, nombre = values[2], values[1]
+        if str(values[3]) in ("—", "", "None"):
+            messagebox.showinfo(
+                "Equipo ya desvinculado",
+                f"{nombre} no tiene ninguna IP asignada.\n"
+                "Para eliminar este registro de pruebas, usá «Eliminar tótem».",
+                parent=self.root,
+            )
+            return
+        if not messagebox.askyesno(
+            "Desvincular equipo — conservar tótem y QR",
+            f"¿Desconectar la IP {values[3]} del tótem {nombre}?\n\n"
+            "El navegador dejará de identificarse como este tótem.\n"
+            "Se conservan nombre, QR, caja y todo el historial.\n\n"
+            "Para quitar también el tótem de la lista y liberar el QR, "
+            "usá «Eliminar tótem».",
+            parent=self.root,
+        ):
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                if not desvincular_ip(conn, str(totem_id)):
+                    raise ValueError("El tótem ya no existe.")
+                conn.commit()
+            self.notice.set(f"{nombre}: IP desvinculada. Tótem y QR conservados.")
+            self.refresh()
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo desvincular la IP", str(exc))
+
     def configure_totem_qr(self):
         """Asistente local: consulta POS autorizados y exige confirmación explícita."""
+        if not self._autorizar_kit_instalacion():
+            return
         selected = self.totems.selection()
         if not selected:
             messagebox.showinfo("Asignación QR", "Seleccioná primero un tótem.")
@@ -231,6 +1024,16 @@ class ServerConsole:
         try:
             with sqlite3.connect(settings.db_path, timeout=5) as conn:
                 conn.row_factory = sqlite3.Row
+                active = conn.execute(
+                    "SELECT retirado FROM intrashop_totems WHERE id=?", (totem_id,),
+                ).fetchone()
+                if not active or active["retirado"]:
+                    messagebox.showerror(
+                        "QR no disponible",
+                        "El tótem fue eliminado. Restauralo antes de vincular un QR.",
+                        parent=self.root,
+                    )
+                    return
                 existing = conn.execute(
                     "SELECT pos_external_id, store_external_id FROM intrashop_mp_bindings "
                     "WHERE terminal_id=? AND terminal_type='totem'", (totem_id,)
@@ -390,31 +1193,115 @@ class ServerConsole:
         self.refresh()
 
     def delete_totem(self):
+        """Retira un tótem de pruebas sin borrar pagos ni comandas históricas."""
+        if not self._autorizar_kit_instalacion():
+            return
+        from intrashop_entregas import ensure_schema
+        import intrashop_checkout_store as checkout_store
+        from services.intrashop_totem_registry import resumen_retiro, retirar_totem
+
         selection = self.totems.selection()
         if not selection:
+            messagebox.showinfo("Eliminar tótem", "Seleccioná el tótem que querés eliminar.")
             return
         values = self.totems.item(selection[0], "values")
-        totem_id, name = values[2], values[1]
-        if not messagebox.askyesno("Eliminar tótem",
-                "¿Eliminar el registro de «" + name + "»?\\n"
-                "Solo se permite si no tiene QR asignado ni comandas asociadas."):
+        totem_id = str(values[2])
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                ensure_schema(conn)
+                checkout_store.ensure_schema(conn)
+                conn.commit()
+                estado = resumen_retiro(conn, totem_id)
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo consultar el tótem", str(exc))
+            return
+        if estado["retirado"]:
+            messagebox.showinfo(
+                "Tótem eliminado", "Este tótem ya está retirado. Usá «Restaurar eliminado».")
+            return
+        if estado["cobros_pendientes"] or estado["entregas_pendientes"]:
+            messagebox.showerror(
+                "No se puede eliminar todavía",
+                f"El tótem {estado['nombre']} tiene "
+                f"{estado['cobros_pendientes']} cobro(s) sin resolver y "
+                f"{estado['entregas_pendientes']} entrega(s) pendiente(s).\n\n"
+                "Regularizá las operaciones antes de eliminarlo.\n"
+                "No se borrarán cobros ni se liberará stock por la fuerza.",
+                parent=self.root,
+            )
+            return
+        if not messagebox.askyesno(
+            "Confirmar eliminación de tótem",
+            f"Eliminar «{estado['nombre']}» ({totem_id}) de la lista operativa?\n\n"
+            f"IP: {estado['ip_vinculada'] or 'Sin IP'}\n"
+            f"POS Mercado Pago: {estado['pos_external_id'] or 'Sin QR'}\n"
+            f"Checkouts históricos: {estado['checkouts_historicos']}\n"
+            f"Comandas históricas: {estado['entregas_historicas']}\n\n"
+            "Se quitarán la IP y el vínculo QR LOCAL del servidor.\n"
+            "NO se eliminará el POS/QR de Mercado Pago ni los pagos, "
+            "ventas, tickets o comandas históricos.\n"
+            "El ID se reservará para evitar reutilizaciones accidentales.\n"
+            "Podrás restaurar el tótem desde «Mostrar eliminados».",
+            parent=self.root,
+        ):
             return
         try:
-            with sqlite3.connect(settings.db_path, timeout=5) as conn:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
                 conn.execute("BEGIN IMMEDIATE")
-                for sql in (
-                    "SELECT 1 FROM intrashop_mp_bindings WHERE terminal_id=? LIMIT 1",
-                    "SELECT 1 FROM intrashop_entregas WHERE totem_id=? LIMIT 1",
-                    "SELECT 1 FROM intrashop_checkouts WHERE totem_id=? LIMIT 1",
-                ):
-                    if conn.execute(sql, (totem_id,)).fetchone():
-                        raise ValueError("El tótem tiene asignaciones o historial de pedidos. No puede eliminarse.")
-                conn.execute("DELETE FROM intrashop_totems WHERE id=?", (totem_id,))
+                ensure_schema(conn)
+                checkout_store.ensure_schema(conn)
+                retirar_totem(conn, totem_id)
                 conn.commit()
+            self.notice.set(
+                f"{estado['nombre']} eliminado de la operación. "
+                "IP y QR local liberados; historial conservado."
+            )
+            self.refresh()
         except (sqlite3.Error, ValueError) as exc:
-            messagebox.showerror("No se pudo eliminar", str(exc))
+            messagebox.showerror("No se pudo eliminar el tótem", str(exc), parent=self.root)
+
+    def restore_totem(self):
+        if not self._autorizar_kit_instalacion():
             return
-        self.refresh()
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import restaurar_totem
+
+        selection = self.totems.selection()
+        if not selection:
+            messagebox.showinfo(
+                "Restaurar tótem",
+                "Activá «Mostrar eliminados» y seleccioná el tótem a restaurar.")
+            return
+        values = self.totems.item(selection[0], "values")
+        totem_id, nombre = str(values[2]), str(values[1])
+        if not str(values[0]).startswith("× Eliminado"):
+            messagebox.showinfo(
+                "El tótem ya está activo",
+                "Para restaurar, marcá «Mostrar eliminados» y seleccioná "
+                "una fila con estado «Eliminado».",
+                parent=self.root,
+            )
+            return
+        if not messagebox.askyesno(
+            "Restaurar tótem",
+            f"¿Volver a habilitar {nombre} ({totem_id})?\n\n"
+            "Deberás confirmar nuevamente su IP y configurar el QR local.",
+            parent=self.root,
+        ):
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                restaurar_totem(conn, totem_id)
+                conn.commit()
+            self.notice.set(f"{nombre} restaurado. Vinculá nuevamente la IP y el QR.")
+            self.refresh()
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo restaurar", str(exc), parent=self.root)
 
     def _table(self, parent, columns):
         frame = ttk.Frame(parent)
@@ -446,10 +1333,10 @@ class ServerConsole:
         threading.Thread(target=server_manager.detener, daemon=True).start()
 
     def open_intrashop(self):
-        webbrowser.open("http://127.0.0.1:" + str(self.port) + "/intrashop/")
+        webbrowser.open(url_visible(ip_lan(), self.port) + "/intrashop/")
 
     def open_admin(self):
-        webbrowser.open("http://127.0.0.1:" + str(self.port) + "/intrashop/admin")
+        webbrowser.open(url_visible(ip_lan(), self.port) + "/intrashop/admin")
 
     @staticmethod
     def _safe_datetime(value):
@@ -461,27 +1348,34 @@ class ServerConsole:
     def _snapshot(self):
         with sqlite3.connect(settings.db_path, timeout=3) as conn:
             conn.row_factory = sqlite3.Row
-            # Una lectura agrupada cada 15 s; no se hace polling de la red.
-            columns = {row["name"] for row in conn.execute("PRAGMA table_info(intrashop_totems)")}
-            ip_col = "ip" if "ip" in columns else ("ip_address" if "ip_address" in columns else None)
-            fields = "id,nombre,ultimo_contacto" + ("," + ip_col if ip_col else "")
-            totems = [dict(row) for row in conn.execute("SELECT " + fields + " FROM intrashop_totems ORDER BY nombre COLLATE NOCASE")]
+            # La IP observada no define identidad: sólo ip_vinculada confirma.
+            from intrashop_entregas import ensure_schema
+            ensure_schema(conn)
+            conn.commit()
+            totems = [dict(row) for row in conn.execute(
+                "SELECT id,nombre,ip_vinculada,ip_address,ultimo_contacto,retirado "
+                "FROM intrashop_totems ORDER BY id"
+            )]
             bindings = [dict(row) for row in conn.execute(
                 "SELECT terminal_id,terminal_type,nombre,pos_external_id FROM intrashop_mp_bindings ORDER BY terminal_type,nombre")]
             pending_rows = [dict(row) for row in conn.execute("SELECT id,estado,pos_external_id,total FROM intrashop_checkouts WHERE estado IN ('reserved','creating','waiting','verifying','uncertain','paid') ORDER BY created_at DESC LIMIT 100")]
         return totems, bindings, pending_rows
 
     @staticmethod
-    def _fill(table, rows):
+    def _fill(table, rows, identity_index=0):
+        # No restaurar selección por columna Estado: puede repetirse en
+        # múltiples filas y provocar asignaciones QR/IP al tótem equivocado.
         selected = table.selection()
-        previous = table.item(selected[0], "values")[0] if selected else None
+        old_values = table.item(selected[0], "values") if selected else ()
+        previous = old_values[identity_index] if len(old_values) > identity_index else None
         table.delete(*table.get_children())
         for row in rows:
             values, tag = row
             table.insert("", "end", values=values, tags=(tag,) if tag else ())
-        if previous:
+        if previous is not None:
             for item in table.get_children():
-                if table.item(item, "values")[0] == previous:
+                values = table.item(item, "values")
+                if len(values) > identity_index and values[identity_index] == previous:
                     table.selection_set(item)
                     break
 
@@ -493,8 +1387,12 @@ class ServerConsole:
             self._timer = None
         running = server_manager.activo and bool(getattr(server_manager._server, "started", False))
         self.status.set("● Servidor activo" if running else "○ Servidor detenido")
-        self.url.set("http://" + ip_lan() + ":" + str(self.port))
-        if not self._loading:
+        self.url.set(url_visible(ip_lan(), self.port))
+        if self._loading:
+            # Una mutación hecha durante el refresco debe verse de inmediato
+            # al terminar la lectura actual, no 15 segundos después.
+            self._refresh_requested = True
+        else:
             self._loading = True
             def worker():
                 try:
@@ -511,6 +1409,9 @@ class ServerConsole:
                         self._render(*data)
                     else:
                         self.notice.set("No se pudo consultar el estado: " + str(error))
+                    if self._refresh_requested:
+                        self._refresh_requested = False
+                        self.root.after(0, self.refresh)
                 self.root.after(0, finish)
             threading.Thread(target=worker, daemon=True).start()
         self._timer = self.root.after(self.REFRESH_MS, self.refresh)
@@ -520,14 +1421,24 @@ class ServerConsole:
         device_rows = []
         online_count = 0
         assigned_totems = {b["terminal_id"] for b in bindings if b["terminal_type"] == "totem"}
+        show_retired = bool(self.mostrar_eliminados.get())
         for item in totems:
+            retired = bool(item["retirado"])
+            if retired and not show_retired:
+                continue
             last = self._safe_datetime(item["ultimo_contacto"])
-            online = bool(last and timedelta(0) <= now - last <= timedelta(seconds=self.ONLINE_SECONDS))
+            online = bool(
+                not retired and item["ip_vinculada"]
+                and last and timedelta(0) <= now - last <= timedelta(seconds=self.ONLINE_SECONDS)
+            )
             online_count += int(online)
-            device_rows.append((("● En línea" if online else "○ Sin señal",
-                                 item["nombre"], item["id"], item.get("ip", item.get("ip_address", "—")),
-                                 item["ultimo_contacto"], "● Vinculado" if item["id"] in assigned_totems else "○ Pendiente"), "online" if online else "offline"))
-        self._fill(self.totems, device_rows)
+            status = "× Eliminado" if retired else ("● En línea" if online else "○ Sin señal")
+            qr_status = "—" if retired else ("● Vinculado" if item["id"] in assigned_totems else "○ Pendiente")
+            device_rows.append(((status, item["nombre"], item["id"],
+                                 item["ip_vinculada"] or "—", item["ip_address"] or "—",
+                                 item["ultimo_contacto"], qr_status),
+                                "retired" if retired else ("online" if online else "offline")))
+        self._fill(self.totems, device_rows, identity_index=2)
         self._fill(self.pending_tree, [((p["id"],p["estado"],p["pos_external_id"],p["total"]),None) for p in pending_rows])
         self._fill(self.qr_tree, [
             ((b["terminal_id"], b["terminal_type"], b["nombre"], b["pos_external_id"]), None)
@@ -552,7 +1463,7 @@ class ServerConsole:
             ((user, time.strftime("%d/%m/%Y %H:%M", time.localtime(exp))), None)
             for user, exp in active])
         self.summary.set(
-            f"Tótems: {len(totems)} · En línea: {online_count} · QR asignados: {len(bindings)}"
+            f"Tótems: {sum(not bool(t['retirado']) for t in totems)} · En línea: {online_count} · QR asignados: {len(bindings)}"
             f" · Operadores: {len(active)} · Operaciones bloqueantes: {len(pending_rows)}")
         self.notice.set("Última actualización: " + datetime.now().strftime("%H:%M:%S"))
 

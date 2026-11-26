@@ -9,16 +9,19 @@ import os
 from typing import Any, Optional
 
 import httpx
+from services.client_tls import opciones_http
 
 
 class ApiClient:
-    def __init__(self, base_url: str, api_key: str = "libreria-lan"):
+    def __init__(self, base_url: str, api_key: str | None = None):
+        from core.settings import settings
+
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self._headers = {"X-API-Key": api_key}
+        self.api_key = api_key if api_key is not None else settings.api_key
+        self._headers = {"X-API-Key": self.api_key}
 
     def _get(self, path, params=None):
-        r = httpx.get(self.base_url + path, params=params, headers=self._headers, timeout=15)
+        r = httpx.get(self.base_url + path, params=params, headers=self._headers, timeout=15, **opciones_http(self.base_url))
         r.raise_for_status()
         return r.json()
 
@@ -31,7 +34,7 @@ class ApiClient:
 
     def _admin_request(self, method, path, json=None):
         response = httpx.request(method, self.base_url + path,
-                                 json=json, headers=self._admin_headers(), timeout=15)
+                                 json=json, headers=self._admin_headers(), timeout=15, **opciones_http(self.base_url))
         response.raise_for_status()
         return response.json()
 
@@ -64,30 +67,49 @@ class ApiClient:
         return result["ok"], result["error"]
 
     def _post(self, path, json=None, params=None):
-        r = httpx.post(self.base_url + path, json=json, params=params, headers=self._headers, timeout=15)
+        r = httpx.post(self.base_url + path, json=json, params=params, headers=self._headers, timeout=15, **opciones_http(self.base_url))
         r.raise_for_status()
         return r.json()
 
     def autenticar_usuario(self, usuario: str, clave: str):
+        """Autenticar siempre contra POS Server; distinguir fallo LAN de 401."""
+        from core.terminal_identity import terminal_id
         try:
-            from core.terminal_identity import terminal_id
-            response = httpx.post(self.base_url + "/pos/auth/login",
+            response = httpx.post(
+                self.base_url + "/pos/auth/login",
                 json={"usuario": usuario, "clave": clave},
-                headers={"X-Terminal-Id": terminal_id()}, timeout=8)
-            if response.status_code != 200:
-                return None
+                headers={**self._headers, "X-Terminal-Id": terminal_id()},
+                timeout=8, **opciones_http(self.base_url),
+            )
+        except httpx.RequestError as exc:
+            # No reportar una desconexión como si la contraseña fuera inválida.
+            raise ConnectionError(
+                f"No se pudo conectar a POS Server ({self.base_url}). "
+                "Verificá la URL, la red y que el servidor esté iniciado."
+            ) from exc
+        if response.status_code == 401:
+            return None
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"POS Server rechazó el inicio de sesión (HTTP {response.status_code}). "
+                "Revisá el estado del servidor y su base de datos."
+            )
+        try:
             data = response.json()
             from adapters.entregas import set_session
             set_session(data["access_token"])
             return {"usuario": data["usuario"], "nombre": data["usuario"],
-                    "rol": data.get("rol", "OPERADOR"), "es_admin": data.get("es_admin", False),
+                    "rol": data.get("rol", "OPERADOR"),
+                    "es_admin": data.get("es_admin", False),
                     "permisos": data.get("permisos", {}), "activo": True}
-        except Exception:
-            return None
+        except (KeyError, ValueError, TypeError) as exc:
+            raise RuntimeError(
+                "POS Server devolvió una respuesta de sesión incompleta."
+            ) from exc
 
     def health(self) -> bool:
         try:
-            return httpx.get(self.base_url + "/health", timeout=5).status_code == 200
+            return httpx.get(self.base_url + "/health", timeout=5, **opciones_http(self.base_url)).status_code == 200
         except Exception:
             return False
 
@@ -132,7 +154,7 @@ class ApiClient:
             self.base_url + f"/tienda/admin/productos/{int(producto_id)}",
             json={"disponible": disponible, "imagen_base64": imagen_base64,
                   "imagen_nombre": imagen_nombre, "imagen_url": imagen_url},
-            headers=self._headers, timeout=30,
+            headers=self._headers, timeout=30, **opciones_http(self.base_url),
         )
         response.raise_for_status()
         return response.json()
@@ -156,6 +178,29 @@ class ApiClient:
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code in (400, 409, 422):
                 return 0
+            raise
+
+    def obtener_resumen_caja(self, caja_id: int) -> dict:
+        return self._get(f"/cajas/{int(caja_id)}/resumen")
+
+    def cerrar_caja_arqueo(self, caja_id: int, importe_contado: float,
+                           observaciones: str = "",
+                           snapshot: dict | None = None) -> dict:
+        """Cierre JSON; nunca convertir un 409 en falso sin explicación."""
+        try:
+            return self._post(
+                f"/cajas/{int(caja_id)}/cerrar",
+                json={"importe_contado": importe_contado,
+                      "observaciones": observaciones,
+                      **(snapshot or {})},
+            )
+        except httpx.HTTPStatusError as exc:
+            try:
+                detalle = exc.response.json().get("detail")
+            except (ValueError, AttributeError, TypeError):
+                detalle = None
+            if exc.response.status_code in (400, 404, 409, 422):
+                raise ValueError(str(detalle or "POS Server rechazó el cierre de caja.")) from exc
             raise
 
     def cerrar_caja(self, caja_id: int, observaciones: str = ""):
@@ -346,7 +391,7 @@ class ApiClient:
             self.base_url + "/admin/backups/validar",
             content=contenido,
             headers=headers,
-            timeout=120,
+            timeout=120, **opciones_http(self.base_url),
         )
         respuesta.raise_for_status()
         return respuesta.json()
@@ -366,7 +411,7 @@ class ApiClient:
         try:
             with httpx.stream(
                 "GET", self.base_url + "/admin/backups/exportar",
-                headers=self._admin_headers(), timeout=180,
+                headers=self._admin_headers(), timeout=180, **opciones_http(self.base_url),
             ) as respuesta:
                 respuesta.raise_for_status()
                 with tempfile.NamedTemporaryFile(

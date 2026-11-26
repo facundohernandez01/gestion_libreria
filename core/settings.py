@@ -51,6 +51,99 @@ def _load_dotenv_if_available() -> None:
 _load_dotenv_if_available()
 
 
+def _default_secure_api_key(db_path: str) -> str:
+    """Credencial LAN aleatoria y persistente por instalación, sin git ni DB.
+
+    Cliente remoto: configurar API_KEY con la clave compartida desde POS Server.
+    Un navegador/tótem público nunca recibe esta credencial.
+    """
+    from hashlib import sha256
+    from pathlib import Path
+    import secrets
+
+    explicit = os.environ.get("API_KEY", "").strip()
+    if explicit:
+        return explicit
+    # Clave configurada manualmente en una terminal cliente. No en la DB ni
+    # en la URL. Se guarda con permisos 0600 y se carga al reiniciar.
+    client_key_file = Path.home() / ".config" / "intrashop" / "client_api_key"
+    try:
+        client_key = client_key_file.read_text(encoding="utf-8").strip()
+        if len(client_key) >= 32 and not client_key.startswith("posd_"):
+            return client_key
+    except FileNotFoundError:
+        pass
+    scope = sha256(str(Path(db_path).expanduser().resolve()).encode()).hexdigest()[:20]
+    directory = Path.home() / ".config" / "intrashop" / "server_keys"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    key_file = directory / (scope + ".key")
+    try:
+        key = key_file.read_text(encoding="utf-8").strip()
+        if len(key) >= 32:
+            return key
+    except FileNotFoundError:
+        pass
+    new_key = secrets.token_urlsafe(36)
+    # O_EXCL: dos procesos no pisan la misma clave; permisos privados.
+    try:
+        fd = os.open(str(key_file), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(new_key)
+    except FileExistsError:
+        new_key = key_file.read_text(encoding="utf-8").strip()
+    if len(new_key) < 32:
+        raise RuntimeError("La clave LAN guardada no es segura.")
+    return new_key
+
+
+def credencial_pos_local():
+    """Credencial individual, separada de la clave compartida del servidor."""
+    from pathlib import Path
+    path = Path.home() / ".config" / "intrashop" / "pos_device_key"
+    try:
+        value = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        return None
+    if not value.startswith("posd_") or len(value) != 53:
+        raise ValueError("Credencial de terminal inválida. Volvé a vincular la caja.")
+    return value
+
+
+def guardar_credencial_pos(value: str):
+    from pathlib import Path
+    import tempfile
+    if not value.startswith("posd_") or len(value) != 53:
+        raise ValueError("Credencial de terminal inválida.")
+    directory = Path.home() / ".config" / "intrashop"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd, temp = tempfile.mkstemp(dir=directory)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(value)
+        os.replace(temp, directory / "pos_device_key")
+    finally:
+        Path(temp).unlink(missing_ok=True)
+
+
+def guardar_clave_lan_local(value: str) -> None:
+    """Configurar conexión POS remota desde la terminal, sin imprimir secreto."""
+    from pathlib import Path
+
+    value = (value or "").strip()
+    if len(value) < 32 or value == "libreria-lan" or value.startswith("posd_"):
+        raise ValueError("Pegá la clave segura de POS Server (mínimo 32 caracteres).")
+    directory = Path.home() / ".config" / "intrashop"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = directory / "client_api_key"
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(value)
+        path.chmod(0o600)
+    except Exception:
+        raise
+
+
 def _env(key: str, default: str = "") -> str:
     return os.getenv(key, default).strip()
 
@@ -135,7 +228,7 @@ class Settings:
     # Red / multi-usuario (FastAPI)
     modo_red: str = field(default="local")          # local | servidor | cliente
     server_url: str = field(default="http://127.0.0.1:8000")
-    api_key: str = field(default="libreria-lan")
+    api_key: str = field(default="")
     api_host: str = field(default="0.0.0.0")
     api_port: int = field(default=8000)
 
@@ -216,7 +309,7 @@ class Settings:
 
         self.modo_red = _env("MODO_RED", "local").strip().lower()
         self.server_url = _env("SERVER_URL", "http://127.0.0.1:8000")
-        self.api_key = _env("API_KEY", "libreria-lan")
+        self.api_key = _default_secure_api_key(self.db_path)
         self.api_host = _env("API_HOST", "0.0.0.0")
         self.api_port = _env_int("API_PORT", 8000)
         self.web_host = _env("WEB_HOST", "0.0.0.0")

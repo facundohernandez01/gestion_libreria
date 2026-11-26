@@ -11,6 +11,8 @@ import time
 
 import uvicorn
 
+from services.lan_https import host_backend, opciones_uvicorn, url_visible, puerto_backend
+
 # Imports explícitos: PyInstaller no detecta los módulos que uvicorn carga
 # dinámicamente (protocolos/loops/lifespan) en la app compilada.
 try:  # noqa: SIM105
@@ -62,14 +64,17 @@ class ServerManager:
         config = uvicorn.Config(
             asgi_app, host=host, port=port, log_level="warning",
             reload=False, log_config=_LOG_CONFIG,
+            **opciones_uvicorn(),
         )
         return uvicorn.Server(config)
 
     def iniciar(self, host: str = "0.0.0.0", port: int = 8000) -> str:
         if self.activo and getattr(self._server, "started", False):
             return self.url()
-        self.host, self.port = host, port
-        self._server = self._crear_server(host, port)
+        backend_host = host_backend(host)
+        port = puerto_backend(port)
+        self.host, self.port = backend_host, port
+        self._server = self._crear_server(backend_host, port)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
         # esperar a que levante
@@ -80,7 +85,7 @@ class ServerManager:
         if not getattr(self._server, "started", False):
             self.activo = False
             raise RuntimeError(
-                f"No se pudo iniciar el servidor en {host}:{port} "
+                f"No se pudo iniciar el servidor en {backend_host}:{port} "
                 "(¿puerto ocupado o sin permisos?)"
             )
         self.activo = True
@@ -98,7 +103,7 @@ class ServerManager:
         self.activo = False
 
     def url(self) -> str:
-        return f"http://{ip_lan()}:{self.port}"
+        return url_visible(ip_lan(), self.port)
 
     def url_local(self) -> str:
         return f"http://127.0.0.1:{self.port}"
@@ -118,9 +123,12 @@ def servir_bloqueante(host: str = "0.0.0.0", port: int = 8000, stop_event=None) 
 
     from api_server import app as asgi_app
 
+    backend_host = host_backend(host)
+    port = puerto_backend(port)
     config = uvicorn.Config(
-        asgi_app, host=host, port=port, log_level="warning",
+        asgi_app, host=backend_host, port=port, log_level="warning",
         reload=False, log_config=_LOG_CONFIG,
+        **opciones_uvicorn(),
     )
     server = uvicorn.Server(config)
     _bloqueante_server = server
@@ -146,35 +154,32 @@ def detener_bloqueante() -> None:
 
 
 def escanear_servidor(subred: str | None = None, puerto: int = 8000, timeout: float = 0.3) -> list[str]:
-    """Escanea la subred LAN buscando un servidor con /health OK."""
-    import socket as _socket
+    """Descubrir candidatos POS en una LAN privada; no autenticar ni vincular."""
+    import concurrent.futures
+    import ipaddress
+    import httpx
 
-    ip = subred or ip_lan()
-    base = ".".join(ip.split(".")[:3])
-    encontrados: list[str] = []
+    ip = ipaddress.IPv4Address(subred or ip_lan())
+    if not any(ip in ipaddress.IPv4Network(net) for net in (
+        "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    )):
+        return []
+    if not 1 <= puerto <= 65535:
+        raise ValueError("Puerto inválido")
+    red = ipaddress.IPv4Network(f"{ip}/24", strict=False)
 
-    def _check(host: str):
+    def _check(host):
+        url = f"http://{host}:{puerto}"
         try:
-            s = _socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            s.settimeout(timeout)
-            if s.connect_ex((host, puerto)) == 0:
-                try:
-                    import httpx
-
-                    r = httpx.get(f"http://{host}:{puerto}/health", timeout=timeout)
-                    if r.status_code == 200:
-                        encontrados.append(f"http://{host}:{puerto}")
-                except Exception:
-                    encontrados.append(f"http://{host}:{puerto}")
-            s.close()
-        except Exception:
+            response = httpx.get(url + "/health", timeout=timeout,
+                                 follow_redirects=False, trust_env=False)
+            if response.status_code == 200:
+                data = response.json()
+                if isinstance(data, dict) and data.get("service") == "pos-lan":
+                    return url
+        except (httpx.HTTPError, ValueError):
             pass
+        return None
 
-    hilos = []
-    for i in range(1, 255):
-        t = threading.Thread(target=_check, args=(f"{base}.{i}",), daemon=True)
-        t.start()
-        hilos.append(t)
-    for t in hilos:
-        t.join(timeout=timeout + 0.5)
-    return encontrados
+    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as pool:
+        return [url for url in pool.map(_check, red.hosts()) if url]

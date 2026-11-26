@@ -236,7 +236,9 @@ def ConfigModal(page: ft.Page):
         else:
             url = _server_url() if modo == "cliente" else "http://127.0.0.1:" + str(settings.api_port)
             try:
-                respuesta = httpx.get(url.rstrip("/") + "/health", timeout=2.5)
+                from services.client_tls import opciones_http
+                respuesta = httpx.get(url.rstrip("/") + "/health", timeout=2.5,
+                    **(opciones_http(url) if modo == "cliente" else {"trust_env": False}))
                 if respuesta.status_code == 200:
                     red_modo_activo.value = "● " + modo.upper() + " ACTIVO · " + url
                     red_modo_activo.color = N.GREEN_400
@@ -544,10 +546,12 @@ def ConfigModal(page: ft.Page):
             import httpx
             if not _session_token:
                 raise ValueError("Iniciá sesión como administrador en el servidor POS.")
+            from services.client_tls import opciones_http
+            base = _server_url().rstrip("/")
             response = httpx.request(
-                method, _server_url().rstrip("/") + "/tienda/admin/mp-oauth/" + path,
+                method, base + "/tienda/admin/mp-oauth/" + path,
                 json=payload, headers={"Authorization": "Bearer " + _session_token},
-                timeout=25)
+                timeout=25, **opciones_http(base))
             response.raise_for_status()
             return response.json()
         from services import mp_oauth_bridge as bridge
@@ -713,9 +717,11 @@ def ConfigModal(page: ft.Page):
                     from adapters.entregas import _session_token
                     if not _session_token:
                         raise ValueError("Iniciá sesión como administrador del servidor POS.")
+                    from services.client_tls import opciones_http
+                    base = _server_url().rstrip("/")
                     response = httpx.get(
-                        _server_url().rstrip("/") + "/tienda/admin/mp-oauth/pos",
-                        headers={"Authorization": "Bearer " + _session_token}, timeout=45)
+                        base + "/tienda/admin/mp-oauth/pos",
+                        headers={"Authorization": "Bearer " + _session_token}, timeout=45, **opciones_http(base))
                     if response.status_code == 200:
                         results = response.json().get("results", [])
                     elif response.status_code != 409:
@@ -809,10 +815,12 @@ def ConfigModal(page: ft.Page):
                     from adapters.entregas import _session_token
                     if not _session_token:
                         raise ValueError("Iniciá sesión como administrador del servidor POS.")
+                    from services.client_tls import opciones_http
+                    base = _server_url().rstrip("/")
                     response = httpx.post(
-                        _server_url().rstrip("/") + "/tienda/admin/mp-oauth/pos/create",
+                        base + "/tienda/admin/mp-oauth/pos/create",
                         json={"nombre": nombre, "store_id": selected_store},
-                        headers={"Authorization": "Bearer " + _session_token}, timeout=45)
+                        headers={"Authorization": "Bearer " + _session_token}, timeout=45, **opciones_http(base))
                     if response.status_code == 200:
                         p_ext = response.json()["pos_external_id"]
                         created = True
@@ -897,6 +905,11 @@ def ConfigModal(page: ft.Page):
     # Asignaciones exclusivas: un QR MP por tótem o caja física.
     mp_terminal = ft.Dropdown(label="Dispositivo IntraShop / Caja", width=340)
     mp_asignado = ft.Dropdown(label="POS de Mercado Pago asignado", width=340)
+    mp_caja = ft.Dropdown(
+        label="Caja para ventas del tótem", width=340, value="auto",
+        options=[ft.dropdown.Option(key="auto",
+                 text="Automática (solo si hay una caja abierta)")],
+    )
     mp_bindings_info = ft.Text("Consultá dispositivos y POS disponibles.", size=12, color=N.GREY_500)
     mp_bindings_list = ft.Column(spacing=4)
     mp_saved_bindings = []
@@ -917,6 +930,18 @@ def ConfigModal(page: ft.Page):
                 key="caja:" + terminal_id(), text="Esta caja POS · " + terminal_id()[:14]))
             bindings = listar()
             mp_saved_bindings = bindings
+            # No se muestra una caja cerrada como destino válido.
+            cajas = [c for c in db.listar_cajas() if c.get("estado") == "abierta"]
+            mp_caja.options = [
+                ft.dropdown.Option(key="auto",
+                                   text="Automática (solo si hay una caja abierta)")
+            ] + [
+                ft.dropdown.Option(
+                    key=str(c["id"]),
+                    text="Caja #" + str(c["id"]) + " · " +
+                         str(c.get("fecha_apertura") or "")[:16],
+                ) for c in cajas
+            ]
             linked = {x["terminal_id"] for x in bindings if x["terminal_type"] == "totem"}
             pending = [t for t in registrados if t["id"] not in linked]
             mp_pending.value = (
@@ -930,7 +955,9 @@ def ConfigModal(page: ft.Page):
             mp_bindings_list.controls = [
                 ft.Text(("Tótem" if x["terminal_type"] == "totem" else "Caja")
                         + " · " + (x.get("nombre") or x["terminal_id"][:12])
-                        + " → " + x["pos_external_id"], size=12)
+                        + " → " + x["pos_external_id"] +
+                        (" · Caja #" + str(x["caja_id"]) if x.get("caja_id") else
+                         " · Caja automática"), size=12)
                 for x in bindings
             ]
             mp_asignado.options = [
@@ -954,9 +981,14 @@ def ConfigModal(page: ft.Page):
         if binding:
             mp_asignado.value = next((str(i) for i, p in enumerate(pos_list)
                                       if p.get("external_id") == binding["pos_external_id"]), None)
-            mp_bindings_info.value = "QR guardado: " + binding["pos_external_id"]
+            selected_caja = str(binding["caja_id"]) if binding.get("caja_id") else "auto"
+            mp_caja.value = selected_caja
+            mp_bindings_info.value = ("QR guardado: " + binding["pos_external_id"] +
+                                     " · Caja: " + selected_caja)
         else:
             mp_asignado.value = None
+            mp_caja.value = "auto"
+        mp_caja.visible = len(selected) == 2 and selected[0] == "totem"
         page.update()
 
     mp_terminal.on_change = restaurar_qr_dispositivo
@@ -970,13 +1002,15 @@ def ConfigModal(page: ft.Page):
         import httpx
         if not _session_token:
             raise ValueError("Iniciá sesión en el servidor antes de configurar Mercado Pago.")
+        from services.client_tls import opciones_http
+        base = _server_url().rstrip("/")
         response = httpx.put(
-            _server_url().rstrip("/") + "/tienda/admin/mp-credentials",
+            base + "/tienda/admin/mp-credentials",
             json={"access_token":token_field.value.strip(),
                   "user_id":user_field.value.strip(),
                   "enabled":bool(mp_activo_switch.value)},
             headers={"Authorization":"Bearer "+_session_token},
-            timeout=12)
+            timeout=12, **opciones_http(base))
         response.raise_for_status()
 
     # Confirmación explícita antes de modificar una asignación de cobro.
@@ -1017,12 +1051,18 @@ def ConfigModal(page: ft.Page):
                 raise ValueError("Este POS ya está asignado a " +
                                  (other.get("nombre") or other["terminal_id"]))
             label = next((o.text for o in mp_terminal.options if o.key == mp_terminal.value), tid)
+            raw_caja = (mp_caja.value or "auto") if tipo == "totem" else "auto"
+            if raw_caja != "auto" and not any(o.key == raw_caja for o in mp_caja.options):
+                raise ValueError("La caja asignada ya no está abierta. Elegí otra caja.")
+            caja_id = None if raw_caja == "auto" else int(raw_caja)
             mp_propuesta["value"] = (tid, tipo, external_id, store_ext,
-                                     (pos.get("qr_response") or pos.get("qr") or {}).get("image", ""), label)
+                                     (pos.get("qr_response") or pos.get("qr") or {}).get("image", ""),
+                                     label, caja_id)
             mp_confirmacion.value = (
                 "Revisá antes de confirmar:\\nDispositivo: " + label +
                 "\\nPOS Mercado Pago: " + external_id +
                 "\\nComercio: " + store_ext +
+                "\\nCaja de venta: " + (str(caja_id) if caja_id else "automática (única abierta)") +
                 "\\nEsta operación no crea ni elimina puntos de venta en Mercado Pago.")
             mp_confirmacion.color = N.BLUE_400
             mp_guardar_btn.visible = False
@@ -1038,7 +1078,9 @@ def ConfigModal(page: ft.Page):
             return
         proposal = mp_propuesta["value"]
         # Evitar confirmar una selección distinta de la que se revisó.
-        if mp_terminal.value != proposal[1] + ":" + proposal[0]:
+        if (mp_terminal.value != proposal[1] + ":" + proposal[0] or
+                ((mp_caja.value or "auto") if proposal[1] == "totem" else "auto")
+                != (str(proposal[6]) if proposal[6] is not None else "auto")):
             cancelar_asignacion()
             mp_confirmacion.value = "La selección cambió. Revisá la asignación nuevamente."
             page.update()
@@ -1058,7 +1100,8 @@ def ConfigModal(page: ft.Page):
                 if not any(x["terminal_id"] == proposal[0] and
                            x["terminal_type"] == proposal[1] and
                            x["pos_external_id"] == proposal[2] and
-                           x["store_external_id"] == proposal[3] for x in records):
+                           x["store_external_id"] == proposal[3] and
+                           x.get("caja_id") == proposal[6] for x in records):
                     raise RuntimeError("La asignación no pudo verificarse en la base de datos")
                 return records
             await asyncio.to_thread(operation)
@@ -1089,7 +1132,10 @@ def ConfigModal(page: ft.Page):
             ft.Text("Cada tótem debe tener un POS Mercado Pago distinto. Una misma asignación no se puede reutilizar.", size=12),
             ft.Row([ft.OutlinedButton("Detectar tótems y POS", icon=ft.Icons.SEARCH,
                 on_click=lambda e: (obtener_pos(), cargar_asignaciones()))], wrap=True),
-            mp_terminal, mp_asignado,
+            mp_terminal, mp_asignado, mp_caja,
+            ft.Text("La caja elegida queda registrada en cada cobro. Si no elegís "
+                    "ninguna, el tótem solo cobrará cuando exista exactamente una caja abierta.",
+                    size=11, color=N.GREY_400),
             ft.Row([mp_guardar_btn, mp_confirmar_btn, mp_cancelar_btn, mp_progreso], wrap=True),
             mp_confirmacion,
             mp_pending, mp_bindings_info, mp_bindings_list,

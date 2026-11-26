@@ -46,6 +46,35 @@ def ensure_schema(conn):
     totem_columns = {row[1] for row in conn.execute("PRAGMA table_info(intrashop_totems)")}
     if "ip_address" not in totem_columns:
         conn.execute("ALTER TABLE intrashop_totems ADD COLUMN ip_address TEXT")
+    # Identidad durable: la IP de vinculación NO se actualiza por heartbeats.
+    # ip_address queda como último origen observado (telemetría).
+    if "ip_vinculada" not in totem_columns:
+        conn.execute("ALTER TABLE intrashop_totems ADD COLUMN ip_vinculada TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_intrashop_totems_ip_vinculada "
+        "ON intrashop_totems(ip_vinculada) WHERE ip_vinculada IS NOT NULL"
+    )
+    # Eliminar de la lista no borra auditoría: IDs retirados no se reutilizan.
+    if "retirado" not in totem_columns:
+        conn.execute(
+            "ALTER TABLE intrashop_totems ADD COLUMN retirado INTEGER NOT NULL DEFAULT 0"
+        )
+    # Sembrar tótems 001–008 UNA sola vez. Nunca recrear los que el
+    # administrador retiró, ni al reiniciar POS Server ni al borrar caché.
+    conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_totem_bootstrap (
+        clave TEXT PRIMARY KEY
+    )""")
+    if not conn.execute(
+        "SELECT 1 FROM intrashop_totem_bootstrap WHERE clave='preparados_v1'"
+    ).fetchone():
+        for numero in range(1, 9):
+            conn.execute(
+                "INSERT OR IGNORE INTO intrashop_totems(id,nombre) VALUES (?,?)",
+                (f"totem-{numero:03d}", f"Tótem {numero:03d}"),
+            )
+        conn.execute(
+            "INSERT INTO intrashop_totem_bootstrap(clave) VALUES('preparados_v1')"
+        )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_intrashop_entregas_estado ON intrashop_entregas(estado, fecha_creacion)")
 
 
@@ -69,7 +98,7 @@ def list_totems(operador: str = Depends(require_delivery)):
     with connect() as conn:
         ensure_schema(conn)
         return [dict(row) for row in conn.execute(
-            "SELECT * FROM intrashop_totems ORDER BY nombre COLLATE NOCASE"
+            "SELECT * FROM intrashop_totems WHERE retirado=0 ORDER BY nombre COLLATE NOCASE"
         ).fetchall()]
 
 

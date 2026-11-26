@@ -29,10 +29,13 @@ def abrir_dialogo(page: ft.Page, dialog) -> None:
     """Muestra un AlertDialog (compatible Flet 1.x)."""
     try:
         page.show_dialog(dialog)
-    except Exception:
+    except (AttributeError, TypeError):
+        # Compatibilidad con instalaciones Flet previas a show_dialog.
         page.overlay.append(dialog)
         dialog.open = True
         page.update()
+    # No ocultar RuntimeError de Flet (p. ej. diálogo ya abierto):
+    # el fallback con overlay duplicado producía un recuadro gris sin UI.
 
 
 def cerrar_dialogo(page: ft.Page) -> None:
