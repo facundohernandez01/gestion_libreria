@@ -88,3 +88,16 @@ jobs:
           npm run build
           test -f dist/index.html
           test -f dist/admin/index.html
+
+  flet-cash-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned Flet UI dependencies
+        run: python -m pip install pytest "flet==1.0.4"
+      - name: Build and operate cash-close modal in memory
+        run: python -m pytest -q tests/test_cierre_caja_flet_smoke.py
