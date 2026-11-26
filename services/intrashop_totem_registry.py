@@ -34,7 +34,7 @@ def resolve_ip(conn: sqlite3.Connection, ip: str) -> dict | None:
     ip = normalizar_ip(ip)
     result = conn.execute(
         "SELECT id,nombre,ip_vinculada FROM intrashop_totems "
-        "WHERE ip_vinculada=? LIMIT 2",
+        "WHERE ip_vinculada=? AND retirado=0 LIMIT 2",
         (ip,),
     ).fetchall()
     if len(result) > 1:
@@ -46,10 +46,12 @@ def vincular_ip(conn: sqlite3.Connection, totem_id: str, ip: str) -> dict:
     """Llamar con BEGIN IMMEDIATE desde panel autorizado (GUI o API admin)."""
     ip = normalizar_ip(ip)
     row = conn.execute(
-        "SELECT id,nombre FROM intrashop_totems WHERE id=?", (totem_id,),
+        "SELECT id,nombre,retirado FROM intrashop_totems WHERE id=?", (totem_id,),
     ).fetchone()
     if not row:
         raise ValueError("Tótem inexistente")
+    if row["retirado"]:
+        raise ValueError("El tótem fue eliminado; restauralo antes de vincularlo.")
     in_use = resolve_ip(conn, ip)
     if in_use and in_use["id"] != totem_id:
         raise ValueError(f"IP {ip} ya vinculada a {in_use['nombre']} ({in_use['id']})")
@@ -62,11 +64,107 @@ def vincular_ip(conn: sqlite3.Connection, totem_id: str, ip: str) -> dict:
 
 
 def desvincular_ip(conn: sqlite3.Connection, totem_id: str) -> bool:
-    """Desasociar IP sin destruir tótem, QR, historial ni caja."""
-    return bool(conn.execute(
-        "UPDATE intrashop_totems SET ip_vinculada=NULL WHERE id=?",
+    """Quitar equipo asociado, sin borrar tótem, QR, caja ni pedidos."""
+    row = conn.execute(
+        "SELECT id,retirado FROM intrashop_totems WHERE id=?", (totem_id,)
+    ).fetchone()
+    if not row or row["retirado"]:
+        return False
+    conn.execute(
+        "UPDATE intrashop_totems SET ip_vinculada=NULL,ip_address=NULL WHERE id=?",
         (totem_id,),
-    ).rowcount)
+    )
+    return True
+
+
+def resumen_retiro(conn: sqlite3.Connection, totem_id: str) -> dict:
+    """Vista previa sin mutaciones. Mostrar antes de confirmar el retiro."""
+    row = conn.execute(
+        "SELECT id,nombre,retirado,ip_vinculada FROM intrashop_totems WHERE id=?",
+        (totem_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError("El tótem no existe.")
+    binding = conn.execute(
+        "SELECT pos_external_id FROM intrashop_mp_bindings "
+        "WHERE terminal_id=? AND terminal_type='totem'",
+        (totem_id,),
+    ).fetchone()
+    pos_id = binding["pos_external_id"] if binding else None
+    historical = conn.execute(
+        "SELECT COUNT(*) FROM intrashop_checkouts WHERE totem_id=?",
+        (totem_id,),
+    ).fetchone()[0]
+    entregas = conn.execute(
+        "SELECT COUNT(*) FROM intrashop_entregas WHERE totem_id=?",
+        (totem_id,),
+    ).fetchone()[0]
+    pendientes_entrega = conn.execute(
+        "SELECT COUNT(*) FROM intrashop_entregas "
+        "WHERE totem_id=? AND estado<>'entregado'",
+        (totem_id,),
+    ).fetchone()[0]
+    # Un cobro en curso o ambiguo nunca se borra ni se libera a la fuerza.
+    # Revisar también por POS externo, aunque no tenga totem_id.
+    sin_resolver = conn.execute(
+        """SELECT COUNT(*) FROM intrashop_checkouts
+           WHERE (totem_id=? OR (? IS NOT NULL AND pos_external_id=?))
+           AND estado NOT IN ('completed','cancelled','failed','expired')""",
+        (totem_id, pos_id, pos_id),
+    ).fetchone()[0]
+    return {
+        "id": row["id"], "nombre": row["nombre"],
+        "retirado": bool(row["retirado"]),
+        "ip_vinculada": row["ip_vinculada"],
+        "pos_external_id": pos_id, "checkouts_historicos": historical,
+        "entregas_historicas": entregas, "entregas_pendientes": pendientes_entrega,
+        "cobros_pendientes": sin_resolver,
+    }
+
+
+def retirar_totem(conn: sqlite3.Connection, totem_id: str) -> dict:
+    """Ocultar de la operación y desvincular QR/IP locales, preservando auditoría.
+
+    Invocar bajo BEGIN IMMEDIATE. Los registros de venta, checkout, entrega,
+    ticket e histórico permanecen sin alterar. No elimina QR remoto en MP.
+    """
+    estado = resumen_retiro(conn, totem_id)
+    if estado["retirado"]:
+        raise ValueError("Este tótem ya está eliminado de la lista activa.")
+    if estado["cobros_pendientes"]:
+        raise ValueError(
+            f"El tótem tiene {estado['cobros_pendientes']} cobro(s) "
+            "sin resolver. Regularizalos desde Conciliación antes de eliminarlo."
+        )
+    if estado["entregas_pendientes"]:
+        raise ValueError(
+            f"El tótem tiene {estado['entregas_pendientes']} comanda(s) "
+            "pendiente(s). Finalizá las entregas antes de eliminarlo."
+        )
+    conn.execute(
+        "DELETE FROM intrashop_mp_bindings "
+        "WHERE terminal_id=? AND terminal_type='totem'",
+        (totem_id,),
+    )
+    conn.execute(
+        "UPDATE intrashop_totems SET retirado=1,ip_vinculada=NULL,ip_address=NULL "
+        "WHERE id=? AND retirado=0",
+        (totem_id,),
+    )
+    return {**estado, "retirado": True}
+
+
+def restaurar_totem(conn: sqlite3.Connection, totem_id: str) -> dict:
+    """Recuperar un ID retirado: la IP y QR deben reconfirmarse."""
+    row = conn.execute(
+        "SELECT id,nombre,retirado FROM intrashop_totems WHERE id=?", (totem_id,)
+    ).fetchone()
+    if not row or not row["retirado"]:
+        raise ValueError("No hay un tótem eliminado con ese identificador.")
+    conn.execute(
+        "UPDATE intrashop_totems SET retirado=0 WHERE id=?", (totem_id,),
+    )
+    return {"id": row["id"], "nombre": row["nombre"], "retirado": False}
 
 
 def provisionar(conn: sqlite3.Connection, cantidad: int = 1) -> list[dict]:
