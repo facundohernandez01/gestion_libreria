@@ -21,6 +21,20 @@ El UUID que antes se generaba con `localStorage.intrashop_totem_id` cambiaba al 
 
 No asignar por accidente la misma IP a un slot 001 mientras el QR antiguo sigue asociado a otro registro. Debe vincularse el **tótem antiguo** si se quiere conservar el QR y las comandas previas.
 
+## Limpiar tótems de pruebas desde POS Server
+
+En **POS Server → Tótems** hay tres operaciones distintas:
+
+- **Desvincular equipo (solo IP):** desconecta la dirección del equipo; mantiene el ID, el nombre, la asociación con el QR de Mercado Pago, la caja y el historial. Es útil para cambiar de dispositivo o IP. Después de usarlo, la tienda de ese equipo queda sin identificar hasta que se confirme una IP nuevamente.
+- **Eliminar tótem…:** muestra un resumen del nombre, IP, POS/QR local, checkouts y comandas históricas. Tras confirmar, el tótem desaparece del listado operativo, libera su IP y elimina **únicamente** la asociación QR **local**. No elimina POS ni QR de la cuenta de Mercado Pago, tampoco ventas, reservas pagadas, tickets o entregas históricos.
+- **Mostrar eliminados / Restaurar eliminado:** permite encontrar los tótems retirados y recuperar su mismo ID y nombre. Es necesario asignarles otra vez la IP y el QR; esas relaciones no se reactivan automáticamente.
+
+Un tótem con **cobros activos, inciertos o pendientes de conciliación** o con **entregas aún pendientes** no se puede eliminar. Primero hay que resolverlos, porque borrar registros de cobro podría producir pérdida de pagos o de stock.
+
+Los tótems se numeran de forma permanente: incluso los eliminados conservan su ID en la base y no se reutilizan al crear el siguiente tótem. La siembra inicial de 001–008 sucede una sola vez por instalación; tras eliminar, los registros no reaparecen por reinicio ni recarga de caché.
+
+La eliminación es lógica/auditable (no un `DELETE` de registros de venta). Si necesitás una instalación nueva sin datos de pruebas financieros, utilizá el flujo de datos de demostración/backup con confirmación administrativa, no este control.
+
 ## Restricciones deliberadas
 
 - El frontend nunca llama a `/tienda/totems/register`: esa ruta devuelve HTTP 410, y el checkout exige que `totem_id` coincida con el vínculo IP guardado.
