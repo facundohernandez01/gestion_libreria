@@ -150,11 +150,18 @@ app.mount("/intrashop", AstroStaticFiles(
 from fastapi.middleware.cors import CORSMiddleware
 from intrashop_api import router as intrashop_router
 
+# En producción Astro se sirve desde el MISMO origen. No permitir que
+# cualquier sitio de Internet invoque la API de pagos o administración LAN.
+_allowed_cors = [
+    origin.strip() for origin in os.getenv("POS_CORS_ORIGINS", "").split(",")
+    if origin.strip() and origin.strip() != "*"
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
-    allow_headers=["*", "x-api-key", "content-type"],
+    allow_origins=_allowed_cors,
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Terminal-Id"],
+    allow_credentials=False,
 )
 app.include_router(intrashop_router)
 from intrashop_entregas import router as intrashop_entregas_router
@@ -174,7 +181,8 @@ def _connect() -> sqlite3.Connection:
 
 
 def _auth(x_api_key: str | None) -> None:
-    if x_api_key != API_KEY:
+    import secrets
+    if not API_KEY or not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="API key inválida")
 
 
