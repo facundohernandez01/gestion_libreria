@@ -4,6 +4,8 @@ on:
   push:
     branches: [fix/intrashop-checkout-caja-link-20261116]
     paths:
+      - '**.py'
+      - 'requirements.txt'
       - 'distribution/**'
       - 'intrashop/**'
       - '.github/workflows/intrashop-distribution.yml'

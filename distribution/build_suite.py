@@ -52,7 +52,7 @@ def zip_tree(source, destination):
         }:
             # PyInstaller may include dependency public CA bundles; these are
             # not merchant certificates. Fail closed until explicitly reviewed.
-            if path.name == "cacert.pem" and "certifi" in path.parts:
+            if (path.name == "cacert.pem" and "certifi" in path.parts) or (path.name == "base_library.zip" and path.relative_to(source).as_posix() == "_internal/base_library.zip"):
                 continue
             raise RuntimeError(f"Unexpected sensitive file in distribution: {path.name}")
     with zipfile.ZipFile(destination, "w", zipfile.ZIP_DEFLATED) as out:
@@ -68,10 +68,14 @@ def build(role, output, platform):
             cli = shutil.which("flet")
             if not cli:
                 raise RuntimeError("Flet CLI no instalado")
-            run(cli, "build", target,
-                "--product-name", "Kiosmico", "--org", "com.facundohernandez",
-                "--output-dir", "out", "--module-name", "main", cwd=stage)
-            zip_tree(stage / "out", output / f"Kiosmico-{platform}-portable.zip")
+            # Flet 1.x accepts project metadata from pyproject.toml; avoid legacy flags.
+            (stage / "pyproject.toml").write_text(
+                '[project]\nname = "kiosmico"\nversion = "0.1.0"\n'
+                'requires-python = ">=3.12"\n'
+                '[tool.flet]\norg = "com.facundohernandez"\nproduct = "Kiosmico"\n'
+                '[tool.flet.app]\npath = "."\n', encoding="utf-8")
+            run(cli, "build", target, "--org", "com.facundohernandez", "--module-name", "main", cwd=stage)
+            zip_tree(stage / "build" / target, output / f"Kiosmico-{platform}-portable.zip")
         else:
             storefront = ROOT / "intrashop" / "dist"
             if not (storefront / "index.html").is_file():
