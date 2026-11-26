@@ -127,7 +127,7 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
                 valor,
             ], spacing=4, tight=True),
             bgcolor=N.BLUE_GREY_800,
-            border_radius=10, padding=14, expand=True,
+            border_radius=10, padding=14, width=210,
         )
 
     def _snapshot():
@@ -369,8 +369,16 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
         cuenta,
         separador(),
         ft.Text("Ventas de este turno", size=14, weight=ft.FontWeight.BOLD, color=N.TEXT),
-        _linea("Total de ventas (todos los medios)", ventas_txt),
-        _linea("Medios electrónicos (no entran al cajón)", otras_txt),
+        ft.Row([
+            ft.Text("Total de ventas (todos los medios)", size=12,
+                    color=N.GREY_300, expand=True),
+            ventas_txt,
+        ], spacing=10),
+        ft.Row([
+            ft.Text("Medios electrónicos (no entran al cajón)", size=12,
+                    color=N.GREY_300, expand=True),
+            otras_txt,
+        ], spacing=10),
         medios,
         separador(),
         ft.Row([
