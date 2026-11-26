@@ -517,6 +517,7 @@ class ServerConsole:
             # no se publica por una API anónima de la LAN.
             import subprocess
             import os
+            import shutil
             directory = str(kits.BUILD_DIR)
             try:
                 if os.name == "nt":
