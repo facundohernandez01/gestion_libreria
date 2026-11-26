@@ -77,3 +77,26 @@ def revocar(conn, terminal_id):
 def listar(conn):
     ensure_schema(conn)
     return conn.execute("SELECT terminal_id,name,issued_at,revoked FROM pos_device_credentials ORDER BY name").fetchall()
+
+
+def modo_estricto(conn):
+    """Política local, fuera de la tabla config expuesta por la API LAN."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS pos_device_policy (
+        id INTEGER PRIMARY KEY CHECK(id=1), strict INTEGER NOT NULL DEFAULT 0
+    )""")
+    row = conn.execute("SELECT strict FROM pos_device_policy WHERE id=1").fetchone()
+    return bool(row and row[0])
+
+
+def configurar_modo_estricto(conn, enabled):
+    """Activación local explícita; nunca desde una solicitud de la API LAN."""
+    from services.lan_https import habilitado
+    modo_estricto(conn)
+    ensure_schema(conn)
+    if enabled:
+        if not habilitado():
+            raise ValueError("Prepará HTTPS antes de activar seguridad estricta.")
+        if not conn.execute("SELECT 1 FROM pos_device_credentials WHERE revoked=0 LIMIT 1").fetchone():
+            raise ValueError("Vinculá al menos una caja antes de activar seguridad estricta.")
+    conn.execute("INSERT INTO pos_device_policy(id,strict) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET strict=excluded.strict",
+                 (int(bool(enabled)),))

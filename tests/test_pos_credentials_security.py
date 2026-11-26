@@ -180,3 +180,27 @@ def test_sesion_de_caja_revocada_no_recupera_acceso(tmp_path, monkeypatch):
     with pytest.raises(Exception) as err:
         pos_auth.login(body, tid, request)
     assert err.value.status_code == 403
+
+
+def test_modo_estricto_bloquea_clave_compartida_y_persiste(tmp_path, monkeypatch):
+    import api_server as server
+    from services import pos_device_credentials as devices
+    path = str(tmp_path / "strict.db")
+    DatabaseManager(path)
+    monkeypatch.setattr(server, "DB_PATH", path)
+    monkeypatch.setattr(server, "API_KEY", "legacy-test-key")
+    monkeypatch.setenv("INTRASHOP_ENFORCE_HTTPS", "1")
+    server._auth("legacy-test-key")
+    with sqlite3.connect(path) as conn:
+        with pytest.raises(ValueError):
+            devices.configurar_modo_estricto(conn, True)
+        key = devices.canjear(conn, devices.emitir_codigo(conn, "Caja"), "caja-" + "c"*32)
+        devices.configurar_modo_estricto(conn, True)
+    with pytest.raises(Exception) as err:
+        server._auth("legacy-test-key")
+    assert err.value.status_code == 401
+    server._auth(key)
+    with sqlite3.connect(path) as conn:
+        assert devices.modo_estricto(conn)
+        devices.configurar_modo_estricto(conn, False)
+    server._auth("legacy-test-key")

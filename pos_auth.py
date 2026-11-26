@@ -38,7 +38,8 @@ def login(body: LoginRequest, x_terminal_id: str = Header(default=""),
         with DatabaseManager()._connect() as conn:
             devices.ensure_schema(conn)
             row = conn.execute("SELECT token_hash,revoked FROM pos_device_credentials WHERE terminal_id=?", (x_terminal_id,)).fetchone()
-        if row or key.startswith("posd_"):
+            strict = devices.modo_estricto(conn)
+        if strict or row or key.startswith("posd_"):
             if (not habilitado() or request.url.scheme != "https" or not row
                     or row[1] or not key.startswith("posd_")
                     or not secrets.compare_digest(row[0], devices.digest(key))):
@@ -86,6 +87,11 @@ def require_delivery(authorization: str | None = Header(default=None)):
             raise HTTPException(401, "Sesión vencida")
     # Revalidar rol en cada operación: revocar permisos surte efecto inmediato.
     with DatabaseManager()._connect() as conn:
+        from services.pos_device_credentials import modo_estricto
+        if modo_estricto(conn) and not (len(session) > 4 and session[4]):
+            with _lock:
+                _sessions.pop(token, None)
+            raise HTTPException(401, "Vinculá la caja e iniciá sesión nuevamente.")
         if len(session) > 4 and session[4]:
             from services.pos_device_credentials import ensure_schema
             ensure_schema(conn)
