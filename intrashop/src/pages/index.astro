@@ -33,6 +33,16 @@ const title = "IntraShop · Tu tienda local";
           <label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" placeholder="Buscar productos..." autocomplete="off" /></label>
         </div>
         <div id="totem-state" class="notice" role="status">Consultando tótem asignado por POS Server…</div>
+        <form id="pairing-panel" class="pairing-panel" hidden>
+          <label for="pairing-code">Código temporal de POS Server</label>
+          <div class="pairing-controls">
+            <input id="pairing-code" type="text" inputmode="text" maxlength="12"
+              autocapitalize="characters" spellcheck="false" autocomplete="off"
+              placeholder="ABCDE-FGHIJ" required />
+            <button id="pairing-submit" type="submit">Vincular este equipo</button>
+          </div>
+          <p id="pairing-message" role="status">Solicitá el código desde POS Server → Tótems.</p>
+        </form>
         <div id="category-filters" class="category-filters" aria-label="Filtrar por categoría"></div>
         <div id="connection-message" class="notice">Conectando con el servidor del local…</div>
         <div id="catalog" class="product-grid" aria-live="polite"></div>
@@ -87,7 +97,7 @@ const title = "IntraShop · Tu tienda local";
       let selectedCategory = "";
       const money = (value:number) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(value);
       const api = async (path:string, init:RequestInit={}) => {
-        const response = await fetch(apiBase.replace(/\/$/,"") + path,{...init,signal:init.signal || AbortSignal.timeout(8000),headers:{"Content-Type":"application/json",...(init.headers||{})}});
+        const response = await fetch(apiBase.replace(/\/$/,"") + path,{...init,credentials:"same-origin",signal:init.signal || AbortSignal.timeout(8000),headers:{"Content-Type":"application/json",...(init.headers||{})}});
         const body = await response.json().catch(()=>({detail:"Respuesta inválida del servidor"}));
         if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación");
         return body;
@@ -96,14 +106,17 @@ const title = "IntraShop · Tu tienda local";
         const identity = await api("/tienda/totems/identity");
         totemId = identity.paired ? String(identity.id) : "";
         totemName = identity.paired ? String(identity.nombre) : "";
-        totemReady = Boolean(identity.paired && identity.qr_assigned);
+        totemReady = Boolean(identity.paired && identity.qr_assigned && identity.authorized);
+        $("pairing-panel").hidden = !identity.paired || Boolean(identity.authorized);
         const state = $("totem-state");
         state.classList.toggle("success",totemReady);
         state.textContent = totemReady
-          ? totemName+" · Vinculado con QR en POS Server"
-          : identity.paired
-            ? totemName+" · Falta vincular Mercado Pago desde POS Server"
-            : "Equipo sin vincular ("+String(identity.ip || "IP desconocida")+"). Asigná su IP en POS Server para habilitar compras.";
+          ? totemName+" · QR listo, dispositivo autorizado"
+          : identity.paired && !identity.authorized
+            ? totemName+" · Ingresá el código de POS Server para habilitar cobros"
+            : identity.paired
+              ? totemName+" · Falta vincular Mercado Pago desde POS Server"
+              : "Equipo sin vincular ("+String(identity.ip || "IP desconocida")+"). Asigná su IP en POS Server para habilitar compras.";
         updateCart();
         return identity;
       }
@@ -185,8 +198,8 @@ const title = "IntraShop · Tu tienda local";
         $("payment-order").hidden=true; $("payment-cancel").hidden=false; activeCheckoutId="";
         try {
           const identity = await reportPresence();
-          if (!identity.paired || !identity.qr_assigned || !totemId)
-            throw new Error("El equipo no tiene un tótem con QR confirmado en POS Server.");
+          if (!identity.paired || !identity.qr_assigned || !identity.authorized || !totemId)
+            throw new Error("Vinculá este equipo con el código temporal de POS Server y un QR confirmado.");
           // Si se cancela mientras el servidor responde, no crear el pedido.
           if (cancelRequestedDuringCreation) return;
           const result = await api("/tienda/checkout",{method:"POST",body:JSON.stringify({totem_id:totemId,items:cart.map(i=>({producto_id:i.product.id,cantidad:i.quantity}))})});
@@ -254,6 +267,22 @@ const title = "IntraShop · Tu tienda local";
       $("cart-toggle").addEventListener("click",()=>openCart(true));
       $("cart-close").addEventListener("click",()=>openCart(false));
       $("drawer-backdrop").addEventListener("click",()=>openCart(false));
+      $("pairing-panel").addEventListener("submit",async event=>{
+        event.preventDefault();
+        const field=$<HTMLInputElement>("pairing-code");
+        const button=$<HTMLButtonElement>("pairing-submit");
+        const message=$("pairing-message");
+        button.disabled=true;
+        message.textContent="Validando código con POS Server…";
+        try {
+          await api("/tienda/totems/pair",{method:"POST",body:JSON.stringify({codigo:field.value.trim()})});
+          field.value="";
+          message.textContent="Equipo vinculado. Verificando permisos…";
+          await reportPresence();
+        } catch(error) {
+          message.textContent="No se pudo vincular: "+String(error instanceof Error?error.message:error);
+        } finally {button.disabled=false;}
+      });
       $("checkout").addEventListener("click",startCheckout);
       $("payment-close").addEventListener("click",cancelCheckout);
       $("payment-cancel").addEventListener("click",cancelCheckout);
