@@ -90,7 +90,7 @@ pub fn client_for(kit: &VerifiedKit) -> Result<reqwest::Client, String> {
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(8))
-        .cookie_store(true)
+        .cookie_store(false)
         .build().map_err(|_| "No se pudo preparar TLS".into())
 }
 
@@ -161,4 +161,19 @@ fn storefront_only() {
     assert!(!allowed_request("GET", "/tienda/checkout/../admin"));
     assert!(!allowed_request("POST", "/tienda/checkout/a%2fb/cancel"));
     assert!(!allowed_request("GET", "https://192.168.1.4/health"));
+}
+
+
+pub fn allowed_image(path: &str) -> bool {
+    path.strip_prefix("/tienda/productos/")
+        .and_then(|s| s.strip_suffix("/imagen"))
+        .map(|id| !id.is_empty() && id.len() <= 20 && id.bytes().all(|b| b.is_ascii_digit()))
+        .unwrap_or(false)
+}
+
+#[test]
+fn image_path_is_restricted() {
+    assert!(allowed_image("/tienda/productos/42/imagen"));
+    assert!(!allowed_image("/tienda/productos/../imagen"));
+    assert!(!allowed_image("/tienda/productos/42/imagen?url=http://other"));
 }

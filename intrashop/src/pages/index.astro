@@ -148,17 +148,37 @@ const title = "IntraShop · Tu tienda local";
       if (!native) void reportPresence().catch(error=>{
         $("totem-state").textContent="No se pudo verificar el tótem: "+String(error.message || error);
       });
-      setInterval(()=>{void reportPresence().catch(()=>{totemReady=false;updateCart();$("totem-state").textContent="Sin comunicación con POS Server: cobro deshabilitado.";});},30000);
+      setInterval(()=>{if(native && !nativeConnected)return;void reportPresence().catch(()=>{totemReady=false;updateCart();$("totem-state").textContent="Sin comunicación con POS Server: cobro deshabilitado.";});},30000);
+      const imageCache = new Map<string, Promise<string>>();
+      function imageSrc(p:Product) {
+        if (!p.imagen_url) return placeholder;
+        if (native && p.imagen_url.startsWith("/tienda/")) return placeholder;
+        if (p.imagen_url.startsWith("https://")) return escapeHtml(p.imagen_url);
+        return escapeHtml(apiBase.replace(/\/$/,"")+p.imagen_url);
+      }
+      function hydrateImages() {
+        if (!native || !nativeConnected) return;
+        document.querySelectorAll<HTMLImageElement>("img[data-native-image]").forEach(img=>{
+          const path=img.dataset.nativeImage || "";
+          if (!path.startsWith("/tienda/")) return;
+          if (!imageCache.has(path)) {
+            if(imageCache.size>=100) imageCache.clear();
+            imageCache.set(path,native.invoke("tienda_imagen",{path}).catch(()=>{imageCache.delete(path);return placeholder;}));
+          }
+          void imageCache.get(path)?.then(src=>{if(img.isConnected)img.src=src;});
+        });
+      }
       function renderProducts(list:Product[]) {
         const categories = [...new Set(products.map(p => (p.categoria || "").trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,"es"));
         $("category-filters").innerHTML = ["<button type=\"button\" class=\"category-chip "+(selectedCategory===""?"active":"")+"\" data-category=\"\">Todas</button>", ...categories.map(cat=>"<button type=\"button\" class=\"category-chip "+(selectedCategory===cat?"active":"")+"\" data-category=\""+escapeHtml(cat)+"\">"+escapeHtml(cat)+"</button>")].join("");
         const visible = selectedCategory ? list.filter(p => (p.categoria || "") === selectedCategory) : list;
         $("catalog").innerHTML = visible.map(p => `
           <article class="product-card">
-            <div class="product-image-wrap"><img class="product-image" src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"") + p.imagen_url) : placeholder}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${placeholder}'" /><span class="stock-pill">Disponible</span></div>
+            <div class="product-image-wrap"><img class="product-image" src="${imageSrc(p)}" data-native-image="${escapeHtml(p.imagen_url || "")}" alt="" loading="lazy" onerror="this.onerror=null;this.src='${placeholder}'" /><span class="stock-pill">Disponible</span></div>
             <div class="product-info"><span class="product-category">${escapeHtml(p.categoria || p.marca || "Del comercio")}</span><h3>${escapeHtml(p.descripcion)}</h3><div class="product-bottom"><strong>${money(p.precio_lista)}</strong><button class="add-button" type="button" data-add="${p.id}" aria-label="Agregar ${escapeHtml(p.descripcion)}">+</button></div></div>
           </article>`).join("");
         $("empty-state").hidden = visible.length > 0;
+        hydrateImages();
       }
       function escapeHtml(value:string) { return value.replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c] || c)); }
       async function loadProducts(term="") {
@@ -179,7 +199,8 @@ const title = "IntraShop · Tu tienda local";
       function updateCart() {
         $("cart-count").textContent = String(cart.reduce((sum,item)=>sum+item.quantity,0));
         $("cart-items").innerHTML = cart.length ? cart.map(({product:p,quantity:q})=>`
-          <div class="cart-item"><img src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"")+p.imagen_url) : placeholder}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><div class="cart-line-actions"><strong>${money(p.precio_lista*q)}</strong><button type="button" class="cart-remove" data-remove="${p.id}" aria-label="Eliminar ${escapeHtml(p.descripcion)} del carrito" title="Eliminar del carrito">Eliminar <span aria-hidden="true">×</span></button></div></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
+          <div class="cart-item"><img src="${imageSrc(p)}" data-native-image="${escapeHtml(p.imagen_url || "")}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><div class="cart-line-actions"><strong>${money(p.precio_lista*q)}</strong><button type="button" class="cart-remove" data-remove="${p.id}" aria-label="Eliminar ${escapeHtml(p.descripcion)} del carrito" title="Eliminar del carrito">Eliminar <span aria-hidden="true">×</span></button></div></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
+        hydrateImages();
         $("cart-total").textContent = money(cart.reduce((sum,item)=>sum+item.product.precio_lista*item.quantity,0));
         $("checkout").toggleAttribute("disabled",cart.length===0 || !totemReady);
       }
@@ -300,9 +321,9 @@ const title = "IntraShop · Tu tienda local";
         button.disabled=true;
         message.textContent="Validando código con POS Server…";
         try {
-          await api("/tienda/totems/pair",{method:"POST",body:JSON.stringify({codigo:field.value.trim()})});
+          const paired = await api("/tienda/totems/pair",{method:"POST",body:JSON.stringify({codigo:field.value.trim()})});
           field.value="";
-          message.textContent="Equipo vinculado. Verificando permisos…";
+          message.textContent=paired.session_persisted===false?"Equipo vinculado. El almacén seguro del sistema no está disponible: al reiniciar deberás volver a vincular.":"Equipo vinculado. Verificando permisos…";
           await reportPresence();
         } catch(error) {
           message.textContent="No se pudo vincular: "+String(error instanceof Error?error.message:error);
@@ -317,6 +338,14 @@ const title = "IntraShop · Tu tienda local";
         $("native-connection").hidden = false;
         $("totem-state").textContent = "Conectá este tótem con el kit del comercio.";
         $("connection-message").textContent = "Esperando conexión segura.";
+        void native.invoke("restaurar_comercio",{}).then(async result=>{
+          if(!result)return;
+          apiBase=result.servidor;
+          nativeConnected=true;
+          $("native-connection").hidden=true;
+          try {await reportPresence();} catch(error){$("totem-state").textContent=String(error);}
+          await loadProducts();
+        }).catch(error=>{$("native-status").textContent=String(error);});
         $("native-connection").addEventListener("submit", async event => {
           event.preventDefault();
           const button = $<HTMLButtonElement>("native-connect");
@@ -326,6 +355,7 @@ const title = "IntraShop · Tu tienda local";
           $("native-status").textContent = "Verificando identidad del servidor…";
           try {
             const result = await native.invoke("verificar_kit_totem", {bytes:Array.from(new Uint8Array(await file.arrayBuffer())),huella:$<HTMLInputElement>("native-fingerprint").value});
+            imageCache.clear();
             apiBase = result.servidor;
             nativeConnected = true;
             $("native-connection").hidden = true;
