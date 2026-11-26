@@ -14,3 +14,8 @@ img/qr.png
 
 # Secreto local de la vinculación Mercado Pago OAuth
 .mp-oauth-local.key
+
+# Copias privadas del asistente HTTPS y artefactos locales de distribución
+.env.backup-*
+distribution/builds/
+intrashop-conexion-*.zip
