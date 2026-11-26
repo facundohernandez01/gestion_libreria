@@ -9,6 +9,7 @@ import os
 from typing import Any, Optional
 
 import httpx
+from services.client_tls import opciones_http
 
 
 class ApiClient:
@@ -20,7 +21,7 @@ class ApiClient:
         self._headers = {"X-API-Key": self.api_key}
 
     def _get(self, path, params=None):
-        r = httpx.get(self.base_url + path, params=params, headers=self._headers, timeout=15)
+        r = httpx.get(self.base_url + path, params=params, headers=self._headers, timeout=15, **opciones_http(self.base_url))
         r.raise_for_status()
         return r.json()
 
@@ -33,7 +34,7 @@ class ApiClient:
 
     def _admin_request(self, method, path, json=None):
         response = httpx.request(method, self.base_url + path,
-                                 json=json, headers=self._admin_headers(), timeout=15)
+                                 json=json, headers=self._admin_headers(), timeout=15, **opciones_http(self.base_url))
         response.raise_for_status()
         return response.json()
 
@@ -66,7 +67,7 @@ class ApiClient:
         return result["ok"], result["error"]
 
     def _post(self, path, json=None, params=None):
-        r = httpx.post(self.base_url + path, json=json, params=params, headers=self._headers, timeout=15)
+        r = httpx.post(self.base_url + path, json=json, params=params, headers=self._headers, timeout=15, **opciones_http(self.base_url))
         r.raise_for_status()
         return r.json()
 
@@ -78,7 +79,7 @@ class ApiClient:
                 self.base_url + "/pos/auth/login",
                 json={"usuario": usuario, "clave": clave},
                 headers={"X-Terminal-Id": terminal_id()},
-                timeout=8,
+                timeout=8, **opciones_http(self.base_url),
             )
         except httpx.RequestError as exc:
             # No reportar una desconexión como si la contraseña fuera inválida.
@@ -108,7 +109,7 @@ class ApiClient:
 
     def health(self) -> bool:
         try:
-            return httpx.get(self.base_url + "/health", timeout=5).status_code == 200
+            return httpx.get(self.base_url + "/health", timeout=5, **opciones_http(self.base_url)).status_code == 200
         except Exception:
             return False
 
@@ -153,7 +154,7 @@ class ApiClient:
             self.base_url + f"/tienda/admin/productos/{int(producto_id)}",
             json={"disponible": disponible, "imagen_base64": imagen_base64,
                   "imagen_nombre": imagen_nombre, "imagen_url": imagen_url},
-            headers=self._headers, timeout=30,
+            headers=self._headers, timeout=30, **opciones_http(self.base_url),
         )
         response.raise_for_status()
         return response.json()
@@ -390,7 +391,7 @@ class ApiClient:
             self.base_url + "/admin/backups/validar",
             content=contenido,
             headers=headers,
-            timeout=120,
+            timeout=120, **opciones_http(self.base_url),
         )
         respuesta.raise_for_status()
         return respuesta.json()
@@ -410,7 +411,7 @@ class ApiClient:
         try:
             with httpx.stream(
                 "GET", self.base_url + "/admin/backups/exportar",
-                headers=self._admin_headers(), timeout=180,
+                headers=self._admin_headers(), timeout=180, **opciones_http(self.base_url),
             ) as respuesta:
                 respuesta.raise_for_status()
                 with tempfile.NamedTemporaryFile(
