@@ -102,3 +102,49 @@ def test_config_lan_no_entrega_ni_permite_modificar_secretos(tmp_path, monkeypat
         assert conn.execute(
             "SELECT valor FROM config WHERE clave='ACCESS_TOKEN'",
         ).fetchone()[0] == "sensitive123"
+
+
+def test_credenciales_individuales_canje_rotacion_y_revocacion(tmp_path):
+    from services import pos_device_credentials as devices
+    with sqlite3.connect(tmp_path / "devices.db") as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        a, b = "caja-" + "a" * 32, "caja-" + "b" * 32
+        code = devices.emitir_codigo(conn, "Caja A")
+        token = devices.canjear(conn, code, a)
+        assert devices.autorizado(conn, token)
+        with pytest.raises(ValueError):
+            devices.canjear(conn, code, b)
+        other = devices.canjear(conn, devices.emitir_codigo(conn, "Caja B"), b)
+        assert token != other
+        assert devices.revocar(conn, a)
+        assert not devices.autorizado(conn, token)
+        assert devices.autorizado(conn, other)
+        renewed = devices.canjear(conn, devices.emitir_codigo(conn, "Caja A"), a)
+        assert devices.autorizado(conn, renewed)
+        assert not devices.autorizado(conn, token)
+        assert len(devices.listar(conn)) == 2
+        assert conn.execute("SELECT token_hash FROM pos_device_credentials WHERE terminal_id=?", (a,)).fetchone()[0] != renewed
+
+
+def test_codigo_pos_vencido_no_emite_credencial(tmp_path):
+    from services import pos_device_credentials as devices
+    with sqlite3.connect(tmp_path / "devices.db") as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        code = devices.emitir_codigo(conn, "Caja A")
+        conn.execute("UPDATE pos_device_codes SET expires_at=0")
+        with pytest.raises(ValueError):
+            devices.canjear(conn, code, "caja-" + "a" * 32)
+        assert not devices.listar(conn)
+
+
+def test_credencial_individual_no_se_confunde_con_clave_global(tmp_path, monkeypatch):
+    from pathlib import Path
+    from core import settings as config
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.delenv("API_KEY", raising=False)
+    value = "posd_" + "x" * 48
+    config.guardar_credencial_pos(value)
+    assert config.credencial_pos_local() == value
+    assert config._default_secure_api_key(str(tmp_path / "db.sqlite")) != value
+    with pytest.raises(ValueError):
+        config.guardar_clave_lan_local(value)
