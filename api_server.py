@@ -28,6 +28,16 @@ try:
 except Exception:
     pass
 
+# Una clave heredada y pública convierte toda la API LAN en un endpoint
+# modificable por cualquiera que conozca el proyecto. Bloquear al iniciar,
+# antes de servir en 0.0.0.0. Las instalaciones sin API_KEY usan una nueva
+# clave segura persistida fuera del repositorio.
+if not API_KEY or API_KEY == "libreria-lan":
+    raise RuntimeError(
+        "API_KEY LAN insegura. Eliminá API_KEY=libreria-lan de .env "
+        "para generar una clave aleatoria y configurala en cada POS cliente."
+    )
+
 # Activar WAL + busy_timeout para concurrencia
 _conn_init = sqlite3.connect(DB_PATH)
 _conn_init.execute("PRAGMA journal_mode=WAL")
