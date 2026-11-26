@@ -116,7 +116,7 @@ const title = "IntraShop · Tu tienda local";
         totemId = identity.paired ? String(identity.id) : "";
         totemName = identity.paired ? String(identity.nombre) : "";
         totemReady = Boolean(identity.paired && identity.qr_assigned && identity.authorized);
-        $("pairing-panel").hidden = !identity.paired || Boolean(identity.authorized);
+        $("pairing-panel").hidden = Boolean(identity.authorized);
         const state = $("totem-state");
         state.classList.toggle("success",totemReady);
         state.textContent = totemReady
@@ -125,7 +125,7 @@ const title = "IntraShop · Tu tienda local";
             ? totemName+" · Ingresá el código de POS Server para habilitar cobros"
             : identity.paired
               ? totemName+" · Falta vincular Mercado Pago desde POS Server"
-              : "Equipo sin vincular ("+String(identity.ip || "IP desconocida")+"). Asigná su IP en POS Server para habilitar compras.";
+              : "Equipo sin vincular. Solicitá un código de acceso en POS Server.";
         updateCart();
         return identity;
       }
