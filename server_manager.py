@@ -11,6 +11,8 @@ import time
 
 import uvicorn
 
+from services.lan_https import host_backend, opciones_uvicorn, url_visible
+
 # Imports explícitos: PyInstaller no detecta los módulos que uvicorn carga
 # dinámicamente (protocolos/loops/lifespan) en la app compilada.
 try:  # noqa: SIM105
@@ -62,14 +64,16 @@ class ServerManager:
         config = uvicorn.Config(
             asgi_app, host=host, port=port, log_level="warning",
             reload=False, log_config=_LOG_CONFIG,
+            **opciones_uvicorn(),
         )
         return uvicorn.Server(config)
 
     def iniciar(self, host: str = "0.0.0.0", port: int = 8000) -> str:
         if self.activo and getattr(self._server, "started", False):
             return self.url()
-        self.host, self.port = host, port
-        self._server = self._crear_server(host, port)
+        backend_host = host_backend(host)
+        self.host, self.port = backend_host, port
+        self._server = self._crear_server(backend_host, port)
         self._thread = threading.Thread(target=self._server.run, daemon=True)
         self._thread.start()
         # esperar a que levante
@@ -80,7 +84,7 @@ class ServerManager:
         if not getattr(self._server, "started", False):
             self.activo = False
             raise RuntimeError(
-                f"No se pudo iniciar el servidor en {host}:{port} "
+                f"No se pudo iniciar el servidor en {backend_host}:{port} "
                 "(¿puerto ocupado o sin permisos?)"
             )
         self.activo = True
@@ -98,7 +102,7 @@ class ServerManager:
         self.activo = False
 
     def url(self) -> str:
-        return f"http://{ip_lan()}:{self.port}"
+        return url_visible(ip_lan(), self.port)
 
     def url_local(self) -> str:
         return f"http://127.0.0.1:{self.port}"
@@ -118,9 +122,11 @@ def servir_bloqueante(host: str = "0.0.0.0", port: int = 8000, stop_event=None) 
 
     from api_server import app as asgi_app
 
+    backend_host = host_backend(host)
     config = uvicorn.Config(
-        asgi_app, host=host, port=port, log_level="warning",
+        asgi_app, host=backend_host, port=port, log_level="warning",
         reload=False, log_config=_LOG_CONFIG,
+        **opciones_uvicorn(),
     )
     server = uvicorn.Server(config)
     _bloqueante_server = server
