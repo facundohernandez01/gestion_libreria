@@ -13,6 +13,7 @@ from tkinter import ttk, messagebox, simpledialog
 
 from core.settings import settings
 from server_manager import server_manager, ip_lan
+from services.lan_https import host_backend, url_visible
 
 
 class ServerConsole:
@@ -20,7 +21,7 @@ class ServerConsole:
     ONLINE_SECONDS = 90
 
     def __init__(self, host="0.0.0.0", port=None):
-        self.host = host
+        self.host = host_backend(host)
         self.port = port or settings.api_port
         self.root = tk.Tk()
         self.root.title("IntraShop | Panel del servidor")
@@ -38,7 +39,7 @@ class ServerConsole:
         self._single_port = 49000 + (int(self.port) % 1000)
         self._init_single_instance()
         self.status = tk.StringVar(value="Iniciando servidor…")
-        self.url = tk.StringVar(value="http://" + ip_lan() + ":" + str(self.port))
+        self.url = tk.StringVar(value=url_visible(ip_lan(), self.port))
         self.summary = tk.StringVar(value="Cargando dispositivos…")
         self.notice = tk.StringVar(value="")
         self.mostrar_eliminados = tk.BooleanVar(value=False)
@@ -887,10 +888,10 @@ class ServerConsole:
         threading.Thread(target=server_manager.detener, daemon=True).start()
 
     def open_intrashop(self):
-        webbrowser.open("http://127.0.0.1:" + str(self.port) + "/intrashop/")
+        webbrowser.open(url_visible(ip_lan(), self.port) + "/intrashop/")
 
     def open_admin(self):
-        webbrowser.open("http://127.0.0.1:" + str(self.port) + "/intrashop/admin")
+        webbrowser.open(url_visible(ip_lan(), self.port) + "/intrashop/admin")
 
     @staticmethod
     def _safe_datetime(value):
