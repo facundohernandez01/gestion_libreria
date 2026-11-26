@@ -76,27 +76,8 @@ def credenciales_configuradas(db_manager) -> bool:
 
 
 def validar_login(db_manager, usuario: str, clave: str) -> bool:
-    """Validación real; en cliente nunca usar credenciales locales de respaldo."""
-    from core.db_factory import modo_actual
-
-    try:
-        if db_manager.autenticar_usuario(usuario, clave) is not None:
-            return True
-    except Exception:
-        pass
-    if modo_actual() == "cliente":
-        # Fallar cerrado: config local jamás sustituye al login del servidor.
-        return False
-    try:
-        user_ok = (db_manager.get_config_value("LOGIN_USUARIO") or "").strip()
-        clave_ok = (db_manager.get_config_value("LOGIN_CLAVE") or "").strip()
-    except Exception:
-        return False
-    # Sin credenciales configuradas no existe un superusuario implícito
-    # admin/admin. El alta inicial debe pasar por el flujo de primer uso.
-    return bool(user_ok and clave_ok) and (
-        (usuario or "").strip() == user_ok and (clave or "").strip() == clave_ok
-    )
+    """No aceptar credenciales guardadas fuera de la tabla usuarios."""
+    return db_manager.autenticar_usuario(usuario, clave) is not None
 
 
 def LoginView(db_manager, on_login, page: ft.Page):
