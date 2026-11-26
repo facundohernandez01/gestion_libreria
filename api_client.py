@@ -12,10 +12,12 @@ import httpx
 
 
 class ApiClient:
-    def __init__(self, base_url: str, api_key: str = "libreria-lan"):
+    def __init__(self, base_url: str, api_key: str | None = None):
+        from core.settings import settings
+
         self.base_url = base_url.rstrip("/")
-        self.api_key = api_key
-        self._headers = {"X-API-Key": api_key}
+        self.api_key = api_key if api_key is not None else settings.api_key
+        self._headers = {"X-API-Key": self.api_key}
 
     def _get(self, path, params=None):
         r = httpx.get(self.base_url + path, params=params, headers=self._headers, timeout=15)
