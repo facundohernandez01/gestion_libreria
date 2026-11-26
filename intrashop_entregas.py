@@ -98,7 +98,7 @@ def list_totems(operador: str = Depends(require_delivery)):
     with connect() as conn:
         ensure_schema(conn)
         return [dict(row) for row in conn.execute(
-            "SELECT * FROM intrashop_totems ORDER BY nombre COLLATE NOCASE"
+            "SELECT * FROM intrashop_totems WHERE retirado=0 ORDER BY nombre COLLATE NOCASE"
         ).fetchall()]
 
 
