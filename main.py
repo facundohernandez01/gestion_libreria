@@ -574,10 +574,12 @@ class LibreriaApp:
             self.caja_actual = None
             self.mostrar_abrir_caja()
 
-        # CerrarCajaModal cierra solo; aquí primero cerramos el diálogo abierto
+        # show_dialog debe montar primero el AlertDialog; consultar la SQLite
+        # antes de mostrarlo causaba un overlay gris sin contenido en Flet 1.x.
         modal = CerrarCajaModal(db_manager=self.db, caja_id=self.caja_actual,
                                 on_caja_cerrada=on_cerrada, page=self.page)
         abrir_dialogo(self.page, modal)
+        self.page.run_thread(modal.data["cargar_resumen"])
 
 
 def _modo_desde_ruta(route: str) -> str:
