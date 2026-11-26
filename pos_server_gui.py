@@ -29,6 +29,7 @@ class ServerConsole:
         self.root.configure(bg="#f3f5f9")
         self._closing = False
         self._loading = False
+        self._refresh_requested = False
         self._timer = None
         self._tray = None
         self._tray_available = False
@@ -354,6 +355,16 @@ class ServerConsole:
         try:
             with sqlite3.connect(settings.db_path, timeout=5) as conn:
                 conn.row_factory = sqlite3.Row
+                active = conn.execute(
+                    "SELECT retirado FROM intrashop_totems WHERE id=?", (totem_id,),
+                ).fetchone()
+                if not active or active["retirado"]:
+                    messagebox.showerror(
+                        "QR no disponible",
+                        "El tótem fue eliminado. Restauralo antes de vincular un QR.",
+                        parent=self.root,
+                    )
+                    return
                 existing = conn.execute(
                     "SELECT pos_external_id, store_external_id FROM intrashop_mp_bindings "
                     "WHERE terminal_id=? AND terminal_type='totem'", (totem_id,)
@@ -696,7 +707,11 @@ class ServerConsole:
         running = server_manager.activo and bool(getattr(server_manager._server, "started", False))
         self.status.set("● Servidor activo" if running else "○ Servidor detenido")
         self.url.set("http://" + ip_lan() + ":" + str(self.port))
-        if not self._loading:
+        if self._loading:
+            # Una mutación hecha durante el refresco debe verse de inmediato
+            # al terminar la lectura actual, no 15 segundos después.
+            self._refresh_requested = True
+        else:
             self._loading = True
             def worker():
                 try:
@@ -713,6 +728,9 @@ class ServerConsole:
                         self._render(*data)
                     else:
                         self.notice.set("No se pudo consultar el estado: " + str(error))
+                    if self._refresh_requested:
+                        self._refresh_requested = False
+                        self.root.after(0, self.refresh)
                 self.root.after(0, finish)
             threading.Thread(target=worker, daemon=True).start()
         self._timer = self.root.after(self.REFRESH_MS, self.refresh)
