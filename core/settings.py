@@ -64,6 +64,15 @@ def _default_secure_api_key(db_path: str) -> str:
     explicit = os.environ.get("API_KEY", "").strip()
     if explicit:
         return explicit
+    # Clave configurada manualmente en una terminal cliente. No en la DB ni
+    # en la URL. Se guarda con permisos 0600 y se carga al reiniciar.
+    client_key_file = Path.home() / ".config" / "intrashop" / "client_api_key"
+    try:
+        client_key = client_key_file.read_text(encoding="utf-8").strip()
+        if len(client_key) >= 32:
+            return client_key
+    except FileNotFoundError:
+        pass
     scope = sha256(str(Path(db_path).expanduser().resolve()).encode()).hexdigest()[:20]
     directory = Path.home() / ".config" / "intrashop" / "server_keys"
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -85,6 +94,25 @@ def _default_secure_api_key(db_path: str) -> str:
     if len(new_key) < 32:
         raise RuntimeError("La clave LAN guardada no es segura.")
     return new_key
+
+
+def guardar_clave_lan_local(value: str) -> None:
+    """Configurar conexión POS remota desde la terminal, sin imprimir secreto."""
+    from pathlib import Path
+
+    value = (value or "").strip()
+    if len(value) < 32 or value == "libreria-lan":
+        raise ValueError("Pegá la clave segura de POS Server (mínimo 32 caracteres).")
+    directory = Path.home() / ".config" / "intrashop"
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    path = directory / "client_api_key"
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(value)
+        path.chmod(0o600)
+    except Exception:
+        raise
 
 
 def _env(key: str, default: str = "") -> str:
