@@ -61,7 +61,9 @@ def crear_acceso_datos():
     if modo == "cliente":
         from api_client import ApiClient
 
-        return ApiClient(_server_url(), settings.api_key), "cliente"
+        from core.settings import credencial_pos_local
+
+        return ApiClient(_server_url(), credencial_pos_local() or settings.api_key), "cliente"
     from database_manager import DatabaseManager
 
     return DatabaseManager(), modo
