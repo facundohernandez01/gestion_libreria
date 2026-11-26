@@ -309,7 +309,7 @@ def test_desvincular_ip_tiene_efecto_visible_y_preserva_qr(server_db):
 def test_pantalla_pos_server_explica_eliminar_y_desvincular():
     from pathlib import Path
     src = (Path(__file__).resolve().parents[1] / "pos_server_gui.py").read_text()
-    assert "Desvincular equipo (solo IP)" in src
+    assert "Quitar dirección vinculada (conservar QR)" in src
     assert "Eliminar tótem…" in src
     assert "Mostrar eliminados" in src
     assert "def restore_totem(self):" in src
