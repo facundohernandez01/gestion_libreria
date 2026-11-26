@@ -251,9 +251,9 @@ def test_eliminar_no_borra_ordenes_cobradas_y_bloquea_si_hay_pendiente(server_db
         conn.execute("BEGIN IMMEDIATE")
         retirar_totem(conn, "legacy-uuid")
         conn.commit()
-        assert conn.execute(
+        assert tuple(conn.execute(
             "SELECT id,estado,totem_id FROM intrashop_checkouts WHERE id='prueba-checkout'"
-        ).fetchone() == ("prueba-checkout", "completed", "legacy-uuid")
+        ).fetchone()) == ("prueba-checkout", "completed", "legacy-uuid")
 
 
 def test_no_retirar_tótem_con_entrega_pendiente(server_db):
@@ -283,10 +283,10 @@ def test_no_retirar_tótem_con_entrega_pendiente(server_db):
         conn.execute("BEGIN IMMEDIATE")
         retirar_totem(conn, "legacy-uuid")
         conn.commit()
-        assert conn.execute(
+        assert tuple(conn.execute(
             "SELECT totem_id,totem_nombre,estado FROM intrashop_entregas "
             "WHERE checkout_id='entrega-prueba'"
-        ).fetchone() == ("legacy-uuid", "Tótem entrada", "entregado")
+        ).fetchone()) == ("legacy-uuid", "Tótem entrada", "entregado")
 
 
 def test_desvincular_ip_tiene_efecto_visible_y_preserva_qr(server_db):
