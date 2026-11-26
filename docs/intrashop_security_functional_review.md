@@ -59,18 +59,18 @@ administración local o los endpoints administrativos autenticados.
 
 **Para no permitir cobros por HTTP**, activar `INTRASHOP_ENFORCE_HTTPS=1`, poner FastAPI detrás de un proxy HTTPS, y **no exponer el puerto HTTP de FastAPI a la LAN**.
 
-Ejemplo conceptual con Caddy y DNS interno `pos.intra.lan`:
+Ejemplo mínimo con Caddy y DNS interno `pos.home.arpa` (instrucciones completas en [HTTPS LAN](https-lan.md)):
 
 ```caddyfile
-pos.intra.lan {
+pos.home.arpa {
     tls internal
     reverse_proxy 127.0.0.1:8000
 }
 ```
 
-La máquina POS Server debe escuchar en `127.0.0.1:8000` (por ejemplo `python pos_server.py --headless --host 127.0.0.1`), con firewall que niegue conexiones LAN directas a 8000. Los equipos deben resolver `pos.intra.lan` a la IP del servidor y **confiar explícitamente en la CA del proxy**, antes de acceder a `https://pos.intra.lan/intrashop/`. No desactivar verificación TLS en Python o navegador. Si se usa un proxy, configurarlo para que reemplace correctamente `X-Forwarded-For` y solo confiar en la IP del proxy; una cabecera enviada por el navegador no es identidad.
+La máquina POS Server debe escuchar en `127.0.0.1:8000` (por ejemplo `python pos_server.py --headless --host 127.0.0.1`), con firewall que niegue conexiones LAN directas a 8000. Los equipos deben resolver `pos.intra.lan` a la IP del servidor y **confiar explícitamente en la CA del proxy**, antes de acceder a `https://pos.home.arpa/intrashop/`. No desactivar verificación TLS en Python o navegador. Si se usa un proxy, configurarlo para que reemplace correctamente `X-Forwarded-For` y solo confiar en la IP del proxy; una cabecera enviada por el navegador no es identidad.
 
-**Importante**: `INTRASHOP_ENFORCE_HTTPS` protege únicamente endpoints de emparejamiento y checkout. POS Server completo también debe quedar detrás de HTTPS para proteger logins y la API de caja. La protección de red se completa con segmentación Wi‑Fi/VLAN, contraseña del administrador, actualizaciones y firewall. La clave LAN compartida aún da acceso a operaciones POS que dependen de ella; es un riesgo residual que exige migrar todas las escrituras a autorización por rol/sesión.
+**Importante**: `INTRASHOP_ENFORCE_HTTPS=1` ahora obliga a toda la API POS Server, el login, Astro y caja a utilizar HTTPS, y fuerza el backend a escuchar únicamente en `127.0.0.1`. El proxy Caddy local queda como único punto de entrada desde la LAN. No utilizar `forwarded_allow_ips='*'`. La protección de red se completa con segmentación Wi‑Fi/VLAN, contraseña del administrador, actualizaciones y firewall. La clave LAN compartida aún da acceso a operaciones POS que dependen de ella; es un riesgo residual que exige migrar todas las escrituras a autorización por rol/sesión.
 
 En desarrollo local, no configurar `POS_CORS_ORIGINS=*`. Si Astro de desarrollo debe llamar a otro origen, definir `POS_CORS_ORIGINS` como una lista explícita de orígenes de confianza; en producción usar un único dominio/origen.
 
