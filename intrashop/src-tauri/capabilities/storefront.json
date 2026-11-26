@@ -1,0 +1,10 @@
+{
+  "identifier": "storefront",
+  "description": "Local storefront only, no shell or filesystem permissions",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default"
+  ]
+}

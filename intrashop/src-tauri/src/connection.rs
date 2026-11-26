@@ -81,16 +81,21 @@ pub fn read_kit(bytes: &[u8], confirmed: &str) -> Result<VerifiedKit, String> {
     Ok(VerifiedKit { servidor, huella, pem })
 }
 
-pub async fn verify_server(kit: &VerifiedKit) -> Result<(), String> {
+pub fn client_for(kit: &VerifiedKit) -> Result<reqwest::Client, String> {
     let ca = reqwest::Certificate::from_pem(&kit.pem).map_err(|_| "CA inválida")?;
-    let client = reqwest::Client::builder()
+    reqwest::Client::builder()
         .tls_built_in_root_certs(false)
         .add_root_certificate(ca)
         .https_only(true)
         .no_proxy()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(Duration::from_secs(8))
-        .build().map_err(|_| "No se pudo preparar TLS")?;
+        .cookie_store(true)
+        .build().map_err(|_| "No se pudo preparar TLS".into())
+}
+
+pub async fn verify_server(kit: &VerifiedKit) -> Result<(), String> {
+    let client = client_for(kit)?;
     let mut response = client.get(format!("{}/health", kit.servidor)).send().await
         .map_err(|_| "No se pudo verificar la conexión HTTPS con POS Server")?;
     if response.status() != reqwest::StatusCode::OK {
@@ -123,4 +128,37 @@ mod tests {
     fn invalid_zip_rejected() {
         assert!(read_kit(b"invalid", "00").is_err());
     }
+}
+
+
+// Only the storefront's fixed API surface, never an arbitrary URL or admin path.
+pub fn allowed_request(method: &str, path: &str) -> bool {
+    if path.len() > 4096 || path.contains('#') || path.contains('\\') || path.contains('\r') || path.contains('\n') {
+        return false;
+    }
+    let route = path.split('?').next().unwrap_or("");
+    match (method, route) {
+        ("GET", "/tienda/productos" | "/tienda/totems/identity") => true,
+        ("POST", "/tienda/totems/pair" | "/tienda/checkout") => path == route,
+        _ => {
+            let Some(rest) = route.strip_prefix("/tienda/checkout/") else { return false; };
+            let id = if method == "POST" {
+                let Some(id) = rest.strip_suffix("/cancel") else { return false; };
+                id
+            } else if method == "GET" { rest } else { return false; };
+            path == route && !id.is_empty() && id.len() <= 80 &&
+                id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        }
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn storefront_only() {
+    assert!(allowed_request("GET", "/tienda/productos?termino=pan"));
+    assert!(allowed_request("POST", "/tienda/checkout/a-b/cancel"));
+    assert!(!allowed_request("GET", "/tienda/admin/checkouts-pending"));
+    assert!(!allowed_request("GET", "/tienda/checkout/../admin"));
+    assert!(!allowed_request("POST", "/tienda/checkout/a%2fb/cancel"));
+    assert!(!allowed_request("GET", "https://192.168.1.4/health"));
 }

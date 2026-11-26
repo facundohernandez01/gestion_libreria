@@ -32,6 +32,14 @@ const title = "IntraShop · Tu tienda local";
           <div><span class="section-kicker">CATÁLOGO</span><h2>Encontrá tus productos</h2><p>Disponibilidad actual del comercio.</p></div>
           <label class="search-box"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></svg><input id="search" type="search" placeholder="Buscar productos..." autocomplete="off" /></label>
         </div>
+        <form id="native-connection" class="pairing-panel" hidden>
+          <label for="native-kit">Kit de conexión del comercio (.zip)</label>
+          <input id="native-kit" type="file" accept=".zip,application/zip" required />
+          <label for="native-fingerprint">Huella SHA-256 indicada por POS Server</label>
+          <input id="native-fingerprint" type="text" autocomplete="off" required />
+          <button id="native-connect" type="submit">Conectar con mi comercio</button>
+          <p id="native-status" role="status"></p>
+        </form>
         <div id="totem-state" class="notice" role="status">Consultando tótem asignado por POS Server…</div>
         <form id="pairing-panel" class="pairing-panel" hidden>
           <label for="pairing-code">Código temporal de POS Server</label>
@@ -105,7 +113,15 @@ const title = "IntraShop · Tu tienda local";
       let cancelRequestedDuringCreation = false;
       let selectedCategory = "";
       const money = (value:number) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",maximumFractionDigits:2}).format(value);
+      const native = (window as unknown as {__TAURI__?:{core?:{invoke:(command:string,args:Record<string,unknown>)=>Promise<any>}}}).__TAURI__?.core;
+      let nativeConnected = false;
       const api = async (path:string, init:RequestInit={}) => {
+        if (native) {
+          if (!nativeConnected) throw new Error("Importá y verificá el kit de conexión del comercio.");
+          const result = await native.invoke("tienda_request", {method:init.method || "GET",path,body:typeof init.body==="string"?init.body:null});
+          if (result.status<200 || result.status>=300) throw new Error(result.body?.detail || "Operación rechazada por POS Server");
+          return result.body;
+        }
         const response = await fetch(apiBase.replace(/\/$/,"") + path,{...init,credentials:"same-origin",signal:init.signal || AbortSignal.timeout(8000),headers:{"Content-Type":"application/json",...(init.headers||{})}});
         const body = await response.json().catch(()=>({detail:"Respuesta inválida del servidor"}));
         if (!response.ok) throw new Error(body.detail || "No se pudo completar la operación");
@@ -129,7 +145,7 @@ const title = "IntraShop · Tu tienda local";
         updateCart();
         return identity;
       }
-      void reportPresence().catch(error=>{
+      if (!native) void reportPresence().catch(error=>{
         $("totem-state").textContent="No se pudo verificar el tótem: "+String(error.message || error);
       });
       setInterval(()=>{void reportPresence().catch(()=>{totemReady=false;updateCart();$("totem-state").textContent="Sin comunicación con POS Server: cobro deshabilitado.";});},30000);
@@ -297,7 +313,31 @@ const title = "IntraShop · Tu tienda local";
       $("payment-cancel").addEventListener("click",cancelCheckout);
       $("payment-done").addEventListener("click",()=>{if(activeCheckoutId || checkoutPending) return;$("payment-modal").hidden=true;$("payment-order").hidden=true;});
       $<HTMLInputElement>("search").addEventListener("input",()=>{window.clearTimeout((window as any).__searchTimer);(window as any).__searchTimer=window.setTimeout(()=>loadProducts($<HTMLInputElement>("search").value.trim()),250);});
-      updateCart(); loadProducts();
+      if (native) {
+        $("native-connection").hidden = false;
+        $("totem-state").textContent = "Conectá este tótem con el kit del comercio.";
+        $("connection-message").textContent = "Esperando conexión segura.";
+        $("native-connection").addEventListener("submit", async event => {
+          event.preventDefault();
+          const button = $<HTMLButtonElement>("native-connect");
+          const file = $<HTMLInputElement>("native-kit").files?.[0];
+          if (!file || file.size > 1024*1024) { $("native-status").textContent = "Seleccioná un kit ZIP válido."; return; }
+          button.disabled = true;
+          $("native-status").textContent = "Verificando identidad del servidor…";
+          try {
+            const result = await native.invoke("verificar_kit_totem", {bytes:Array.from(new Uint8Array(await file.arrayBuffer())),huella:$<HTMLInputElement>("native-fingerprint").value});
+            apiBase = result.servidor;
+            nativeConnected = true;
+            $("native-connection").hidden = true;
+            await reportPresence();
+            await loadProducts();
+          } catch(error) {
+            $("native-connection").hidden = false;
+            $("native-status").textContent = String(error);
+          } finally {button.disabled = false;}
+        });
+      }
+      updateCart(); if (!native) loadProducts();
     </script>
   </body>
 </html>

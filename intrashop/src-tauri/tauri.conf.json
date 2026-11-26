@@ -22,7 +22,8 @@
     ],
     "security": {
       "csp": "default-src 'self' http: https: data: blob:; img-src 'self' http: https: data: blob:; connect-src 'self' http: https: ws: wss:;"
-    }
+    },
+    "withGlobalTauri": true
   },
   "bundle": {
     "active": true,
