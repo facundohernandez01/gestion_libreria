@@ -124,9 +124,7 @@ def configurar(ip: str, port: int = 8000, *, confirmar: bool = True) -> dict:
         # No pisar una configuración de terceros silenciosamente.
         if CADDYFILE.exists():
             old = _run_capture(["sudo", "cat", str(CADDYFILE)])
-            if ("# Generado por IntraShop:" not in old
-                    and "Welcome to Caddy" not in old
-                    and not _es_default_caddy(old)):
+            if "# Generado por IntraShop:" not in old:
                 if confirmar:
                     answer = input(
                         "Caddy ya tiene una configuración AJENA a IntraShop. "
@@ -173,6 +171,26 @@ def configurar(ip: str, port: int = 8000, *, confirmar: bool = True) -> dict:
     print("URL de POS:", f"https://{ip}")
     print("Para POS clientes y tótems hay que confiar una vez en la CA del servidor.")
     print("Ruta habitual del certificado público:", CA_CERT)
+    # Exportar SOLO la CA PÚBLICA, sin claves privadas, al perfil del usuario.
+    # Cada cliente debe comprobar la huella en la propia consola del servidor
+    # antes de instalarla como autoridad de confianza.
+    try:
+        pem = _run_capture(["sudo", "cat", str(CA_CERT)])
+        import hashlib
+        import ssl
+
+        cert_der = ssl.PEM_cert_to_DER_cert(pem)
+        fingerprint = hashlib.sha256(cert_der).hexdigest().upper()
+        export_dir = Path.home() / ".local" / "share" / "intrashop" / "certificados"
+        export_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        exported = export_dir / "intrashop-root-ca.crt"
+        exported.write_text(pem, encoding="utf-8")
+        exported.chmod(0o644)
+        print("Certificado PÚBLICO para tus equipos:", exported)
+        print("Huella SHA-256 de la CA:", fingerprint)
+        print("Verificá la huella en cada equipo antes de instalar la CA.")
+    except (subprocess.CalledProcessError, OSError, ValueError) as exc:
+        print("Aviso: no se exportó todavía la CA pública:", exc)
     print("NUNCA copiar el archivo root.key ni desactivar verificación TLS.")
     return {"url": f"https://{ip}", "env": str(env_path), "caddyfile": str(CADDYFILE)}
 
