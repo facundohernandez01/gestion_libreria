@@ -148,6 +148,7 @@ class ServerConsole:
         controls.pack(fill="x", pady=(0, 12))
         for label, action in (("Iniciar servidor", self.start), ("Detener servidor", self.stop),
                               ("Abrir tienda", self.open_intrashop), ("Abrir administración", self.open_admin),
+                              ("Copiar clave LAN", self.copy_lan_key),
                               ("Actualizar", self.refresh)):
             ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 8))
         ttk.Label(page, textvariable=self.summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
@@ -245,6 +246,24 @@ class ServerConsole:
         finally:
             menu.grab_release()
             menu.destroy()
+
+    def copy_lan_key(self):
+        """La clave se entrega sólo a un operador con acceso físico a esta PC."""
+        if not messagebox.askyesno(
+            "Clave de conexión de POS Server",
+            "Esta clave permite acceder a las operaciones LAN del servidor.\n"
+            "Compartila únicamente con terminales POS autorizadas y pegala "
+            "en Configurar conexión LAN.\n\n"
+            "¿Copiar al portapapeles de esta PC?",
+            parent=self.root,
+        ):
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(settings.api_key)
+        self.notice.set(
+            "Clave copiada. Pegala en Configurar conexión LAN del POS "
+            "y borrá el portapapeles después."
+        )
 
     def scan_lan(self):
         """Búsqueda solicitada desde la GUI, nunca automática.
