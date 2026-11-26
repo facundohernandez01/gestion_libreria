@@ -150,3 +150,73 @@ jobs:
           exit 1
       - name: Simular compra, eliminar producto y cancelar QR en Chromium
         run: python -m pytest -q tests/test_intrashop_browser_e2e.py
+
+  https-proxy-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Instalar FastAPI y Caddy para prueba local
+        run: |
+          python -m pip install "fastapi>=0.110,<0.145" uvicorn requests python-dotenv httpx cryptography
+          if ! command -v caddy >/dev/null; then
+            sudo apt-get update -qq
+            sudo DEBIAN_FRONTEND=noninteractive apt-get install -y caddy
+          fi
+      - name: Probar TLS real contra POS Server en red loopback
+        env:
+          POS_API_ONLY: "1"
+          DB_PATH: "/tmp/intrashop-https-ci.db"
+          API_KEY: "CI-ONLY-DUMMY-API-KEY-DO-NOT-USE-IN-PRODUCTION"
+          INTRASHOP_ENFORCE_HTTPS: "1"
+          POS_PUBLIC_URL: "https://localhost:8443"
+        run: |
+          python - <<'PY'
+          import os
+          from database_manager import DatabaseManager
+          DatabaseManager(os.environ["DB_PATH"])
+          PY
+          python pos_server.py --headless --host 0.0.0.0 --port 8108 >/tmp/pos-https-ci.log 2>&1 &
+          cat >/tmp/intrashop-ci.caddyfile <<'EOF'
+          {
+            auto_https disable_redirects
+          }
+          https://localhost:8443 {
+            tls internal
+            reverse_proxy 127.0.0.1:8108
+          }
+          EOF
+          caddy validate --config /tmp/intrashop-ci.caddyfile
+          caddy run --config /tmp/intrashop-ci.caddyfile >/tmp/caddy-https-ci.log 2>&1 &
+          CA="$HOME/.local/share/caddy/pki/authorities/local/root.crt"
+          for i in $(seq 1 50); do
+            if [ -s "$CA" ] && curl --fail --silent --cacert "$CA" https://localhost:8443/health >/tmp/https-health.json; then
+              break
+            fi
+            sleep 1
+          done
+          if [ ! -s /tmp/https-health.json ]; then
+            cat /tmp/pos-https-ci.log /tmp/caddy-https-ci.log
+            exit 1
+          fi
+          python - <<'PY'
+          import json
+          with open("/tmp/https-health.json") as f:
+              data = json.load(f)
+          assert data["service"] == "pos-lan", data
+          PY
+          # HTTP directo se rechaza incluso desde localhost.
+          code=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:8108/health)
+          test "$code" = "403"
+          # La cabecera falsa del cliente no sustituye al proxy autorizado.
+          curl --fail --silent --cacert "$CA" -H "X-Forwarded-Proto: http"             https://localhost:8443/health >/tmp/https-health-spoof.json
+          python - <<'PY'
+          import json
+          with open("/tmp/https-health-spoof.json") as f:
+              data = json.load(f)
+          assert data["service"] == "pos-lan"
+          PY
+          echo "HTTPS con CA verificada y FastAPI restringido a loopback: OK"
