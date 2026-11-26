@@ -175,6 +175,7 @@ class ServerConsole:
             ("contacto", "Último contacto", 155), ("qr", "QR", 105)])
         actions_totems = ttk.Frame(devices)
         actions_totems.pack(fill="x", pady=(8, 0))
+        ttk.Button(actions_totems, text="Buscar equipos LAN", command=self.scan_lan).pack(side="left", padx=(0, 8))
         ttk.Button(actions_totems, text="Crear tótem", command=self.provision_totem).pack(side="left", padx=(0, 8))
         ttk.Button(actions_totems, text="Vincular / cambiar IP", command=self.bind_totem_ip).pack(side="left", padx=(0, 8))
         ttk.Button(actions_totems, text="Desvincular equipo (solo IP)", command=self.unbind_totem_ip).pack(side="left", padx=(0, 8))
@@ -243,6 +244,104 @@ class ServerConsole:
             menu.grab_release()
             menu.destroy()
 
+    def scan_lan(self):
+        """Búsqueda solicitada desde la GUI, nunca automática.
+
+        Solo muestra IPs detectadas. Al seleccionar una ofrece la IP como
+        propuesta en el mismo diálogo de confirmación de vínculo.
+        """
+        from services.lan_discovery import detectar_lan
+
+        try:
+            own_ip = ip_lan()
+            if not messagebox.askyesno(
+                "Buscar equipos en la LAN",
+                f"Se enviará un único ping a las IP de la red /24 de {own_ip}.\n"
+                "No se escanean puertos, no se asignan QR y no se modifica ningún equipo.\n\n"
+                "¿Continuar?",
+                parent=self.root,
+            ):
+                return
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("LAN", str(exc))
+            return
+        window = tk.Toplevel(self.root)
+        window.title("Equipos detectados en la red local")
+        window.geometry("570x455")
+        window.transient(self.root)
+        frame = ttk.Frame(window, padding=15)
+        frame.pack(fill="both", expand=True)
+        status = tk.StringVar(value="Consultando IPs del segmento LAN…")
+        ttk.Label(frame, textvariable=status, wraplength=530).pack(
+            anchor="w", pady=(0, 10),
+        )
+        ttk.Label(
+            frame,
+            text="Una IP detectada no prueba que sea una PC ni que sea confiable. "
+                 "La vinculación de un tótem siempre requiere confirmación.",
+            wraplength=530,
+        ).pack(anchor="w", pady=(0, 10))
+        table = ttk.Treeview(
+            frame, columns=("ip", "estado"), show="headings", selectmode="browse",
+            height=12,
+        )
+        table.heading("ip", text="Dirección IP")
+        table.heading("estado", text="Detección")
+        table.column("ip", width=175, minwidth=130)
+        table.column("estado", width=320, minwidth=200)
+        table.pack(fill="both", expand=True)
+        bar = ttk.Frame(frame)
+        bar.pack(fill="x", pady=(12, 0))
+        link = ttk.Button(bar, text="Usar IP para tótem seleccionado", state="disabled")
+        link.pack(side="left")
+        ttk.Button(bar, text="Cerrar", command=window.destroy).pack(side="right")
+        results = queue.Queue()
+
+        def worker():
+            try:
+                data = detectar_lan(own_ip)
+                results.put(("ok", data))
+            except Exception as exc:
+                results.put(("error", str(exc)))
+
+        def completed():
+            if not window.winfo_exists():
+                return
+            try:
+                state, result = results.get_nowait()
+            except queue.Empty:
+                window.after(150, completed)
+                return
+            if state == "error":
+                status.set("No se pudo explorar la LAN: " + result)
+                return
+            status.set(
+                f"Subred {result['subred']} · "
+                f"{len(result['equipos'])} IP(s) detectadas. "
+                "Elegí una y confirmá su vinculación."
+            )
+            for item in result["equipos"]:
+                table.insert("", "end", values=(item["ip"], item["detalle"]))
+            link.configure(state="normal" if result["equipos"] else "disabled")
+
+        def use_ip():
+            selected = table.selection()
+            if not selected:
+                messagebox.showinfo("Equipo", "Seleccioná una IP detectada.", parent=window)
+                return
+            if not self.totems.selection():
+                messagebox.showinfo(
+                    "Tótem", "Seleccioná primero un tótem en POS Server.", parent=window,
+                )
+                return
+            chosen = table.item(selected[0], "values")[0]
+            window.destroy()
+            self.bind_totem_ip(suggested_ip=chosen)
+
+        link.configure(command=use_ip)
+        threading.Thread(target=worker, name="intrashop-lan-scan", daemon=True).start()
+        window.after(150, completed)
+
     def provision_totem(self):
         from intrashop_entregas import ensure_schema
         from services.intrashop_totem_registry import provisionar
@@ -261,7 +360,7 @@ class ServerConsole:
         except (ValueError, sqlite3.Error) as exc:
             messagebox.showerror("No se pudo crear el tótem", str(exc))
 
-    def bind_totem_ip(self):
+    def bind_totem_ip(self, suggested_ip=None):
         from intrashop_entregas import ensure_schema
         from services.intrashop_totem_registry import vincular_ip
 
@@ -284,7 +383,7 @@ class ServerConsole:
         ip = simpledialog.askstring(
             "Vincular IP a " + str(nombre),
             "IP fija/reservada del equipo que abre la tienda:",
-            initialvalue=default, parent=self.root,
+            initialvalue=str(suggested_ip or default), parent=self.root,
         )
         if ip is None:
             return
