@@ -36,7 +36,8 @@ _reconciling: set[str] = set()
 
 
 def _auth(x_api_key: str | None) -> None:
-    if not API_KEY or x_api_key != API_KEY:
+    import secrets
+    if not API_KEY or not x_api_key or not secrets.compare_digest(x_api_key, API_KEY):
         raise HTTPException(status_code=401, detail="API key inválida")
 
 
@@ -827,7 +828,7 @@ async def webhook_mp_orders(request: Request, background_tasks: BackgroundTasks)
 @router.get("/health")
 def tienda_health():
     _ensure_schema()
-    return {"ok": True, "service": "IntraShop", "database": str(DB_PATH)}
+    return {"ok": True, "service": "IntraShop"}
 
 
 @router.get("/productos")
