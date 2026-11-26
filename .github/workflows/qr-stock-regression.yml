@@ -15,6 +15,8 @@ on:
       - "services/mp_orders_webhook.py"
       - "services/intrashop_ticket_service.py"
       - "services/intrashop_totem_registry.py"
+      - "services/caja_cierre.py"
+      - "componente_cerrar_caja.py"
       - "intrashop_entregas.py"
       - "pos_server_gui.py"
       - "database_manager.py"
@@ -41,7 +43,7 @@ jobs:
       - name: Install lightweight test dependencies
         run: python -m pip install pytest "fastapi>=0.110,<0.145" requests python-dotenv httpx cryptography
       - name: Compile backend modules and regression tests
-        run: python -m compileall -q core/db_factory.py componente_login.py config.py adapters/mp_bindings.py api_client.py api_server.py componente_nueva_venta.py intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py services/mp_orders_v1_client.py services/mp_orders_webhook.py services/intrashop_ticket_service.py services/intrashop_totem_registry.py intrashop_entregas.py pos_server_gui.py database_manager.py tests/
+        run: python -m compileall -q core/db_factory.py componente_login.py config.py adapters/mp_bindings.py api_client.py api_server.py componente_nueva_venta.py intrashop_api.py intrashop_checkout_store.py services/mercadopago_service.py services/mp_orders_v1_client.py services/mp_orders_webhook.py services/intrashop_ticket_service.py services/intrashop_totem_registry.py services/caja_cierre.py componente_cerrar_caja.py intrashop_entregas.py pos_server_gui.py database_manager.py tests/
       - name: Run isolated QR, stock and backup tests
         env:
           POS_API_ONLY: "1"
@@ -51,6 +53,7 @@ jobs:
             tests/test_intrashop_caja_link.py \
             tests/test_intrashop_reservas.py \
             tests/test_pos_server_caja_ventas.py \
+            tests/test_cierre_caja_arqueo.py \
             tests/test_api_client_parity.py \
             tests/test_http_contract_static.py \
             tests/test_backup_streaming.py \
