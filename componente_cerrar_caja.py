@@ -228,8 +228,11 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
     def cerrar_modal(e=None):
         if current["busy"]:
             return
-        dialog.open = False
-        _update()
+        try:
+            page.pop_dialog()
+        except (AttributeError, TypeError):
+            dialog.open = False
+            _update()
 
     def guardar_gasto(e=None):
         if current["busy"] or current["cargando"]:
@@ -410,7 +413,8 @@ def CerrarCajaModal(db_manager, caja_id, on_caja_cerrada, page):
         ),
         actions=[cancelar_btn, cerrar_btn],
         actions_alignment=ft.MainAxisAlignment.END,
-        open=True,
     )
-    page.run_thread(cargar_resumen)
+    # Flet 1.x exige que show_dialog reciba un diálogo TODAVÍA CERRADO.
+    # Guardar el callback para iniciarlo solo después de montarlo en main.py.
+    dialog.data = {"cargar_resumen": cargar_resumen}
     return dialog
