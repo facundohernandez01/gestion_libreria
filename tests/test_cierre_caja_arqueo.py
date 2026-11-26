@@ -220,3 +220,24 @@ def test_rechaza_arqueo_no_finito(caja_db):
         assert conn.execute(
             "SELECT estado FROM cajas WHERE id=?", (caja,)
         ).fetchone()[0] == "abierta"
+
+
+def test_efectivo_argentino_se_interpreta_sin_error_de_miles():
+    import ast
+    import re
+    from decimal import Decimal, InvalidOperation
+
+    path = Path(__file__).resolve().parents[1] / "componente_cerrar_caja.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    node = next(x for x in tree.body
+                if isinstance(x, ast.FunctionDef) and x.name == "_importe")
+    namespace = {"Decimal": Decimal, "InvalidOperation": InvalidOperation, "re": re}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(path), "exec"), namespace)
+    parse = namespace["_importe"]
+    assert parse("1.234,56") == Decimal("1234.56")
+    assert parse("1.234.567,89") == Decimal("1234567.89")
+    assert parse("1234.56") == Decimal("1234.56")
+    assert parse("0,00") == Decimal("0.00")
+    for invalid in ("", "menos diez", "-10", "1,2345", "NaN", "Inf"):
+        with pytest.raises(ValueError):
+            parse(invalid)
