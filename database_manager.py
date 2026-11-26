@@ -1788,7 +1788,8 @@ class DatabaseManager:
             return resultado
 
     def cerrar_caja_arqueo(self, caja_id: int, importe_contado: float,
-                           observaciones: str = "") -> dict:
+                           observaciones: str = "",
+                           snapshot: dict | None = None) -> dict:
         """Operación transaccional; errores visibles para el operador."""
         from services.caja_cierre import cerrar_caja
 
@@ -1798,6 +1799,7 @@ class DatabaseManager:
                 result = cerrar_caja(
                     conn, caja_id, importe_contado=importe_contado,
                     observaciones=observaciones, usuario=self._usuario(),
+                    snapshot=snapshot,
                 )
                 conn.commit()
                 return result
