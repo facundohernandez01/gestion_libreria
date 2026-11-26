@@ -141,7 +141,7 @@ const title = "IntraShop · Tu tienda local";
       function updateCart() {
         $("cart-count").textContent = String(cart.reduce((sum,item)=>sum+item.quantity,0));
         $("cart-items").innerHTML = cart.length ? cart.map(({product:p,quantity:q})=>`
-          <div class="cart-item"><img src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"")+p.imagen_url) : placeholder}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><strong>${money(p.precio_lista*q)}</strong></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
+          <div class="cart-item"><img src="${p.imagen_url ? (p.imagen_url.startsWith("https://") ? p.imagen_url : apiBase.replace(/\/$/,"")+p.imagen_url) : placeholder}" alt="" onerror="this.onerror=null;this.src='${placeholder}'"/><div class="cart-item-main"><b>${escapeHtml(p.descripcion)}</b><span>${money(p.precio_lista)}</span><div class="quantity"><button data-qty="${p.id}" data-delta="-1" aria-label="Quitar uno">−</button><span>${q}</span><button data-qty="${p.id}" data-delta="1" aria-label="Agregar uno">+</button></div></div><div class="cart-line-actions"><strong>${money(p.precio_lista*q)}</strong><button type="button" class="cart-remove" data-remove="${p.id}" aria-label="Eliminar ${escapeHtml(p.descripcion)} del carrito" title="Eliminar del carrito">Eliminar <span aria-hidden="true">×</span></button></div></div>`).join("") : '<div class="cart-empty"><div>＋</div><h3>Tu carrito está vacío</h3><p>Agregá productos del catálogo para comenzar.</p></div>';
         $("cart-total").textContent = money(cart.reduce((sum,item)=>sum+item.product.precio_lista*item.quantity,0));
         $("checkout").toggleAttribute("disabled",cart.length===0 || !totemReady);
       }
@@ -244,7 +244,13 @@ const title = "IntraShop · Tu tienda local";
       }
       $("category-filters").addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLElement>("[data-category]");if(button){selectedCategory=button.dataset.category||"";renderProducts(products);}});
       $("catalog").addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLElement>("[data-add]");if(button){addProduct(Number(button.dataset.add));openCart(true);}});
-      $("cart-items").addEventListener("click",event=>{const button=(event.target as HTMLElement).closest<HTMLElement>("[data-qty]");if(button)addProduct(Number(button.dataset.qty),Number(button.dataset.delta));});
+      $("cart-items").addEventListener("click",event=>{
+        const target=event.target as HTMLElement;
+        const remove=target.closest<HTMLButtonElement>("[data-remove]");
+        if(remove){cart=cart.filter(i=>i.product.id!==Number(remove.dataset.remove));updateCart();return;}
+        const qty=target.closest<HTMLButtonElement>("[data-qty]");
+        if(qty) addProduct(Number(qty.dataset.qty),Number(qty.dataset.delta));
+      });
       $("cart-toggle").addEventListener("click",()=>openCart(true));
       $("cart-close").addEventListener("click",()=>openCart(false));
       $("drawer-backdrop").addEventListener("click",()=>openCart(false));
