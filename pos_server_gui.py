@@ -40,6 +40,7 @@ class ServerConsole:
         self.url = tk.StringVar(value="http://" + ip_lan() + ":" + str(self.port))
         self.summary = tk.StringVar(value="Cargando dispositivos…")
         self.notice = tk.StringVar(value="")
+        self.mostrar_eliminados = tk.BooleanVar(value=False)
         self._style()
         self._build()
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -161,19 +162,31 @@ class ServerConsole:
         notebook.add(sessions, text="Operadores POS")
         notebook.add(pending_tab, text="Conciliación")
 
-        ttk.Label(devices, text="Los tótems 001–008 están disponibles. Asigná y confirmá una IP antes de cobrar; reservarla en el DHCP del router.", wraplength=870).pack(anchor="w", pady=(0, 8))
+        ttk.Label(
+            devices,
+            text="El tótem y su QR viven en POS Server. Desvincular equipo quita sólo la IP; "
+                 "Eliminar tótem libera IP y asociación QR local, sin borrar ventas.",
+            wraplength=900,
+        ).pack(anchor="w", pady=(0, 8))
         self.totems = self._table(devices, [
             ("estado", "Estado", 105), ("nombre", "Nombre", 155), ("id", "Identificador", 145),
             ("ip", "IP vinculada", 120), ("observada", "IP observada", 115),
             ("contacto", "Último contacto", 155), ("qr", "QR", 105)])
         actions_totems = ttk.Frame(devices)
         actions_totems.pack(fill="x", pady=(8, 0))
-        ttk.Button(actions_totems, text="Crear siguiente tótem", command=self.provision_totem).pack(side="left", padx=(0, 8))
+        ttk.Button(actions_totems, text="Crear tótem", command=self.provision_totem).pack(side="left", padx=(0, 8))
         ttk.Button(actions_totems, text="Vincular / cambiar IP", command=self.bind_totem_ip).pack(side="left", padx=(0, 8))
-        ttk.Button(actions_totems, text="Quitar IP", command=self.unbind_totem_ip).pack(side="left", padx=(0, 8))
+        ttk.Button(actions_totems, text="Desvincular equipo (solo IP)", command=self.unbind_totem_ip).pack(side="left", padx=(0, 8))
         ttk.Button(actions_totems, text="Configurar QR", command=self.configure_totem_qr).pack(side="left")
+        actions_baja = ttk.Frame(devices)
+        actions_baja.pack(fill="x", pady=(6, 0))
+        ttk.Button(actions_baja, text="Eliminar tótem…", command=self.delete_totem).pack(side="left", padx=(0, 8))
+        ttk.Button(actions_baja, text="Restaurar eliminado", command=self.restore_totem).pack(side="left", padx=(0, 18))
+        ttk.Checkbutton(actions_baja, text="Mostrar eliminados", variable=self.mostrar_eliminados,
+                        command=self.refresh).pack(side="left")
         self.totems.tag_configure("online", foreground="#12834a")
         self.totems.tag_configure("offline", foreground="#7a8799")
+        self.totems.tag_configure("retired", foreground="#b07050")
 
         ttk.Label(assignments, text="Desvincular no elimina el POS ni el QR en Mercado Pago.", wraplength=800).pack(anchor="w", pady=(0, 8))
         self.qr_tree = self._table(assignments, [
@@ -210,10 +223,11 @@ class ServerConsole:
         menu.add_command(label="Actualizar listado", command=self.refresh)
         if kind == "totem":
             menu.add_command(label="Vincular / cambiar IP…", command=self.bind_totem_ip)
-            menu.add_command(label="Quitar vinculación IP", command=self.unbind_totem_ip)
+            menu.add_command(label="Desvincular equipo (solo IP)", command=self.unbind_totem_ip)
             menu.add_command(label="Configurar QR…", command=self.configure_totem_qr)
             menu.add_command(label="Editar nombre del tótem", command=self.rename_totem)
-            menu.add_command(label="Eliminar tótem sin asignaciones", command=self.delete_totem)
+            menu.add_command(label="Eliminar tótem…", command=self.delete_totem)
+            menu.add_command(label="Restaurar tótem eliminado", command=self.restore_totem)
         elif kind == "qr":
             menu.add_command(label="Desvincular asignación QR", command=self.unbind_qr)
         elif kind == "checkout":
@@ -298,9 +312,21 @@ class ServerConsole:
             return
         values = self.totems.item(selected[0], "values")
         totem_id, nombre = values[2], values[1]
+        if str(values[3]) in ("—", "", "None"):
+            messagebox.showinfo(
+                "Equipo ya desvinculado",
+                f"{nombre} no tiene ninguna IP asignada.\n"
+                "Para eliminar este registro de pruebas, usá «Eliminar tótem».",
+                parent=self.root,
+            )
+            return
         if not messagebox.askyesno(
-            "Desvincular IP",
-            f"¿Quitar la IP de {nombre}?\nEl QR y el historial permanecerán.",
+            "Desvincular equipo — conservar tótem y QR",
+            f"¿Desconectar la IP {values[3]} del tótem {nombre}?\n\n"
+            "El navegador dejará de identificarse como este tótem.\n"
+            "Se conservan nombre, QR, caja y todo el historial.\n\n"
+            "Para quitar también el tótem de la lista y liberar el QR, "
+            "usá «Eliminar tótem».",
             parent=self.root,
         ):
             return
@@ -312,6 +338,7 @@ class ServerConsole:
                 if not desvincular_ip(conn, str(totem_id)):
                     raise ValueError("El tótem ya no existe.")
                 conn.commit()
+            self.notice.set(f"{nombre}: IP desvinculada. Tótem y QR conservados.")
             self.refresh()
         except (sqlite3.Error, ValueError) as exc:
             messagebox.showerror("No se pudo desvincular la IP", str(exc))
@@ -486,31 +513,103 @@ class ServerConsole:
         self.refresh()
 
     def delete_totem(self):
+        """Retira un tótem de pruebas sin borrar pagos ni comandas históricas."""
+        from intrashop_entregas import ensure_schema
+        import intrashop_checkout_store as checkout_store
+        from services.intrashop_totem_registry import resumen_retiro, retirar_totem
+
         selection = self.totems.selection()
         if not selection:
+            messagebox.showinfo("Eliminar tótem", "Seleccioná el tótem que querés eliminar.")
             return
         values = self.totems.item(selection[0], "values")
-        totem_id, name = values[2], values[1]
-        if not messagebox.askyesno("Eliminar tótem",
-                "¿Eliminar el registro de «" + name + "»?\\n"
-                "Solo se permite si no tiene QR asignado ni comandas asociadas."):
+        totem_id = str(values[2])
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                ensure_schema(conn)
+                checkout_store.ensure_schema(conn)
+                conn.commit()
+                estado = resumen_retiro(conn, totem_id)
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo consultar el tótem", str(exc))
+            return
+        if estado["retirado"]:
+            messagebox.showinfo(
+                "Tótem eliminado", "Este tótem ya está retirado. Usá «Restaurar eliminado».")
+            return
+        if estado["cobros_pendientes"] or estado["entregas_pendientes"]:
+            messagebox.showerror(
+                "No se puede eliminar todavía",
+                f"El tótem {estado['nombre']} tiene "
+                f"{estado['cobros_pendientes']} cobro(s) sin resolver y "
+                f"{estado['entregas_pendientes']} entrega(s) pendiente(s).\n\n"
+                "Regularizá las operaciones antes de eliminarlo.\n"
+                "No se borrarán cobros ni se liberará stock por la fuerza.",
+                parent=self.root,
+            )
+            return
+        if not messagebox.askyesno(
+            "Confirmar eliminación de tótem",
+            f"Eliminar «{estado['nombre']}» ({totem_id}) de la lista operativa?\n\n"
+            f"IP: {estado['ip_vinculada'] or 'Sin IP'}\n"
+            f"POS Mercado Pago: {estado['pos_external_id'] or 'Sin QR'}\n"
+            f"Checkouts históricos: {estado['checkouts_historicos']}\n"
+            f"Comandas históricas: {estado['entregas_historicas']}\n\n"
+            "Se quitarán la IP y el vínculo QR LOCAL del servidor.\n"
+            "NO se eliminará el POS/QR de Mercado Pago ni los pagos, "
+            "ventas, tickets o comandas históricos.\n"
+            "El ID se reservará para evitar reutilizaciones accidentales.\n"
+            "Podrás restaurar el tótem desde «Mostrar eliminados».",
+            parent=self.root,
+        ):
             return
         try:
-            with sqlite3.connect(settings.db_path, timeout=5) as conn:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
                 conn.execute("BEGIN IMMEDIATE")
-                for sql in (
-                    "SELECT 1 FROM intrashop_mp_bindings WHERE terminal_id=? LIMIT 1",
-                    "SELECT 1 FROM intrashop_entregas WHERE totem_id=? LIMIT 1",
-                    "SELECT 1 FROM intrashop_checkouts WHERE totem_id=? LIMIT 1",
-                ):
-                    if conn.execute(sql, (totem_id,)).fetchone():
-                        raise ValueError("El tótem tiene asignaciones o historial de pedidos. No puede eliminarse.")
-                conn.execute("DELETE FROM intrashop_totems WHERE id=?", (totem_id,))
+                ensure_schema(conn)
+                checkout_store.ensure_schema(conn)
+                retirar_totem(conn, totem_id)
                 conn.commit()
+            self.notice.set(
+                f"{estado['nombre']} eliminado de la operación. "
+                "IP y QR local liberados; historial conservado."
+            )
+            self.refresh()
         except (sqlite3.Error, ValueError) as exc:
-            messagebox.showerror("No se pudo eliminar", str(exc))
+            messagebox.showerror("No se pudo eliminar el tótem", str(exc), parent=self.root)
+
+    def restore_totem(self):
+        from intrashop_entregas import ensure_schema
+        from services.intrashop_totem_registry import restaurar_totem
+
+        selection = self.totems.selection()
+        if not selection:
+            messagebox.showinfo(
+                "Restaurar tótem",
+                "Activá «Mostrar eliminados» y seleccioná el tótem a restaurar.")
             return
-        self.refresh()
+        values = self.totems.item(selection[0], "values")
+        totem_id, nombre = str(values[2]), str(values[1])
+        if not messagebox.askyesno(
+            "Restaurar tótem",
+            f"¿Volver a habilitar {nombre} ({totem_id})?\n\n"
+            "Deberás confirmar nuevamente su IP y configurar el QR local.",
+            parent=self.root,
+        ):
+            return
+        try:
+            with sqlite3.connect(settings.db_path, timeout=10) as conn:
+                conn.row_factory = sqlite3.Row
+                conn.execute("BEGIN IMMEDIATE")
+                ensure_schema(conn)
+                restaurar_totem(conn, totem_id)
+                conn.commit()
+            self.notice.set(f"{nombre} restaurado. Vinculá nuevamente la IP y el QR.")
+            self.refresh()
+        except (sqlite3.Error, ValueError) as exc:
+            messagebox.showerror("No se pudo restaurar", str(exc), parent=self.root)
 
     def _table(self, parent, columns):
         frame = ttk.Frame(parent)
@@ -562,7 +661,7 @@ class ServerConsole:
             ensure_schema(conn)
             conn.commit()
             totems = [dict(row) for row in conn.execute(
-                "SELECT id,nombre,ip_vinculada,ip_address,ultimo_contacto "
+                "SELECT id,nombre,ip_vinculada,ip_address,ultimo_contacto,retirado "
                 "FROM intrashop_totems ORDER BY id"
             )]
             bindings = [dict(row) for row in conn.execute(
@@ -623,15 +722,23 @@ class ServerConsole:
         device_rows = []
         online_count = 0
         assigned_totems = {b["terminal_id"] for b in bindings if b["terminal_type"] == "totem"}
+        show_retired = bool(self.mostrar_eliminados.get())
         for item in totems:
+            retired = bool(item["retirado"])
+            if retired and not show_retired:
+                continue
             last = self._safe_datetime(item["ultimo_contacto"])
-            online = bool(last and timedelta(0) <= now - last <= timedelta(seconds=self.ONLINE_SECONDS))
+            online = bool(
+                not retired and item["ip_vinculada"]
+                and last and timedelta(0) <= now - last <= timedelta(seconds=self.ONLINE_SECONDS)
+            )
             online_count += int(online)
-            device_rows.append((("● En línea" if online else "○ Sin señal",
-                                 item["nombre"], item["id"], item["ip_vinculada"] or "—",
-                                 item["ip_address"] or "—", item["ultimo_contacto"],
-                                 "● Vinculado" if item["id"] in assigned_totems else "○ Pendiente"),
-                                "online" if online else "offline"))
+            status = "× Eliminado" if retired else ("● En línea" if online else "○ Sin señal")
+            qr_status = "—" if retired else ("● Vinculado" if item["id"] in assigned_totems else "○ Pendiente")
+            device_rows.append(((status, item["nombre"], item["id"],
+                                 item["ip_vinculada"] or "—", item["ip_address"] or "—",
+                                 item["ultimo_contacto"], qr_status),
+                                "retired" if retired else ("online" if online else "offline")))
         self._fill(self.totems, device_rows, identity_index=2)
         self._fill(self.pending_tree, [((p["id"],p["estado"],p["pos_external_id"],p["total"]),None) for p in pending_rows])
         self._fill(self.qr_tree, [
