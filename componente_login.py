@@ -263,7 +263,19 @@ def LoginView(db_manager, on_login, page: ft.Page):
 
         importar.on_click = importar_kit
 
-        def guardar(e):
+        codigo_pos = ft.TextField(label="Código de vinculación de caja",
+            hint_text="XXXX-XXXX-XXXX-XXXX", password=True, can_reveal_password=True, width=320)
+        guardar_btn = ft.FilledButton("Guardar conexión")
+        cancelar_btn = ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page))
+
+        async def guardar(e):
+            import asyncio
+            guardar_btn.disabled = True
+            cancelar_btn.disabled = True
+            importar.disabled = True
+            buscar.disabled = True
+            progreso.visible = True
+            page.update()
             try:
                 if kit_pendiente is not None:
                     if modo.value != "cliente":
@@ -274,23 +286,41 @@ def LoginView(db_manager, on_login, page: ft.Page):
                         kit_pendiente[0], kit_pendiente[1], huella.value or "")
                 elif modo.value == "cliente":
                     client_tls.opciones_http((url.value or "").strip())
-                if (clave.value or "").strip():
-                    from core.settings import guardar_clave_lan_local
+                if (codigo_pos.value or "").strip():
+                    if modo.value != "cliente":
+                        raise ValueError("El código corresponde a una caja cliente.")
+                    from core.terminal_identity import terminal_id
+                    from core.settings import guardar_credencial_pos
+                    token = await asyncio.to_thread(
+                        client_tls.vincular_pos, (url.value or "").strip(),
+                        codigo_pos.value, terminal_id())
+                    guardar_credencial_pos(token)
+                elif (clave.value or "").strip():
+                    from core.settings import guardar_clave_lan_local, credencial_pos_local
+                    if credencial_pos_local():
+                        raise ValueError("Esta caja ya tiene identidad individual. Usá un código nuevo para vincularla.")
                     guardar_clave_lan_local(clave.value)
                 db_local.set_config("MODO_RED", modo.value)
                 db_local.set_config("SERVER_URL", (url.value or "").strip())
             except (ValueError, OSError) as exc:
                 estado.value = str(exc)
-                page.update()
                 return
+            finally:
+                guardar_btn.disabled = False
+                cancelar_btn.disabled = False
+                importar.disabled = False
+                buscar.disabled = kit_pendiente is not None
+                progreso.visible = False
+                page.update()
+            codigo_pos.value = ""
             clave.value = ""
             cerrar_dialogo(page)
             estado.value = "Configuración guardada. Reiniciá el POS."
             page.update()
+        guardar_btn.on_click = guardar
         dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
-            content=ft.Column([modo, importar, huella, ft.Row([buscar, progreso]), candidatos, url, clave, estado], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
-            actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
-                     ft.FilledButton("Guardar", on_click=guardar)])
+            content=ft.Column([modo, importar, huella, ft.Row([buscar, progreso]), candidatos, url, codigo_pos, clave, estado], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
+            actions=[cancelar_btn, guardar_btn])
         abrir_dialogo(page, dlg)
 
     tarjeta = ft.Container(
