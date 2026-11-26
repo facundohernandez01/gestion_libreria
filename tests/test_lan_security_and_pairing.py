@@ -195,3 +195,56 @@ def test_codigo_no_desplaza_otro_totem(db):
         conn.commit()
         assert tid == "totem-001"
         assert auth.autorizado(conn, "192.168.33.82", tid, token)
+
+
+def test_reconexion_tls_conserva_identidad_y_qr(db):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        tid, token = auth.canjear_codigo(conn, "192.168.33.81", auth.generar_codigo(conn, "totem-001"))
+        conn.execute(
+            "INSERT INTO intrashop_mp_bindings(terminal_id,terminal_type,pos_external_id,store_external_id,qr_url,nombre) "
+            "VALUES(?,?,?,?,?,?)", (tid, "totem", "POS-TEST", "STORE-TEST", "https://example.com/qr", "Prueba")
+        )
+        conn.commit()
+        conn.execute("BEGIN IMMEDIATE")
+        assert auth.recuperar_direccion(conn, "192.168.33.82", token) == tid
+        conn.commit()
+        assert auth.autorizado(conn, "192.168.33.82", tid, token)
+        assert not auth.autorizado(conn, "192.168.33.81", tid, token)
+        assert conn.execute("SELECT pos_external_id FROM intrashop_mp_bindings WHERE terminal_id=?", (tid,)).fetchone()[0] == "POS-TEST"
+
+
+def test_reconexion_no_desplaza_otro_puesto_ni_revive_sesion(db):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        tid, token = auth.canjear_codigo(conn, "192.168.33.81", auth.generar_codigo(conn, "totem-001"))
+        vincular_ip(conn, "totem-002", "192.168.33.82")
+        assert auth.recuperar_direccion(conn, "192.168.33.82", token) is None
+        assert auth.autorizado(conn, "192.168.33.81", tid, token)
+        auth.revocar_totem(conn, tid)
+        assert auth.recuperar_direccion(conn, "192.168.33.83", token) is None
+        conn.commit()
+
+
+@pytest.mark.parametrize("scheme,enforce,expected", [
+    ("http", "0", False), ("https", "0", False),
+    ("http", "1", False), ("https", "1", True),
+])
+def test_identidad_recupera_solo_con_tls_configurado(db, monkeypatch, scheme, enforce, expected):
+    import intrashop_api as api
+    monkeypatch.setattr(api, "_connect", db)
+    monkeypatch.setenv("INTRASHOP_ENFORCE_HTTPS", enforce)
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        tid, token = auth.canjear_codigo(conn, "192.168.33.81", auth.generar_codigo(conn, "totem-001"))
+        conn.commit()
+    request = types.SimpleNamespace(
+        client=types.SimpleNamespace(host="192.168.33.83"),
+        url=types.SimpleNamespace(scheme=scheme),
+        cookies={auth.COOKIE: token},
+    )
+    result = api.identidad_totem(request)
+    assert result["authorized"] is expected
+    with db() as conn:
+        address = conn.execute("SELECT ip_vinculada FROM intrashop_totems WHERE id=?", (tid,)).fetchone()[0]
+        assert address == ("192.168.33.83" if expected else "192.168.33.81")
