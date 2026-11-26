@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [feature/intrashop-lan]
+    branches: [feature/intrashop-lan, fix/intrashop-checkout-caja-link-20261116]
 
 jobs:
   validate:
@@ -17,10 +17,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          cache: npm
-          cache-dependency-path: intrashop/package.json
       - name: Check Python syntax
-        run: python -m compileall -q api_server.py intrashop_api.py componente_tienda_producto.py componente_gestion_articulos.py
+        run: python -m compileall -q api_server.py intrashop_api.py pos_server.py pos_server_gui.py services componente_tienda_producto.py componente_gestion_articulos.py
       - name: Install storefront dependencies
         working-directory: intrashop
         run: npm install
