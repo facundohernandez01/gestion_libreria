@@ -987,9 +987,12 @@ def asignar_binding(body: BindingIn, operador: str = Depends(require_config)):
         if body.terminal_type == "totem":
             from intrashop_entregas import ensure_schema as ensure_totems_schema
             ensure_totems_schema(conn)
-            totem = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.terminal_id,)).fetchone()
+            totem = conn.execute(
+                "SELECT nombre FROM intrashop_totems WHERE id=? AND retirado=0",
+                (body.terminal_id,),
+            ).fetchone()
             if not totem:
-                raise HTTPException(404, "El tótem no está registrado en POS Server")
+                raise HTTPException(404, "El tótem no existe o fue eliminado de POS Server")
         if body.caja_id is not None:
             if body.terminal_type != "totem":
                 raise HTTPException(400, "La caja de cobro se vincula únicamente a tótems")
@@ -1474,7 +1477,8 @@ class TotemLinkIpIn(BaseModel):
 
 
 @router.get("/admin/totems")
-def admin_listar_totems(operador: str = Depends(require_config)):
+def admin_listar_totems(incluir_eliminados: bool = False,
+                        operador: str = Depends(require_config)):
     from intrashop_entregas import ensure_schema
 
     with _connect() as conn:
@@ -1483,12 +1487,62 @@ def admin_listar_totems(operador: str = Depends(require_config)):
         conn.commit()
         return [dict(row) for row in conn.execute(
             """SELECT t.id,t.nombre,t.ip_vinculada,t.ip_address,t.ultimo_contacto,
-                      b.pos_external_id,b.caja_id
+                      t.retirado,b.pos_external_id,b.caja_id
                FROM intrashop_totems t
                LEFT JOIN intrashop_mp_bindings b
                  ON b.terminal_id=t.id AND b.terminal_type='totem'
-               ORDER BY t.id"""
+               WHERE (?=1 OR t.retirado=0)
+               ORDER BY t.id""", (int(incluir_eliminados),)
         )]
+
+
+@router.get("/admin/totems/{totem_id}/resumen-eliminacion")
+def admin_vista_previa_eliminar_totem(totem_id: str,
+                                     operador: str = Depends(require_config)):
+    from intrashop_entregas import ensure_schema
+    from services.intrashop_totem_registry import resumen_retiro
+
+    with _connect() as conn:
+        ensure_schema(conn)
+        checkout_store.ensure_schema(conn)
+        try:
+            return resumen_retiro(conn, totem_id)
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+
+@router.post("/admin/totems/{totem_id}/eliminar")
+def admin_eliminar_totem(totem_id: str, operador: str = Depends(require_config)):
+    """Quita de la operación y libera QR/IP local; preserva historial y MP."""
+    from intrashop_entregas import ensure_schema
+    from services.intrashop_totem_registry import retirar_totem
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_schema(conn)
+        checkout_store.ensure_schema(conn)
+        try:
+            result = retirar_totem(conn, totem_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        conn.commit()
+    return {"ok": True, "totem": result}
+
+
+@router.post("/admin/totems/{totem_id}/restaurar")
+def admin_restaurar_totem(totem_id: str, operador: str = Depends(require_config)):
+    from intrashop_entregas import ensure_schema
+    from services.intrashop_totem_registry import restaurar_totem
+
+    with _connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        ensure_schema(conn)
+        try:
+            result = restaurar_totem(conn, totem_id)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        conn.commit()
+    return {"ok": True, "totem": result}
 
 
 @router.post("/admin/totems/provision")
@@ -1566,7 +1620,10 @@ def iniciar_checkout(body: CheckoutIn, request: Request = None):
         from intrashop_entregas import ensure_schema
         with _connect() as conn:
             ensure_schema(conn)
-            row = conn.execute("SELECT nombre FROM intrashop_totems WHERE id=?", (body.totem_id,)).fetchone()
+            row = conn.execute(
+                "SELECT nombre FROM intrashop_totems WHERE id=? AND retirado=0",
+                (body.totem_id,),
+            ).fetchone()
             if not row:
                 raise HTTPException(400, "Tótem no registrado. Revisá la configuración del dispositivo.")
             totem_nombre = row["nombre"]
