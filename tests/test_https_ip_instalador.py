@@ -69,5 +69,7 @@ def test_gui_usa_asistente_por_ip_sin_sudo_root_y_sin_tocar_db():
     assert 'input("¿Continuar? [s/N] ")' in installer
     assert '"caddy", "validate"' in installer
     assert '"sudo", "install"' in installer
-    assert 'libreria.db' not in installer
+    assert 'sqlite3.connect(' not in installer
+    assert 'root.key' in installer  # solo advertencia, jamás copiar clave privada
+    assert 'sudo", sys.executable' not in gui
     assert 'sudo", sys.executable' not in gui
