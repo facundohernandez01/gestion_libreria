@@ -14,7 +14,7 @@ import "../styles/global.css";
 <div class="admin-tip"><strong>Identidad administrada en POS Server</strong><p id="totem-info" class="admin-hint">Consultando vínculo IP…</p><p class="admin-hint">Abrí POS Server → Tótems → Vincular / cambiar IP; elegí un tótem 001–008 y confirmá la IP. Luego configurá su QR. Para estabilidad, reservá esa IP en el router (DHCP).</p></div>
 <label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="http://192.168.1.100:8000" autocomplete="url"/>
 <button id="discover-server" type="button" class="admin-test-button">Detectar servidor cercano</button><div id="discover-results" role="status"></div>
-<p class="admin-hint">La tienda recupera el tótem a partir de la IP confirmada en POS Server. La caché del navegador no puede cambiar su identidad ni el QR.</p>
+<p class="admin-hint">La identidad y el QR se guardan en POS Server, no en la caché. Para autorizar compras, generá un código temporal desde POS Server → Tótems y escribilo en el catálogo. Si borrás cookies, se solicita otro código sin perder la identidad del tótem.</p>
 <div class="admin-actions"><button id="save-connection" class="primary-button" type="button">Guardar conexión</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
 </div><div id="admin-status" role="status" class="admin-status"></div></section>
 <section class="admin-panel"><h2>Conexión LAN</h2><p>Usá la IP de la computadora que ejecuta POS Server. El catálogo se consulta sin credenciales.</p>
@@ -50,7 +50,8 @@ import "../styles/global.css";
       const identity = await request(base, "/tienda/totems/identity");
       if (identity.paired) {
         info.textContent = identity.nombre + " (" + identity.id + ") · IP " + identity.ip +
-          (identity.qr_assigned ? " · QR vinculado" : " · Pendiente asociar QR");
+          (identity.qr_assigned ? " · QR vinculado" : " · Pendiente asociar QR") +
+          (identity.authorized ? " · Navegador autorizado" : " · Falta código temporal de acceso");
       } else {
         info.textContent = "Sin vinculación · IP observada " + identity.ip +
           ". Asignala a un tótem desde la consola de POS Server.";
