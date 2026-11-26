@@ -101,8 +101,9 @@ def autorizado(conn: sqlite3.Connection, ip: str, totem_id: str, cookie: str | N
         return False
     ensure_schema(conn)
     row = conn.execute(
-        """SELECT totem_id,ip,expires_at FROM intrashop_totem_sessions
-           WHERE token_hash=?""", (_digest(cookie),),
+        """SELECT s.totem_id,s.ip,s.expires_at FROM intrashop_totem_sessions s
+           JOIN intrashop_totems t ON t.id=s.totem_id
+           WHERE s.token_hash=? AND t.retirado=0 AND t.ip_vinculada=s.ip""", (_digest(cookie),),
     ).fetchone()
     return bool(
         row and hmac.compare_digest(row["totem_id"], totem_id)
