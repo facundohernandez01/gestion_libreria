@@ -181,13 +181,15 @@ class ApiClient:
         return self._get(f"/cajas/{int(caja_id)}/resumen")
 
     def cerrar_caja_arqueo(self, caja_id: int, importe_contado: float,
-                           observaciones: str = "") -> dict:
+                           observaciones: str = "",
+                           snapshot: dict | None = None) -> dict:
         """Cierre JSON; nunca convertir un 409 en falso sin explicación."""
         try:
             return self._post(
                 f"/cajas/{int(caja_id)}/cerrar",
                 json={"importe_contado": importe_contado,
-                      "observaciones": observaciones},
+                      "observaciones": observaciones,
+                      **(snapshot or {})},
             )
         except httpx.HTTPStatusError as exc:
             try:
