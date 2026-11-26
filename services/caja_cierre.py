@@ -94,13 +94,24 @@ def resumen_caja(conn, caja_id: int) -> dict:
 
 
 def cerrar_caja(conn, caja_id: int, *, importe_contado=None,
-                observaciones: str = "", usuario: str = "") -> dict:
+                observaciones: str = "", usuario: str = "",
+                snapshot: dict | None = None) -> dict:
     """Cerrar solo una caja abierta, con snapshot y UPDATE en la misma tx.
 
     Debe invocarse después de BEGIN IMMEDIATE. No se admite cierre de
     caja con reservas de QR pendientes o sin aclaración de un descuadre.
     """
     resumen = resumen_caja(conn, caja_id)
+    if snapshot:
+        # Un arqueo presentado al operador no puede cerrar importes nuevos
+        # silenciosamente si se registraron ventas/gastos después de abrirlo.
+        for campo in ("efectivo_esperado", "total_ventas", "total_gastos"):
+            valor = snapshot.get(campo)
+            if valor is not None and _money(valor) != _money(resumen[campo]):
+                raise ValueError(
+                    "Se registraron movimientos mientras contabas la caja. "
+                    "Actualizá el resumen y verificá nuevamente los importes."
+                )
     if resumen["cobros_pendientes"]:
         raise ValueError(
             f"Hay {resumen['cobros_pendientes']} cobro(s) IntraShop pendiente(s) "
