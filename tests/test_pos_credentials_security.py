@@ -62,6 +62,7 @@ def test_credenciales_legacy_se_rehashean_tras_login_valido(tmp_path):
 
 
 def test_login_recordado_elimina_clave_del_archivo(tmp_path, monkeypatch):
+    pytest.importorskip("flet")
     import componente_login as login
 
     path = tmp_path / "login_recordado.json"
