@@ -77,6 +77,30 @@ def test_http_emparejamiento_y_bloqueo_qr_ajeno(api_db):
     assert other.get("/tienda/checkout/test-checkout").status_code == 403
 
 
+def test_https_cookie_segura_y_bloqueo_de_checkout_por_http(api_db, monkeypatch):
+    path, code = api_db
+    monkeypatch.setenv("INTRASHOP_ENFORCE_HTTPS", "1")
+    monkeypatch.setenv("POS_PUBLIC_URL", "https://pos.home.arpa")
+    secure = TestClient(
+        server.app, base_url="https://pos.home.arpa",
+        client=("192.168.35.40", 52000),
+    )
+    insecure = TestClient(
+        server.app, base_url="http://pos.home.arpa",
+        client=("192.168.35.40", 52001),
+    )
+    assert insecure.get("/tienda/totems/identity").status_code == 403
+    assert insecure.post("/tienda/totems/pair", json={"codigo": code}).status_code == 403
+    assert insecure.get("/tienda/checkout/test-checkout").status_code == 403
+    assert insecure.post("/tienda/checkout/test-checkout/cancel").status_code == 403
+    paired = secure.post("/tienda/totems/pair", json={"codigo": code})
+    assert paired.status_code == 200, paired.text
+    header = paired.headers["set-cookie"].lower()
+    assert "secure" in header and "httponly" in header and "samesite=strict" in header
+    assert secure.get("/tienda/totems/identity").json()["authorized"] is True
+    assert secure.get("/tienda/checkout/test-checkout").status_code == 200
+
+
 def test_http_arqueo_caja_via_pos_server(api_db):
     path, _ = api_db
     client = TestClient(server.app)
