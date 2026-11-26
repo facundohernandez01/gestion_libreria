@@ -152,7 +152,7 @@ def crear_kit_conexion(
             # El navegador igualmente necesita confiar en la CA del comercio.
             archive.writestr(
                 "Abrir-IntraShop.url",
-                "[InternetShortcut]\\r\\nURL="
-                + safe_url + "/intrashop/\\r\\n",
+                "[InternetShortcut]" + chr(13) + chr(10)
+                + "URL=" + safe_url + "/intrashop/" + chr(13) + chr(10),
             )
     return {"archivo": str(dest), "url": safe_url, "sha256_ca": sha, "perfil": rol}
