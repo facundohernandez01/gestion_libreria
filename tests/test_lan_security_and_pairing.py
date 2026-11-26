@@ -168,3 +168,30 @@ def test_sesion_residual_no_autoriza_totem_inactivo_o_reasignado(db, mutation):
         conn.execute(mutation)
         conn.commit()
         assert not auth.autorizado(conn, "192.168.33.81", "totem-001", cookie)
+
+
+def test_primer_emparejamiento_sin_ip_manual(db):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        code = auth.generar_codigo(conn, "totem-001")
+        tid, token = auth.canjear_codigo(conn, "192.168.33.81", code)
+        conn.commit()
+        assert tid == "totem-001"
+        assert auth.autorizado(conn, "192.168.33.81", tid, token)
+        assert conn.execute("SELECT ip_vinculada FROM intrashop_totems WHERE id=?", (tid,)).fetchone()[0] == "192.168.33.81"
+        with pytest.raises(ValueError, match="incorrecto"):
+            auth.canjear_codigo(conn, "192.168.33.81", code)
+
+
+def test_codigo_no_desplaza_otro_totem(db):
+    with db() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        vincular_ip(conn, "totem-002", "192.168.33.81")
+        code = auth.generar_codigo(conn, "totem-001")
+        with pytest.raises(ValueError, match="otro tótem"):
+            auth.canjear_codigo(conn, "192.168.33.81", code)
+        assert conn.execute("SELECT ip_vinculada FROM intrashop_totems WHERE id='totem-001'").fetchone()[0] is None
+        tid, token = auth.canjear_codigo(conn, "192.168.33.82", code)
+        conn.commit()
+        assert tid == "totem-001"
+        assert auth.autorizado(conn, "192.168.33.82", tid, token)
