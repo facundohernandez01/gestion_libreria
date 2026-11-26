@@ -164,6 +164,7 @@ def test_sesion_de_caja_revocada_no_recupera_acceso(tmp_path, monkeypatch):
     with db._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         key = devices.canjear(conn, devices.emitir_codigo(conn, "Caja"), tid)
+        conn.commit()
     request = SimpleNamespace(headers={"x-api-key": key}, url=SimpleNamespace(scheme="https"),
                               client=SimpleNamespace(host="192.168.1.23"))
     body = pos_auth.LoginRequest(usuario=admin["usuario"], clave="TestSeguro123456789")
@@ -172,6 +173,7 @@ def test_sesion_de_caja_revocada_no_recupera_acceso(tmp_path, monkeypatch):
     with db._connect() as conn:
         conn.execute("BEGIN IMMEDIATE")
         devices.revocar(conn, tid)
+        conn.commit()
     with pytest.raises(Exception) as err:
         pos_auth.require_delivery("Bearer " + session)
     assert err.value.status_code == 401
