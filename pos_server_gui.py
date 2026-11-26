@@ -147,32 +147,30 @@ class ServerConsole:
         head = ttk.Frame(page, style="Page.TFrame")
         head.pack(fill="x", pady=(0, 12))
         ttk.Label(head, textvariable=self.status, style="Sub.TLabel").pack(side="left")
-        ttk.Label(head, textvariable=self.url, style="Sub.TLabel").pack(side="right")
-        # Separar operación del servidor y administración: todo queda visible
-        # incluso en pantallas 1024px, sin una fila de botones interminable.
+        # La dirección técnica sigue disponible en Ajustes, no en la portada.
         controls = ttk.Frame(page, style="Page.TFrame")
-        controls.pack(fill="x", pady=(0, 5))
+        controls.pack(fill="x", pady=(0, 10))
         for label, action in (
-            ("Iniciar servidor", self.start),
-            ("Detener servidor", self.stop),
             ("Abrir tienda", self.open_intrashop),
-            ("Abrir administración", self.open_admin),
-            ("Actualizar", self.refresh),
+            ("Administración", self.open_admin),
+            ("Instalar / conectar equipo", self.distribution_wizard),
         ):
-            ttk.Button(controls, text=label, command=action).pack(
-                side="left", padx=(0, 7),
-            )
-        admin_controls = ttk.Frame(page, style="Page.TFrame")
-        admin_controls.pack(fill="x", pady=(0, 10))
-        for label, action in (
-            ("Instalar / conectar equipos", self.distribution_wizard),
-            ("HTTPS local", self.configure_https_ip),
-            ("Clave ADMIN", self.configure_admin_password),
-            ("Copiar clave LAN", self.copy_lan_key),
-        ):
-            ttk.Button(admin_controls, text=label, command=action).pack(
-                side="left", padx=(0, 7),
-            )
+            ttk.Button(controls, text=label, command=action).pack(side="left", padx=(0, 7))
+        settings_button = ttk.Menubutton(controls, text="Ajustes")
+        settings_menu = tk.Menu(settings_button, tearoff=0)
+        settings_menu.add_command(label="Iniciar servidor", command=self.start)
+        settings_menu.add_command(label="Detener servidor", command=self.stop)
+        settings_menu.add_command(label="Actualizar estado", command=self.refresh)
+        settings_menu.add_separator()
+        settings_menu.add_command(label="Cambiar contraseña de administrador", command=self.configure_admin_password)
+        advanced = tk.Menu(settings_menu, tearoff=0)
+        advanced.add_command(label="Información de conexión", command=lambda: messagebox.showinfo(
+            "Información de conexión", self.url.get(), parent=self.root))
+        advanced.add_command(label="Configurar HTTPS local", command=self.configure_https_ip)
+        advanced.add_command(label="Copiar clave LAN", command=self.copy_lan_key)
+        settings_menu.add_cascade(label="Diagnóstico avanzado", menu=advanced)
+        settings_button.configure(menu=settings_menu)
+        settings_button.pack(side="right")
         ttk.Label(page, textvariable=self.summary, style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
 
         notebook = ttk.Notebook(page)
@@ -188,8 +186,7 @@ class ServerConsole:
 
         ttk.Label(
             devices,
-            text="El tótem y su QR viven en POS Server. Desvincular equipo quita sólo la IP; "
-                 "Eliminar tótem libera IP y asociación QR local, sin borrar ventas.",
+            text="Administrá tus tótems y sus cobros. Seleccioná un equipo para ver sus acciones.",
             wraplength=900,
         ).pack(anchor="w", pady=(0, 8))
         self.totems = self._table(devices, [
@@ -198,18 +195,24 @@ class ServerConsole:
             ("contacto", "Último contacto", 155), ("qr", "QR", 105)])
         actions_totems = ttk.Frame(devices)
         actions_totems.pack(fill="x", pady=(8, 0))
-        ttk.Button(actions_totems, text="Buscar equipos LAN", command=self.scan_lan).pack(side="left", padx=(0, 8))
         ttk.Button(actions_totems, text="Crear tótem", command=self.provision_totem).pack(side="left", padx=(0, 8))
-        ttk.Button(actions_totems, text="Vincular / cambiar IP", command=self.bind_totem_ip).pack(side="left", padx=(0, 8))
-        ttk.Button(actions_totems, text="Desvincular equipo (solo IP)", command=self.unbind_totem_ip).pack(side="left", padx=(0, 8))
-        ttk.Button(actions_totems, text="Configurar QR", command=self.configure_totem_qr).pack(side="left")
-        actions_baja = ttk.Frame(devices)
-        actions_baja.pack(fill="x", pady=(6, 0))
-        ttk.Button(actions_baja, text="Generar código de acceso", command=self.generate_pair_code).pack(side="left", padx=(0, 8))
-        ttk.Button(actions_baja, text="Eliminar tótem…", command=self.delete_totem).pack(side="left", padx=(0, 8))
-        ttk.Button(actions_baja, text="Restaurar eliminado", command=self.restore_totem).pack(side="left", padx=(0, 18))
-        ttk.Checkbutton(actions_baja, text="Mostrar eliminados", variable=self.mostrar_eliminados,
-                        command=self.refresh).pack(side="left")
+        ttk.Button(actions_totems, text="Buscar equipos", command=self.scan_lan).pack(side="left", padx=(0, 8))
+        device_actions = ttk.Menubutton(actions_totems, text="Acciones del tótem")
+        device_menu = tk.Menu(device_actions, tearoff=0)
+        for label, action in (
+            ("Generar código de acceso", self.generate_pair_code),
+            ("Configurar QR", self.configure_totem_qr),
+            ("Cambiar nombre", self.rename_totem),
+            ("Vincular equipo por IP", self.bind_totem_ip),
+            ("Quitar dirección vinculada (conservar QR)", self.unbind_totem_ip),
+            ("Eliminar tótem…", self.delete_totem),
+            ("Restaurar tótem eliminado", self.restore_totem),
+        ):
+            device_menu.add_command(label=label, command=action)
+        device_actions.configure(menu=device_menu)
+        device_actions.pack(side="left", padx=(0, 8))
+        ttk.Checkbutton(actions_totems, text="Mostrar eliminados", variable=self.mostrar_eliminados,
+                        command=self.refresh).pack(side="right")
         self.totems.tag_configure("online", foreground="#12834a")
         self.totems.tag_configure("offline", foreground="#7a8799")
         self.totems.tag_configure("retired", foreground="#b07050")
@@ -221,7 +224,7 @@ class ServerConsole:
         actions = ttk.Frame(assignments)
         actions.pack(fill="x", pady=10)
         ttk.Button(actions, text="Desvincular QR seleccionado", command=self.unbind_qr).pack(side="left")
-        ttk.Button(actions, text="Actualizar asignaciones", command=self.refresh).pack(side="left", padx=8)
+        # La actualización general está disponible en Ajustes.
 
         ttk.Label(sessions, text="Sesiones de operadores con acceso vigente").pack(anchor="w", pady=(0, 8))
         self.clients = self._table(sessions, [("operador", "Operador", 240), ("expira", "Válida hasta", 200)])
@@ -229,7 +232,7 @@ class ServerConsole:
         self.pending_tree = self._table(pending_tab, [("id", "Checkout", 260), ("estado", "Estado", 110), ("pos", "POS Mercado Pago", 220), ("total", "Total", 110)])
         ttk.Button(pending_tab, text="Verificar pago y conciliar", command=self.reconcile_selected).pack(anchor="w", pady=4)
         ttk.Button(pending_tab, text="Liberar tras verificar en Mercado Pago", command=self.release_selected).pack(anchor="w", pady=4)
-        ttk.Button(pending_tab, text="Copiar ID", command=self.copy_checkout_id).pack(anchor="w", pady=4)
+        # Copiar ID permanece disponible en el menú contextual.
         # Acciones por fila: nunca eliminar cobros, reservas o sesiones
         # directamente desde el menú contextual.
         for table, kind in ((self.totems, "totem"), (self.qr_tree, "qr"),
@@ -249,7 +252,7 @@ class ServerConsole:
         menu.add_command(label="Actualizar listado", command=self.refresh)
         if kind == "totem":
             menu.add_command(label="Vincular / cambiar IP…", command=self.bind_totem_ip)
-            menu.add_command(label="Desvincular equipo (solo IP)", command=self.unbind_totem_ip)
+            menu.add_command(label="Quitar dirección vinculada (conservar QR)", command=self.unbind_totem_ip)
             menu.add_command(label="Configurar QR…", command=self.configure_totem_qr)
             menu.add_command(label="Generar código de acceso al tótem", command=self.generate_pair_code)
             menu.add_command(label="Editar nombre del tótem", command=self.rename_totem)
