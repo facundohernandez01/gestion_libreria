@@ -65,6 +65,7 @@ jobs:
             tests/test_intrashop_orders_e2e_mock.py \
             tests/test_intrashop_totem_identity_server.py \
             tests/test_lan_security_and_pairing.py \
+            tests/test_pos_server_http_functional.py \
             tests/test_mp_orders_webhook.py \
             tests/test_mp_orders_v1_mock.py \
             tests/test_mp_qr_network_mock.py \
