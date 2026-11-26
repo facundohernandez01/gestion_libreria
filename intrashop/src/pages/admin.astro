@@ -12,13 +12,13 @@ import "../styles/global.css";
 <section class="admin-panel"><h2>Conexión al servidor</h2><p>Usá la dirección IP del equipo que ejecuta el POS. Evitá <code>localhost</code> en tablets o TV.</p>
 <div id="connection-form">
 <div class="admin-tip"><strong>Identidad administrada en POS Server</strong><p id="totem-info" class="admin-hint">Consultando vínculo IP…</p><p class="admin-hint">Abrí POS Server → Tótems → Vincular / cambiar IP; elegí un tótem 001–008 y confirmá la IP. Luego configurá su QR. Para estabilidad, reservá esa IP en el router (DHCP).</p></div>
-<label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="http://192.168.1.100:8000" autocomplete="url"/>
+<label for="server-url">URL del servidor POS</label><input id="server-url" type="url" required placeholder="https://pos.home.arpa" autocomplete="url"/>
 <button id="discover-server" type="button" class="admin-test-button">Detectar servidor cercano</button><div id="discover-results" role="status"></div>
 <p class="admin-hint">La identidad y el QR se guardan en POS Server, no en la caché. Para autorizar compras, generá un código temporal desde POS Server → Tótems y escribilo en el catálogo. Si borrás cookies, se solicita otro código sin perder la identidad del tótem.</p>
 <div class="admin-actions"><button id="save-connection" class="primary-button" type="button">Guardar conexión</button><button id="test-connection" class="cancel-button" type="button">Probar conexión</button></div>
 </div><div id="admin-status" role="status" class="admin-status"></div></section>
 <section class="admin-panel"><h2>Conexión LAN</h2><p>Usá la IP de la computadora que ejecuta POS Server. El catálogo se consulta sin credenciales.</p>
-<div class="admin-tip"><strong>Variables de entorno de Astro</strong><code>PUBLIC_POS_URL=http://192.168.1.100:8000</code></div>
+<div class="admin-tip"><strong>Publicación segura</strong><code>https://pos.home.arpa/intrashop/</code></div>
 <p class="admin-hint">No incrustes claves privadas en una compilación pública. Para producción, preferí un proxy local autenticado y dispositivos administrados.</p>
 <h2>Estado del servidor</h2><div id="server-state" class="admin-server-state">Sin comprobar</div>
 </section></div></main>
@@ -28,9 +28,16 @@ import "../styles/global.css";
   const $ = (id) => document.getElementById(id);
   const url = $("server-url");
   const status = $("admin-status"), state = $("server-state");
-  const origin = location.port === "8000" ? location.origin : location.protocol + "//" + location.hostname + ":8000";
+  const deployed = location.pathname.startsWith("/intrashop/")
+    && ["http:", "https:"].includes(location.protocol)
+    && !["4321", "4173"].includes(location.port);
+  const origin = deployed ? location.origin
+    : location.protocol + "//" + location.hostname + ":8000";
   const stored = localStorage.getItem("intrashop_api") || "";
-  const defaultUrl = stored && !stored.includes("localhost") && !stored.includes("127.0.0.1") ? stored : origin;
+  // En producción el origen autorizado es fijo: no usar URLs antiguas de
+  // localStorage que apuntan al backend HTTP o a un servidor suplantado.
+  const defaultUrl = deployed ? origin
+    : stored && !stored.includes("localhost") && !stored.includes("127.0.0.1") ? stored : origin;
   url.value = defaultUrl;
 
   function message(text, ok) { status.textContent = text; status.className = "admin-status " + (ok ? "success" : "error"); }
@@ -99,6 +106,10 @@ import "../styles/global.css";
   $("save-connection").addEventListener("click", async () => {
     const base = url.value.trim().replace(/\/$/, "");
     if (!/^https?:\/\//i.test(base)) { message("Ingresá una URL válida con http:// o https://", false); return; }
+    if (deployed && base !== origin) {
+      message("La tienda publicada solo acepta el mismo origen HTTPS de POS Server.", false);
+      return;
+    }
     const button = $("save-connection");
     button.disabled = true; button.textContent = "Guardando y verificando…";
     message("Validando conexión y registrando el tótem…", true);
