@@ -29,6 +29,21 @@ class LoginRequest(BaseModel):
 @router.post("/login")
 def login(body: LoginRequest, x_terminal_id: str = Header(default=""),
           request: Request = None):
+    # Una caja vinculada debe demostrar posesión de su credencial.
+    device_hash = None
+    if request is not None:
+        from services import pos_device_credentials as devices
+        from services.lan_https import habilitado
+        key = request.headers.get("x-api-key", "")
+        with DatabaseManager()._connect() as conn:
+            devices.ensure_schema(conn)
+            row = conn.execute("SELECT token_hash,revoked FROM pos_device_credentials WHERE terminal_id=?", (x_terminal_id,)).fetchone()
+        if row or key.startswith("posd_"):
+            if (not habilitado() or request.url.scheme != "https" or not row
+                    or row[1] or not key.startswith("posd_")
+                    or not secrets.compare_digest(row[0], devices.digest(key))):
+                raise HTTPException(403, "Caja no autorizada. Volvé a vincularla.")
+            device_hash = row[0]
     # La IP TCP real (no X-Forwarded-For enviado por el cliente) y el usuario
     # limitan intentos. No registrar nunca la contraseña.
     ip = request.client.host if request is not None and request.client else "direct"
@@ -49,7 +64,7 @@ def login(body: LoginRequest, x_terminal_id: str = Header(default=""),
         _login_attempts.pop(attempt_key, None)
     token = secrets.token_urlsafe(36)
     with _lock:
-        _sessions[token] = (usuario["usuario"], time.time() + TTL, bool(usuario.get("es_admin")), x_terminal_id[:100])
+        _sessions[token] = (usuario["usuario"], time.time() + TTL, bool(usuario.get("es_admin")), x_terminal_id[:100], device_hash)
         if len(_sessions) > 5000:
             now = time.time()
             for key, session in list(_sessions.items()):
@@ -71,6 +86,14 @@ def require_delivery(authorization: str | None = Header(default=None)):
             raise HTTPException(401, "Sesión vencida")
     # Revalidar rol en cada operación: revocar permisos surte efecto inmediato.
     with DatabaseManager()._connect() as conn:
+        if len(session) > 4 and session[4]:
+            from services.pos_device_credentials import ensure_schema
+            ensure_schema(conn)
+            device = conn.execute("SELECT token_hash,revoked FROM pos_device_credentials WHERE terminal_id=?", (session[3],)).fetchone()
+            if not device or device[1] or not secrets.compare_digest(device[0], session[4]):
+                with _lock:
+                    _sessions.pop(token, None)
+                raise HTTPException(401, "Autorización de caja revocada.")
         row = conn.execute("""
             SELECT u.activo, r.es_admin, r.permisos FROM usuarios u
             LEFT JOIN roles r ON r.id=u.rol_id WHERE u.usuario=? COLLATE NOCASE

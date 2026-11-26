@@ -148,3 +148,33 @@ def test_credencial_individual_no_se_confunde_con_clave_global(tmp_path, monkeyp
     assert config._default_secure_api_key(str(tmp_path / "db.sqlite")) != value
     with pytest.raises(ValueError):
         config.guardar_clave_lan_local(value)
+
+
+def test_sesion_de_caja_revocada_no_recupera_acceso(tmp_path, monkeypatch):
+    import pos_auth
+    from services import pos_device_credentials as devices
+    from types import SimpleNamespace
+    db = DatabaseManager(str(tmp_path / "session-device.db"))
+    monkeypatch.setattr(pos_auth, "DatabaseManager", lambda: db)
+    monkeypatch.setenv("INTRASHOP_ENFORCE_HTTPS", "1")
+    admin = next(u for u in db.listar_usuarios() if u["es_admin"])
+    db.guardar_usuario({"id": admin["id"], "usuario": admin["usuario"], "nombre": "Admin",
+        "rol_id": admin["rol_id"], "activo": True, "clave": "TestSeguro123456789"})
+    tid = "caja-" + "a" * 32
+    with db._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        key = devices.canjear(conn, devices.emitir_codigo(conn, "Caja"), tid)
+    request = SimpleNamespace(headers={"x-api-key": key}, url=SimpleNamespace(scheme="https"),
+                              client=SimpleNamespace(host="192.168.1.23"))
+    body = pos_auth.LoginRequest(usuario=admin["usuario"], clave="TestSeguro123456789")
+    session = pos_auth.login(body, tid, request)["access_token"]
+    assert pos_auth.require_delivery("Bearer " + session) == admin["usuario"]
+    with db._connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        devices.revocar(conn, tid)
+    with pytest.raises(Exception) as err:
+        pos_auth.require_delivery("Bearer " + session)
+    assert err.value.status_code == 401
+    with pytest.raises(Exception) as err:
+        pos_auth.login(body, tid, request)
+    assert err.value.status_code == 403

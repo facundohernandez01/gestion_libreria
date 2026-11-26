@@ -78,7 +78,7 @@ class ApiClient:
             response = httpx.post(
                 self.base_url + "/pos/auth/login",
                 json={"usuario": usuario, "clave": clave},
-                headers={"X-Terminal-Id": terminal_id()},
+                headers={**self._headers, "X-Terminal-Id": terminal_id()},
                 timeout=8, **opciones_http(self.base_url),
             )
         except httpx.RequestError as exc:
