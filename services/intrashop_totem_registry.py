@@ -46,7 +46,7 @@ def vincular_ip(conn: sqlite3.Connection, totem_id: str, ip: str) -> dict:
     """Llamar con BEGIN IMMEDIATE desde panel autorizado (GUI o API admin)."""
     ip = normalizar_ip(ip)
     row = conn.execute(
-        "SELECT id,nombre,retirado FROM intrashop_totems WHERE id=?", (totem_id,),
+        "SELECT id,nombre,retirado,ip_vinculada FROM intrashop_totems WHERE id=?", (totem_id,),
     ).fetchone()
     if not row:
         raise ValueError("Tótem inexistente")
@@ -56,6 +56,9 @@ def vincular_ip(conn: sqlite3.Connection, totem_id: str, ip: str) -> dict:
     if in_use and in_use["id"] != totem_id:
         raise ValueError(f"IP {ip} ya vinculada a {in_use['nombre']} ({in_use['id']})")
     # No toca la relación QR ni el nombre.
+    if row["ip_vinculada"] != ip:
+        from services.intrashop_totem_auth import revocar_totem
+        revocar_totem(conn, totem_id)
     conn.execute(
         "UPDATE intrashop_totems SET ip_vinculada=? WHERE id=?",
         (ip, totem_id),
@@ -70,6 +73,8 @@ def desvincular_ip(conn: sqlite3.Connection, totem_id: str) -> bool:
     ).fetchone()
     if not row or row["retirado"]:
         return False
+    from services.intrashop_totem_auth import revocar_totem
+    revocar_totem(conn, totem_id)
     conn.execute(
         "UPDATE intrashop_totems SET ip_vinculada=NULL,ip_address=NULL WHERE id=?",
         (totem_id,),
@@ -141,6 +146,8 @@ def retirar_totem(conn: sqlite3.Connection, totem_id: str) -> dict:
             f"El tótem tiene {estado['entregas_pendientes']} comanda(s) "
             "pendiente(s). Finalizá las entregas antes de eliminarlo."
         )
+    from services.intrashop_totem_auth import revocar_totem
+    revocar_totem(conn, totem_id)
     conn.execute(
         "DELETE FROM intrashop_mp_bindings "
         "WHERE terminal_id=? AND terminal_type='totem'",
