@@ -81,11 +81,20 @@ const title = "IntraShop · Tu tienda local";
       const placeholder = "data:image/svg+xml;charset=UTF-8," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300"><rect width="400" height="300" rx="24" fill="#f0f2fa"/><rect x="142" y="80" width="116" height="130" rx="16" fill="#e2e5f5"/><path d="M170 80v-8a30 30 0 0 1 60 0v8" fill="none" stroke="#a6acd0" stroke-width="9" stroke-linecap="round"/><path d="M184 145l12 12 25-27" fill="none" stroke="#8d82d9" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/></svg>');
       let products:Product[] = [];
       let cart:CartItem[] = [];
-      const defaultApiBase = window.location.port === "8000" ? window.location.origin : (window.location.protocol + "//" + window.location.hostname + ":8000");
+      // Compilado en POS Server: el catálogo, la cookie y los QR SIEMPRE
+      // usan el mismo origen HTTPS (normalmente puerto 443), no :8000.
+      const servedByPosServer = window.location.pathname.startsWith("/intrashop/")
+        && ["http:","https:"].includes(window.location.protocol)
+        && !["4321","4173"].includes(window.location.port);
+      const defaultApiBase = servedByPosServer
+        ? window.location.origin
+        : (window.location.protocol + "//" + window.location.hostname + ":8000");
       const storedApiBase = localStorage.getItem("intrashop_api");
       // Un localhost guardado en otro equipo siempre apunta a ese otro equipo.
       const safeStoredApi = storedApiBase && !storedApiBase.includes("localhost") && !storedApiBase.includes("127.0.0.1") ? storedApiBase : "";
-      let apiBase = window.location.port === "8000" ? window.location.origin : (safeStoredApi || import.meta.env.PUBLIC_POS_URL || defaultApiBase);
+      let apiBase = servedByPosServer
+        ? window.location.origin
+        : (safeStoredApi || import.meta.env.PUBLIC_POS_URL || defaultApiBase);
       // POS Server identifica cada equipo por IP confirmada. No hay UUID
       // persistente en caché: borrar localStorage no afecta la relación QR.
       let totemId = "";
