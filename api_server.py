@@ -397,6 +397,9 @@ def resumen_caja(caja_id: int, x_api_key: str | None = Header(default=None)):
 class CierreCajaIn(BaseModel):
     importe_contado: float | None = None
     observaciones: str = ""
+    efectivo_esperado: float | None = None
+    total_ventas: float | None = None
+    total_gastos: float | None = None
 
 
 @app.post("/cajas/{caja_id}/cerrar")
@@ -418,6 +421,9 @@ def cerrar_caja(caja_id: int, observaciones: str = "",
                 conn, caja_id,
                 importe_contado=body.importe_contado if body else None,
                 observaciones=body.observaciones if body else observaciones,
+                snapshot=body.model_dump(
+                    include={"efectivo_esperado", "total_ventas", "total_gastos"}
+                ) if body else None,
             )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
