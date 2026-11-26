@@ -228,14 +228,58 @@ def LoginView(db_manager, on_login, page: ft.Page):
 
         buscar.on_click = buscar_servidores
 
+        from services import client_tls
+        kit_pendiente = None
+        huella = ft.TextField(label="Huella SHA-256 de POS Server",
+            hint_text="Copiala desde la consola del servidor", multiline=True,
+            min_lines=2, max_lines=3, width=320, visible=False)
+        importar = ft.TextButton("Importar kit de conexión", icon=ft.Icons.FOLDER_OPEN)
+
+        async def importar_kit(e):
+            nonlocal kit_pendiente
+            try:
+                from pathlib import Path
+                archivos = await ft.FilePicker().pick_files(
+                    allow_multiple=False, allowed_extensions=["zip"],
+                    file_type=ft.FilePickerFileType.CUSTOM)
+                if not archivos:
+                    return
+                if not archivos[0].path:
+                    raise ValueError("El kit debe seleccionarse desde el POS de escritorio.")
+                kit_pendiente = client_tls.leer_kit(Path(archivos[0].path))
+                url.value = kit_pendiente[0]
+                url.read_only = True
+                buscar.disabled = True
+                candidatos.visible = False
+                modo.value = "cliente"
+                clave.value = ""
+                huella.value = ""
+                huella.visible = True
+                estado.value = ("Kit leído. Confirmá su huella con la que muestra POS Server. "
+                                "No es necesario instalar certificados en el sistema.")
+            except Exception:
+                estado.value = "No se pudo leer el kit. Elegí un ZIP de conexión POS válido."
+            page.update()
+
+        importar.on_click = importar_kit
+
         def guardar(e):
             try:
+                if kit_pendiente is not None:
+                    if modo.value != "cliente":
+                        raise ValueError("El kit corresponde a una terminal cliente.")
+                    if url.value != kit_pendiente[0]:
+                        raise ValueError("La dirección debe coincidir con el kit.")
+                    client_tls.guardar_confianza(
+                        kit_pendiente[0], kit_pendiente[1], huella.value or "")
+                elif modo.value == "cliente":
+                    client_tls.opciones_http((url.value or "").strip())
                 if (clave.value or "").strip():
                     from core.settings import guardar_clave_lan_local
                     guardar_clave_lan_local(clave.value)
                 db_local.set_config("MODO_RED", modo.value)
                 db_local.set_config("SERVER_URL", (url.value or "").strip())
-            except ValueError as exc:
+            except (ValueError, OSError) as exc:
                 estado.value = str(exc)
                 page.update()
                 return
@@ -244,7 +288,7 @@ def LoginView(db_manager, on_login, page: ft.Page):
             estado.value = "Configuración guardada. Reiniciá el POS."
             page.update()
         dlg = ft.AlertDialog(modal=True, title=ft.Text("Conexión de esta terminal"),
-            content=ft.Column([modo, ft.Row([buscar, progreso]), candidatos, url, clave, estado], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
+            content=ft.Column([modo, importar, huella, ft.Row([buscar, progreso]), candidatos, url, clave, estado], tight=True, spacing=12, scroll=ft.ScrollMode.AUTO),
             actions=[ft.TextButton("Cancelar", on_click=lambda e: cerrar_dialogo(page)),
                      ft.FilledButton("Guardar", on_click=guardar)])
         abrir_dialogo(page, dlg)
