@@ -35,7 +35,7 @@ jobs:
         with:
           channel: stable
       - name: Python dependencies
-        run: python -m pip install -r requirements.txt pyinstaller flet-cli
+        run: python -m pip install -r requirements.txt pyinstaller flet-cli==1.0.4 flet-desktop==1.0.4
       - name: Build Astro for POS Server
         if: matrix.role == 'servidor'
         working-directory: intrashop
@@ -64,7 +64,7 @@ jobs:
           node-version: '22'
       - name: Linux WebKit and credential dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libsecret-1-dev libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libsecret-1-dev libdbus-1-dev pkg-config libfuse2t64
       - name: Install frontend dependencies
         working-directory: intrashop
         run: npm install

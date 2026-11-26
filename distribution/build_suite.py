@@ -65,7 +65,10 @@ def build(role, output, platform):
         copy_modules(stage)
         if role == "pos":
             target = "windows" if platform == "windows" else "linux"
-            run(sys.executable, "-m", "flet", "build", target,
+            cli = shutil.which("flet")
+            if not cli:
+                raise RuntimeError("Flet CLI no instalado")
+            run(cli, "build", target,
                 "--product-name", "Kiosmico", "--org", "com.facundohernandez",
                 "--output-dir", "out", "--module-name", "main", cwd=stage)
             zip_tree(stage / "out", output / f"Kiosmico-{platform}-portable.zip")

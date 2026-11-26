@@ -26,6 +26,9 @@ jobs:
       - name: Build Astro
         working-directory: intrashop
         run: npm install && npm run build
+      - name: Generate bundle icons
+        working-directory: intrashop
+        run: npm run tauri -- icon public/intrashop-logo.svg
       - name: Compile and test native connection
         working-directory: intrashop/src-tauri
         run: cargo test --all-targets
