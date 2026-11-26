@@ -63,7 +63,8 @@ def test_gui_usa_asistente_por_ip_sin_sudo_root_y_sin_tocar_db():
     root = Path(__file__).resolve().parents[1]
     gui = (root / "pos_server_gui.py").read_text(encoding="utf-8")
     installer = (root / "deploy" / "configurar_https_ip.py").read_text(encoding="utf-8")
-    assert '("HTTPS local", self.configure_https_ip)' in gui
+    assert 'advanced.add_command(label="Configurar HTTPS local", command=self.configure_https_ip)' in gui
+    assert 'advanced_menu.add_command(label="Preparar conexión segura", command=self.configure_https_ip)' in gui
     assert 'def configure_https_ip(self):' in gui
     assert '"--ip", ip' in gui
     assert 'input("¿Continuar? [s/N] ")' in installer
