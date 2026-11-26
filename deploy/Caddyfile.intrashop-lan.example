@@ -1,13 +1,12 @@
-# HTTPS privado GRATUITO para IntraShop + POS Server.
-# 1. Usar DNS interno o /etc/hosts para resolver pos.home.arpa a la IP del POS Server.
-# 2. Arrancar FastAPI con INTRASHOP_ENFORCE_HTTPS=1 y POS_PUBLIC_URL=https://pos.home.arpa.
-# 3. Instalar la CA de Caddy en cada dispositivo (ver docs/https-lan.md).
+# Ejemplo Caddy HTTPS LAN SIN DNS para IntraShop.
+# No usar este archivo tal cual en una instalación: 192.168.1.100 es ejemplo.
+# POS Server > HTTPS local genera la configuración con la IP REAL.
+# No hay que tocar DNS, registrar dominio ni pagar certificados.
+# Es necesario instalar la CA local en los equipos cliente una sola vez.
 #
-# Caddy es el único listener de la LAN; Uvicorn solo escucha 127.0.0.1:8000.
-# No habilitar el puerto 8000 ni confiar en * para forwarded headers.
-pos.home.arpa {
+# FastAPI escucha SOLO en 127.0.0.1:8000 y Caddy publica puerto 443.
+https://192.168.1.100 {
     tls internal
-
     encode zstd gzip
 
     header {
