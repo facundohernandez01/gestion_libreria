@@ -54,12 +54,26 @@ def ensure_schema(conn):
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_intrashop_totems_ip_vinculada "
         "ON intrashop_totems(ip_vinculada) WHERE ip_vinculada IS NOT NULL"
     )
-    # Tótems disponibles desde POS Server, sin alta desde el navegador.
-    # Los registros legacy y sus QR no se alteran.
-    for numero in range(1, 9):
+    # Eliminar de la lista no borra auditoría: IDs retirados no se reutilizan.
+    if "retirado" not in totem_columns:
         conn.execute(
-            "INSERT OR IGNORE INTO intrashop_totems(id,nombre) VALUES (?,?)",
-            (f"totem-{numero:03d}", f"Tótem {numero:03d}"),
+            "ALTER TABLE intrashop_totems ADD COLUMN retirado INTEGER NOT NULL DEFAULT 0"
+        )
+    # Sembrar tótems 001–008 UNA sola vez. Nunca recrear los que el
+    # administrador retiró, ni al reiniciar POS Server ni al borrar caché.
+    conn.execute("""CREATE TABLE IF NOT EXISTS intrashop_totem_bootstrap (
+        clave TEXT PRIMARY KEY
+    )""")
+    if not conn.execute(
+        "SELECT 1 FROM intrashop_totem_bootstrap WHERE clave='preparados_v1'"
+    ).fetchone():
+        for numero in range(1, 9):
+            conn.execute(
+                "INSERT OR IGNORE INTO intrashop_totems(id,nombre) VALUES (?,?)",
+                (f"totem-{numero:03d}", f"Tótem {numero:03d}"),
+            )
+        conn.execute(
+            "INSERT INTO intrashop_totem_bootstrap(clave) VALUES('preparados_v1')"
         )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_intrashop_entregas_estado ON intrashop_entregas(estado, fecha_creacion)")
 
