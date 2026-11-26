@@ -290,6 +290,9 @@ class DatabaseManager:
                 "ALTER TABLE orden_compra_items ADD COLUMN cantidad_recibida INTEGER NOT NULL DEFAULT 0",
                 "ALTER TABLE cajas ADD COLUMN usuario_apertura TEXT DEFAULT ''",
                 "ALTER TABLE cajas ADD COLUMN usuario_cierre TEXT DEFAULT ''",
+                "ALTER TABLE cajas ADD COLUMN efectivo_esperado REAL",
+                "ALTER TABLE cajas ADD COLUMN efectivo_contado REAL",
+                "ALTER TABLE cajas ADD COLUMN diferencia_arqueo REAL",
                 "ALTER TABLE ventas ADD COLUMN usuario TEXT DEFAULT ''",
                 "ALTER TABLE gastos ADD COLUMN usuario TEXT DEFAULT ''",
                 "ALTER TABLE movimientos_stock ADD COLUMN usuario TEXT DEFAULT ''",
@@ -1774,30 +1777,48 @@ class DatabaseManager:
             conn.commit()
             return int(cur.lastrowid)
 
-    def cerrar_caja(self, caja_id: int, observaciones: str = "") -> bool:
+    def obtener_resumen_caja(self, caja_id: int) -> dict:
+        """Resumen unificado local/cliente con todas las ventas del turno."""
+        from services.caja_cierre import resumen_caja
+
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            resultado = resumen_caja(conn, caja_id)
+            conn.commit()
+            return resultado
+
+    def cerrar_caja_arqueo(self, caja_id: int, importe_contado: float,
+                           observaciones: str = "") -> dict:
+        """Operación transaccional; errores visibles para el operador."""
+        from services.caja_cierre import cerrar_caja
+
         with self._connect() as conn:
             try:
-                cur = conn.execute("SELECT SUM(total) FROM ventas WHERE caja_id=? AND estado='completada'", (caja_id,))
-                total_ventas = cur.fetchone()[0] or 0
-                cur = conn.execute("SELECT SUM(monto) FROM gastos WHERE caja_id=?", (caja_id,))
-                total_gastos = cur.fetchone()[0] or 0
-                cur = conn.execute("SELECT importe_apertura FROM cajas WHERE id=?", (caja_id,))
-                row = cur.fetchone()
-                if not row:
-                    return False
-                cierre = float(row[0]) + float(total_ventas) - float(total_gastos)
-                conn.execute(
-                    """UPDATE cajas SET fecha_cierre=?, importe_cierre=?,
-                       total_ventas=?, total_gastos=?, observaciones_cierre=?,
-                       usuario_cierre=?, estado='cerrada' WHERE id=?""",
-                    (datetime.now(), cierre, total_ventas, total_gastos,
-                     observaciones or "", self._usuario(), caja_id),
+                conn.execute("BEGIN IMMEDIATE")
+                result = cerrar_caja(
+                    conn, caja_id, importe_contado=importe_contado,
+                    observaciones=observaciones, usuario=self._usuario(),
                 )
                 conn.commit()
-                return True
-            except Exception as e:  # noqa: BLE001
+                return result
+            except Exception:
                 conn.rollback()
-                logger.error("cerrar_caja: %s", e)
+                raise
+
+    def cerrar_caja(self, caja_id: int, observaciones: str = "") -> bool:
+        """Compatibilidad con llamadas sin arqueo de versiones anteriores."""
+        from services.caja_cierre import cerrar_caja
+
+        with self._connect() as conn:
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                cerrar_caja(conn, caja_id, observaciones=observaciones,
+                            usuario=self._usuario())
+                conn.commit()
+                return True
+            except (ValueError, sqlite3.Error) as exc:
+                conn.rollback()
+                logger.warning("cerrar_caja: %s", exc)
                 return False
 
     # ---------- ventas (ATÓMICA) ----------
